@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(ls src/pages/*.tsx)",
+      "Bash(cd:*)",
+      "Bash(npx vitest:*)",
+      "Bash(node -e \"const l = require\\(''./node_modules/lucide-react''\\); console.log\\(''TableProperties:'', !!l.TableProperties, ''Table2:'', !!l.Table2, ''LayoutGrid:'', !!l.LayoutGrid\\)\")",
+      "Bash(npx vite:*)",
+      "Bash(netstat -ano)",
+      "Bash(findstr \":8080 \")",
+      "Bash(findstr \"LISTENING\")",
+      "Bash(taskkill /PID 2852 /F)",
+      "Bash(cmd /c \"netstat -ano 2>nul | findstr \\\\\":8080 \\\\\" | findstr \\\\\"LISTENING\\\\\"\")",
+      "Bash(cmd /c \"netstat -ano | findstr \\\\\":8080\\\\\" | findstr \\\\\"LISTENING\\\\\"\")",
+      "Bash(cmd /c \"netstat -ano | findstr \\\\\"8080\\\\\"\")",
+      "Bash(cmd /c \"netstat -ano | findstr \\\\\"808\\\\\"\")",
+      "Bash(cmd /c \"C:\\\\Users\\\\djuro\\\\Desktop\\\\kitchen-ace-pro-main\\\\run-smartline.bat\" 2>&1)",
+      "Bash(cmd /c \"netstat -ano | findstr \"\"8080\"\"\")",
+      "Bash(powershell -NoProfile -Command)",
+      "Bash(powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 8081,8082,8083 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess | Sort-Object -Unique | ForEach-Object { Stop-Process -Id \\\\$_ -Force -ErrorAction SilentlyContinue }\")",
+      "Bash(node -e \"require\\(''''./node_modules/recharts''''\\)\")",
+      "Bash(grep -v \"^$\")",
+      "Bash(find /c/Users/djuro/Desktop/kitchen-ace-pro-main/node_modules/zustand -name *.js)",
+      "Bash(find /c/Users/djuro/Desktop/kitchen-ace-pro-main/node_modules/zustand -name *.mjs)",
+      "Bash(npm test:*)",
+      "Bash(npm install:*)",
+      "Bash(vercel --version)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(vercel whoami:*)",
+      "Bash(vercel --prod --yes)",
+      "Bash(npm uninstall:*)",
+      "Bash(find /c/Users/Korisnik/Desktop/SmartLine-master -not -path */node_modules/* -type d)",
+      "Bash(find /c/Users/Korisnik/Desktop/SmartLine-master/src/pages -name \"*.tsx\" -exec basename {})",
+      "Bash(find /c/Users/Korisnik/Desktop/SmartLine-master/src/components -not -path \"*/ui/*\" -name \"*.tsx\" -exec basename {})",
+      "Bash(wc -l /c/Users/Korisnik/Desktop/SmartLine-master/src/pages/admin/*.tsx)"
+    ]
+  }
+}
