@@ -8,7 +8,7 @@
  *  - If PIN set, shows numpad; on success writes a 12-hour localStorage session
  *  - On valid session skip PIN and render the station view directly
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Delete, ChefHat, Waves, UtensilsCrossed, Sliders } from 'lucide-react';
@@ -149,6 +149,21 @@ export default function StationGate() {
       }
     })();
   }, [restaurantToken, stationId]);
+
+  // Physical keyboard support for PIN entry
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (unlocked || !station) return;
+    if (e.key >= '0' && e.key <= '9') {
+      setPin(prev => prev.length < 6 ? prev + e.key : prev);
+    } else if (e.key === 'Backspace') {
+      setPin(prev => prev.slice(0, -1));
+    }
+  }, [unlocked, station]);
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
 
   // Auto-submit when PIN length matches
   useEffect(() => {

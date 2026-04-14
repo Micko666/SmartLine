@@ -19,7 +19,7 @@ import { useEffect, useRef } from 'react';
 import { useStore } from '@/store';
 import { isSupabaseEnabled } from '@/store/flags';
 import { supabase } from '../client';
-import { mapOrderRow } from '../mappers';
+import { mapOrderRow, mapKitchenEventRow } from '../mappers';
 import type { OrderStatus } from '@/domain/types';
 
 type SupabaseChannel = NonNullable<typeof supabase> extends { channel: (...a: unknown[]) => infer C } ? C : never;
@@ -61,6 +61,17 @@ export function useOrdersSubscription() {
           useStore.setState(s => ({
             orders: s.orders.map(o => o.id === updated.id ? updated : o),
           }));
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'kitchen_events', filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const event = mapKitchenEventRow(payload.new as Record<string, unknown>);
+          useStore.setState(s => {
+            if (s.kitchenEvents.some(e => e.id === event.id)) return s;
+            return { kitchenEvents: [event, ...s.kitchenEvents].slice(0, 500) };
+          });
         },
       )
       .subscribe();

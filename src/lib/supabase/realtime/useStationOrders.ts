@@ -15,9 +15,9 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../client';
-import { mapOrderRow } from '../mappers';
+import { mapOrderRow, mapTableRow } from '../mappers';
 import { useStore } from '@/store';
-import type { Order, OrderStatus, Table } from '@/domain/types';
+import type { Order, OrderStatus } from '@/domain/types';
 
 const POLL_INTERVAL_MS = 30_000;
 const ACTIVE_STATUSES: OrderStatus[] = ['paid', 'preparing', 'ready'];
@@ -77,11 +77,9 @@ export function useStationOrders(restaurantToken: string, userId?: string) {
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'tables', filter: `user_id=eq.${userId}` },
           (payload) => {
-            const row = payload.new as { id: string; status: string };
+            const updated = mapTableRow(payload.new as Record<string, unknown>);
             useStore.setState(s => ({
-              tables: s.tables.map(t =>
-                t.id === row.id ? { ...t, status: row.status as Table['status'] } : t,
-              ),
+              tables: s.tables.map(t => t.id === updated.id ? updated : t),
             }));
           },
         )

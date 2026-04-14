@@ -341,17 +341,26 @@ function StationForm({
               </p>
               {form.filterCategories.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
-                  {form.filterCategories.map(cat => (
-                    <span key={cat}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20"
-                    >
-                      {cat}
-                      <button type="button" onClick={() => onChange({ ...form, filterCategories: form.filterCategories.filter(c => c !== cat) })}
-                        className="hover:text-destructive transition-colors">
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
+                  {form.filterCategories.map(cat => {
+                    const missing = !availableCategories.includes(cat);
+                    return (
+                      <span key={cat}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border ${
+                          missing
+                            ? 'bg-warning/10 text-warning border-warning/30'
+                            : 'bg-primary/10 text-primary border-primary/20'
+                        }`}
+                        title={missing ? `"${cat}" not found in active menu categories` : undefined}
+                      >
+                        {missing && <span>⚠</span>}
+                        {cat}
+                        <button type="button" onClick={() => onChange({ ...form, filterCategories: form.filterCategories.filter(c => c !== cat) })}
+                          className="hover:text-destructive transition-colors">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    );
+                  })}
                 </div>
               )}
               {availableCategories.length > 0 && (

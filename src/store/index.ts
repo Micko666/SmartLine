@@ -71,6 +71,8 @@ if (typeof window !== 'undefined' && !isSupabaseEnabled()) {
   } catch { /* ignore */ }
 }
 
+const TTL_90_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+
 function loadWorkspaceStateLocal(userId: string, user: User): WorkspaceSnapshot {
   try {
     const raw = localStorage.getItem(WORKSPACE_KEY(userId));
@@ -78,6 +80,7 @@ function loadWorkspaceStateLocal(userId: string, user: User): WorkspaceSnapshot 
       const parsed = JSON.parse(raw);
       if (parsed?.state) {
         const defaults = defaultWorkspace(user);
+        const cutoff = Date.now() - TTL_90_DAYS_MS;
         return {
           ...defaults,
           ...parsed.state,
@@ -86,11 +89,14 @@ function loadWorkspaceStateLocal(userId: string, user: User): WorkspaceSnapshot 
             ...parsed.state.settings,
             restaurantToken: parsed.state.settings?.restaurantToken || defaults.settings.restaurantToken,
           },
+          // Prune records older than 90 days to keep localStorage lean
+          orders:   (parsed.state.orders   ?? []).filter((o: Order)   => new Date(o.createdAt).getTime() > cutoff),
+          receipts: (parsed.state.receipts ?? []).filter((r: Receipt) => new Date(r.createdAt).getTime() > cutoff),
           reservations: (parsed.state.reservations ?? []).filter(
             (r: StockReservation) => r.expiresAt > Date.now(),
           ),
           ingredients:   parsed.state.ingredients   ?? defaults.ingredients,
-          kitchenEvents: parsed.state.kitchenEvents ?? [],
+          kitchenEvents: (parsed.state.kitchenEvents ?? []).filter((e: KitchenEvent) => new Date(e.createdAt).getTime() > cutoff),
           decorations:   parsed.state.decorations   ?? [],
         };
       }
