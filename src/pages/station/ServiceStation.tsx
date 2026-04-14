@@ -198,13 +198,13 @@ export default function ServiceStation({ station, restaurantToken, userId, resta
                 )}
               />
 
-              {/* Toggle to list — floating pill, top-right of map */}
+              {/* Toggle to list — floating button, bottom-right */}
               <button
                 onClick={() => setListMode(true)}
-                className="absolute top-2 right-14 z-10 flex items-center gap-1.5 h-7 px-2.5 rounded-xl bg-background/90 backdrop-blur-sm border border-border shadow-sm text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-background transition-all"
+                className="absolute bottom-4 right-4 z-10 flex items-center gap-2 h-10 px-4 rounded-2xl bg-background border border-border shadow-md text-sm font-semibold text-foreground hover:bg-muted active:scale-95 transition-all"
               >
-                <List className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">List</span>
+                <List className="w-4 h-4" />
+                List view
               </button>
 
               {/* Hint when no table is selected */}

@@ -94,10 +94,8 @@ export default function MenuManager() {
   const [showForm,    setShowForm]    = useState(false);
   const sym = settings.currencySymbol;
 
-  // Only show categories that have at least one item visible in the current status filter
-  const populatedCategories = categories.filter(c =>
-    menuItems.some(i => i.category === c && (viewFilter === 'all' || i.status === viewFilter)),
-  );
+  // Show all created categories; count reflects current status filter
+  const populatedCategories = categories;
 
   const visible = menuItems
     .filter(i => viewFilter === 'all' || i.status === viewFilter)
