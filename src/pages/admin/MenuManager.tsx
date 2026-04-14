@@ -165,7 +165,7 @@ export default function MenuManager() {
           </button>
         </div>
 
-        {/* Status filter */}
+        {/* Status filter + category dropdown */}
         <div className="flex flex-wrap items-center gap-2">
           {(['active', 'disabled', 'archived', 'all'] as ViewFilter[]).map(f => (
             <button
@@ -179,29 +179,20 @@ export default function MenuManager() {
               </span>
             </button>
           ))}
-        </div>
 
-        {/* Category pills — scrollable row */}
-        <div className="flex gap-1.5 overflow-x-auto pb-0.5 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-          {(['All', ...populatedCategories] as string[]).map(c => {
-            const n = c === 'All'
-              ? menuItems.filter(i => viewFilter === 'all' || i.status === viewFilter).length
-              : menuItems.filter(i => i.category === c && (viewFilter === 'all' || i.status === viewFilter)).length;
-            return (
-              <button
-                key={c}
-                onClick={() => setActiveCat(c)}
-                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
-                  activeCat === c
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                }`}
-              >
-                {c}
-                <span className="ml-1.5 opacity-70">({n})</span>
-              </button>
-            );
-          })}
+          <div className="ml-auto">
+            <select
+              value={activeCat}
+              onChange={e => setActiveCat(e.target.value)}
+              className="h-9 pl-3 pr-8 rounded-xl border border-input bg-card text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-primary transition-colors appearance-none cursor-pointer"
+            >
+              <option value="All">All categories</option>
+              {populatedCategories.map(c => {
+                const n = menuItems.filter(i => i.category === c && (viewFilter === 'all' || i.status === viewFilter)).length;
+                return <option key={c} value={c}>{c} ({n})</option>;
+              })}
+            </select>
+          </div>
         </div>
 
         {/* Search */}
