@@ -140,6 +140,7 @@ function ReadOnlyTableTile({
   return (
     <div
       onClick={onClick}
+      onPointerDown={e => e.stopPropagation()}
       style={{
         position: 'absolute', left: x, top: y, width: w, height: h,
         cursor: 'pointer', userSelect: 'none', touchAction: 'none',
