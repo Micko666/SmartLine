@@ -3,13 +3,16 @@ import {
   Plus, Trash2, QrCode, Download, ExternalLink, X, Copy,
   Pencil, ZoomIn, ZoomOut, Maximize2, ChevronLeft, ChevronRight,
   Users, Layers, RotateCw, Flower2, DoorOpen, Columns3, AppWindow, Footprints, Minus, ChevronDown,
+  Eye,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import QRCode from 'react-qr-code';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import FloorMapCanvas from '@/components/floor/FloorMapCanvas';
+import TablePanel from '@/components/station/TablePanel';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
-import type { Table, TableShape, TableStatus, MapDecoration, DecorationType } from '@/domain/types';
+import type { Table, TableShape, TableStatus, MapDecoration, DecorationType, Order, MenuItem, CategoryMode } from '@/domain/types';
 import { getTableSize, ZONE_PALETTE, TABLE_STATUS_COLOR, TABLE_STATUS_LABEL, TABLE_STATUS_CYCLE } from '@/domain/tables';
 import { toast } from 'sonner';
 import {
@@ -1015,14 +1018,15 @@ function PropsPalette({ onAdd, onClose }: { onAdd: (type: DecorationType) => voi
 
 export default function Tables() {
   const {
-    tables, addTable, updateTable, deleteTable, setTableStatus, settings, orders,
-    decorations, addDecoration, updateDecoration, deleteDecoration,
+    tables, addTable, updateTable, deleteTable, setTableStatus, settings, orders, menuItems,
+    decorations, addDecoration, updateDecoration, deleteDecoration, advanceOrderStatus,
   } = useStore(useShallow(s => ({
     tables: s.tables, addTable: s.addTable, updateTable: s.updateTable,
     deleteTable: s.deleteTable, setTableStatus: s.setTableStatus,
-    settings: s.settings, orders: s.orders,
+    settings: s.settings, orders: s.orders, menuItems: s.menuItems,
     decorations: s.decorations, addDecoration: s.addDecoration,
     updateDecoration: s.updateDecoration, deleteDecoration: s.deleteDecoration,
+    advanceOrderStatus: s.advanceOrderStatus,
   })));
 
   const appUrl = typeof window !== 'undefined' ? window.location.origin : settings.appUrl;
@@ -1302,6 +1306,9 @@ export default function Tables() {
   function handleCanvasBgUp() { panRef.current = null; }
 
   // ── UI state ─────────────────────────────────────────────────────────────────
+  const [pageMode, setPageMode]           = useState<'edit' | 'operate'>('edit');
+  const [operationalTable, setOperationalTable] = useState<Table | null>(null);
+
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [selectedDec, setSelectedDec]     = useState<string | null>(null);
   const [qrTable, setQrTable]             = useState<Table | null>(null);
@@ -1310,6 +1317,31 @@ export default function Tables() {
   const [zonesOpen, setZonesOpen]         = useState(false);
   const [propsOpen, setPropsOpen]         = useState(false);
   const [addDefaultName, setAddDefaultName] = useState('');
+
+  // ── Operate mode handlers ─────────────────────────────────────────────────
+  const OP_STATUSES = ['paid', 'preparing', 'ready'];
+
+  function handleAdminAdvance(order: Order) {
+    advanceOrderStatus(order.id);
+  }
+
+  function handleAdminClearTable(table: Table) {
+    setTableStatus(table.id, 'available');
+    toast.success(`${table.name} is now available`);
+    setOperationalTable(null);
+  }
+
+  function switchToOperate() {
+    setPageMode('operate');
+    setSelectedTable(null);
+    setSelectedDec(null);
+    setOperationalTable(null);
+  }
+
+  function switchToEdit() {
+    setPageMode('edit');
+    setOperationalTable(null);
+  }
 
   const selectedTableObj = selectedTable ? tables.find(t => t.id === selectedTable) ?? null : null;
   const selectedDecObj   = selectedDec   ? decorations.find(d => d.id === selectedDec) ?? null : null;
@@ -1379,48 +1411,113 @@ export default function Tables() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {zones.length > 0 && (
-              <button onClick={() => setZonesOpen(true)}
-                className="hidden sm:flex items-center gap-1.5 h-9 px-3 rounded-xl border border-border text-sm font-medium hover:bg-muted transition-colors text-muted-foreground">
-                Zones
-              </button>
-            )}
-            {/* Zoom controls */}
-            <div className="hidden sm:flex items-center gap-0.5 bg-muted rounded-xl p-1">
-              <button onClick={fitView} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-background text-muted-foreground transition-colors" title="Fit view">
-                <Maximize2 className="w-3.5 h-3.5" />
-              </button>
-              <button onClick={() => setScale(s => clamp(+(s - 0.1).toFixed(1), 0.4, 2))} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-background text-muted-foreground transition-colors">
-                <ZoomOut className="w-3.5 h-3.5" />
-              </button>
-              <span className="text-xs font-medium text-muted-foreground w-10 text-center tabular-nums">{Math.round(scale * 100)}%</span>
-              <button onClick={() => setScale(s => clamp(+(s + 0.1).toFixed(1), 0.4, 2))} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-background text-muted-foreground transition-colors">
-                <ZoomIn className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            {/* Props button */}
-            <div className="relative">
+            {/* Mode toggle */}
+            <div className="flex items-center gap-0.5 bg-muted rounded-xl p-1">
               <button
-                onClick={() => setPropsOpen(p => !p)}
-                className={`hidden sm:flex items-center gap-1.5 h-9 px-3 rounded-xl border text-sm font-medium transition-colors ${
-                  propsOpen ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted text-muted-foreground'
+                onClick={switchToEdit}
+                className={`flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-xs font-medium transition-colors ${
+                  pageMode === 'edit' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
                 }`}
-                title="Add map props"
               >
-                <Flower2 className="w-3.5 h-3.5" /> Props
+                <Pencil className="w-3 h-3" /> Layout
               </button>
-              <AnimatePresence>
-                {propsOpen && <PropsPalette onAdd={handleAddProp} onClose={() => setPropsOpen(false)} />}
-              </AnimatePresence>
+              <button
+                onClick={switchToOperate}
+                className={`flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-xs font-medium transition-colors ${
+                  pageMode === 'operate' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Eye className="w-3 h-3" /> Operate
+              </button>
             </div>
 
-            <Button onClick={openAdd} className="gap-2">
-              <Plus className="w-4 h-4" /> Add Table
-            </Button>
+            {/* Edit-only controls */}
+            {pageMode === 'edit' && (
+              <>
+                {zones.length > 0 && (
+                  <button onClick={() => setZonesOpen(true)}
+                    className="hidden sm:flex items-center gap-1.5 h-9 px-3 rounded-xl border border-border text-sm font-medium hover:bg-muted transition-colors text-muted-foreground">
+                    Zones
+                  </button>
+                )}
+                {/* Zoom controls */}
+                <div className="hidden sm:flex items-center gap-0.5 bg-muted rounded-xl p-1">
+                  <button onClick={fitView} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-background text-muted-foreground transition-colors" title="Fit view">
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => setScale(s => clamp(+(s - 0.1).toFixed(1), 0.4, 2))} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-background text-muted-foreground transition-colors">
+                    <ZoomOut className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-xs font-medium text-muted-foreground w-10 text-center tabular-nums">{Math.round(scale * 100)}%</span>
+                  <button onClick={() => setScale(s => clamp(+(s + 0.1).toFixed(1), 0.4, 2))} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-background text-muted-foreground transition-colors">
+                    <ZoomIn className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Props button */}
+                <div className="relative">
+                  <button
+                    onClick={() => setPropsOpen(p => !p)}
+                    className={`hidden sm:flex items-center gap-1.5 h-9 px-3 rounded-xl border text-sm font-medium transition-colors ${
+                      propsOpen ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted text-muted-foreground'
+                    }`}
+                    title="Add map props"
+                  >
+                    <Flower2 className="w-3.5 h-3.5" /> Props
+                  </button>
+                  <AnimatePresence>
+                    {propsOpen && <PropsPalette onAdd={handleAddProp} onClose={() => setPropsOpen(false)} />}
+                  </AnimatePresence>
+                </div>
+
+                <Button onClick={openAdd} className="gap-2">
+                  <Plus className="w-4 h-4" /> Add Table
+                </Button>
+              </>
+            )}
           </div>
         </div>
 
+        {/* ── Operate mode: floor map + table panel ── */}
+        {pageMode === 'operate' && (
+          <div className="flex gap-3 flex-1 min-h-0">
+            <div className="flex-1 min-w-0">
+              <FloorMapCanvas
+                tables={tables}
+                decorations={decorations}
+                orders={orders}
+                selectedTableId={operationalTable?.id ?? null}
+                onTableClick={t => setOperationalTable(prev => prev?.id === t.id ? null : t)}
+              />
+            </div>
+            <AnimatePresence mode="wait">
+              {operationalTable && (
+                <TablePanel
+                  key={operationalTable.id}
+                  table={operationalTable}
+                  orders={orders.filter(o =>
+                    o.tableId === operationalTable.id &&
+                    OP_STATUSES.includes(o.status),
+                  )}
+                  canAdvance={true}
+                  canUpdateTableStatus={true}
+                  onAdvance={handleAdminAdvance}
+                  onClose={() => setOperationalTable(null)}
+                  onClearTable={() => handleAdminClearTable(operationalTable)}
+                  advancing={new Set<string>()}
+                  variant="panel"
+                  filterCategories={[]}
+                  categoryMode={'all' as CategoryMode}
+                  menuItems={menuItems}
+                />
+              )}
+            </AnimatePresence>
+          </div>
+        )}
+
+        {/* ── Edit mode: floor selector + canvas + inspector ── */}
+        {pageMode === 'edit' && (
+          <>
         {/* ── Floor selector ── */}
         <FloorSelector
           floors={allFloors}
@@ -1569,6 +1666,8 @@ export default function Tables() {
             ))}
             <span className="ml-auto hidden sm:block opacity-50">Drag to move · Click to inspect · Drag grip to resize · Ctrl+scroll to zoom</span>
           </div>
+        )}
+          </>
         )}
       </div>
 

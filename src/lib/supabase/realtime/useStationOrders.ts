@@ -151,9 +151,18 @@ export function useStationOrders(restaurantToken: string, userId?: string) {
       p_new_status: newStatus,
     });
     if (error || !(data as { ok: boolean }).ok) return false;
+    const updatedAt = new Date().toISOString();
+    // Patch station-local orders
     setRemoteOrders(prev => prev.map(o =>
-      o.id === orderId ? { ...o, status: newStatus as Order['status'], updatedAt: new Date().toISOString() } : o,
+      o.id === orderId ? { ...o, status: newStatus as Order['status'], updatedAt } : o,
     ));
+    // Also patch the central Zustand store so admin views reflect the change
+    // immediately without waiting for the next realtime event
+    useStore.setState(s => ({
+      orders: s.orders.map(o =>
+        o.id === orderId ? { ...o, status: newStatus as Order['status'], updatedAt } : o,
+      ),
+    }));
     return true;
   }, [restaurantToken]);
 
@@ -168,6 +177,11 @@ export function useStationOrders(restaurantToken: string, userId?: string) {
     setRemoteOrders(prev => prev.map(o =>
       o.id === orderId ? { ...o, prepTimeAdjustment: o.prepTimeAdjustment + deltaMinutes } : o,
     ));
+    useStore.setState(s => ({
+      orders: s.orders.map(o =>
+        o.id === orderId ? { ...o, prepTimeAdjustment: o.prepTimeAdjustment + deltaMinutes } : o,
+      ),
+    }));
     return true;
   }, [restaurantToken]);
 
