@@ -9,7 +9,10 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import type { MenuItem, MenuItemStatus, Modifier, ModifierOption, Ingredient, RecipeIngredient } from '@/domain/types';
+import { SEED_CATEGORIES } from '@/domain/initialData';
 import { toast } from 'sonner';
+
+const SEED_CAT_SET = new Set(SEED_CATEGORIES);
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -94,8 +97,12 @@ export default function MenuManager() {
   const [showForm,    setShowForm]    = useState(false);
   const sym = settings.currencySymbol;
 
-  // Show all created categories; count reflects current status filter
-  const populatedCategories = categories;
+  // Show seed categories only when they have items in the current filter;
+  // always show user-created (non-seed) categories even if empty.
+  const populatedCategories = categories.filter(c => {
+    const hasItems = menuItems.some(i => i.category === c && (viewFilter === 'all' || i.status === viewFilter));
+    return hasItems || !SEED_CAT_SET.has(c);
+  });
 
   const visible = menuItems
     .filter(i => viewFilter === 'all' || i.status === viewFilter)
@@ -158,7 +165,7 @@ export default function MenuManager() {
           </button>
         </div>
 
-        {/* Status filter + category dropdown — one unified toolbar */}
+        {/* Status filter */}
         <div className="flex flex-wrap items-center gap-2">
           {(['active', 'disabled', 'archived', 'all'] as ViewFilter[]).map(f => (
             <button
@@ -172,21 +179,29 @@ export default function MenuManager() {
               </span>
             </button>
           ))}
+        </div>
 
-          {/* Category dropdown — only lists categories with items in the current view */}
-          <div className="ml-auto flex items-center gap-2">
-            <select
-              value={activeCat}
-              onChange={e => setActiveCat(e.target.value)}
-              className="h-9 pl-3 pr-8 rounded-xl border border-input bg-card text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-primary transition-colors appearance-none cursor-pointer"
-            >
-              <option value="All">All categories</option>
-              {populatedCategories.map(c => {
-                const n = menuItems.filter(i => i.category === c && (viewFilter === 'all' || i.status === viewFilter)).length;
-                return <option key={c} value={c}>{c} ({n})</option>;
-              })}
-            </select>
-          </div>
+        {/* Category pills — scrollable row */}
+        <div className="flex gap-1.5 overflow-x-auto pb-0.5 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+          {(['All', ...populatedCategories] as string[]).map(c => {
+            const n = c === 'All'
+              ? menuItems.filter(i => viewFilter === 'all' || i.status === viewFilter).length
+              : menuItems.filter(i => i.category === c && (viewFilter === 'all' || i.status === viewFilter)).length;
+            return (
+              <button
+                key={c}
+                onClick={() => setActiveCat(c)}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap ${
+                  activeCat === c
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                }`}
+              >
+                {c}
+                <span className="ml-1.5 opacity-70">({n})</span>
+              </button>
+            );
+          })}
         </div>
 
         {/* Search */}
