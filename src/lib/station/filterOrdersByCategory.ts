@@ -35,15 +35,23 @@ export function applyStationFilter(
   const catByItemId = new Map<string, string>(menuItems.map(m => [m.id, m.category]));
   const isMatch = (item: OrderItem) => categories.includes(catByItemId.get(item.menuItemId) ?? '');
 
-  return orders
-    .map(o => {
-      const matched   = o.items.filter(isMatch);
-      const unmatched = o.items.filter(i => !isMatch(i));
-      return {
-        order:   o,
-        items:   matched,
-        context: mode === 'focus' ? unmatched : [],
-      };
-    })
-    .filter(d => d.items.length > 0); // require at least one primary item
+  return orders.map(o => {
+    const matched   = o.items.filter(isMatch);
+    const unmatched = o.items.filter(i => !isMatch(i));
+
+    if (mode === 'exclusive') {
+      // Exclusive: hide orders with no matching items entirely.
+      return matched.length > 0
+        ? { order: o, items: matched, context: [] }
+        : null;
+    }
+
+    // Focus: show every order. Matching items are primary; the rest are dimmed.
+    // Orders with zero matching items show everything dimmed (pure context).
+    return {
+      order:   o,
+      items:   matched,
+      context: unmatched,
+    };
+  }).filter(Boolean) as DisplayOrder[];
 }
