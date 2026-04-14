@@ -309,9 +309,11 @@ export type CheckoutResult =
 export interface CartValidationIssue {
   menuItemId: string;
   menuItemName: string;
-  reason: 'out_of_stock' | 'insufficient_stock' | 'item_disabled' | 'item_not_found';
+  reason: 'out_of_stock' | 'insufficient_stock' | 'item_disabled' | 'item_not_found' | 'missing_required_modifier';
   available: number;
   requested: number;
+  /** Set when reason is missing_required_modifier */
+  modifierName?: string;
 }
 
 export interface CartValidationResult {

@@ -34,7 +34,15 @@
       "Bash(find /c/Users/Korisnik/Desktop/SmartLine-master -not -path */node_modules/* -type d)",
       "Bash(find /c/Users/Korisnik/Desktop/SmartLine-master/src/pages -name \"*.tsx\" -exec basename {})",
       "Bash(find /c/Users/Korisnik/Desktop/SmartLine-master/src/components -not -path \"*/ui/*\" -name \"*.tsx\" -exec basename {})",
-      "Bash(wc -l /c/Users/Korisnik/Desktop/SmartLine-master/src/pages/admin/*.tsx)"
+      "Bash(wc -l /c/Users/Korisnik/Desktop/SmartLine-master/src/pages/admin/*.tsx)",
+      "mcp__cd545064-5719-4bd3-b83f-83dddb58fe1a__list_projects",
+      "mcp__cd545064-5719-4bd3-b83f-83dddb58fe1a__execute_sql",
+      "mcp__cd545064-5719-4bd3-b83f-83dddb58fe1a__get_project_url",
+      "mcp__cd545064-5719-4bd3-b83f-83dddb58fe1a__get_publishable_keys",
+      "Bash(npx vercel:*)",
+      "Bash(cat)",
+      "Read(//tmp/**)",
+      "Bash(node_modules/.bin/vite build:*)"
     ]
   }
 }

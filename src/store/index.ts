@@ -12,6 +12,7 @@ import {
   FRESH_MENU_ITEMS, FRESH_TABLES, SEED_INGREDIENTS,
 } from '../domain/initialData';
 import { advance, isActiveOrder, isRevenueOrder } from '../domain/orderMachine';
+import { normalizeStation } from '../domain/stations';
 import { isSupabaseEnabled } from './flags';
 import * as bridge from './bridge';
 
@@ -626,7 +627,7 @@ export const useStore = create<AppState>()((set, get) => ({
     set(s => ({
       orders: s.orders.map(o =>
         o.id === orderId
-          ? { ...o, prepTimeAdjustment: o.prepTimeAdjustment + deltaMinutes, updatedAt: now() }
+          ? { ...o, prepTimeAdjustment: Math.max(-60, Math.min(180, o.prepTimeAdjustment + deltaMinutes)), updatedAt: now() }
           : o),
     }));
     _persistLocal(get);
@@ -677,7 +678,7 @@ export const useStore = create<AppState>()((set, get) => ({
   // ── Stations ─────────────────────────────────────────────────────────────────
 
   addStation(station) {
-    set(s => ({ settings: { ...s.settings, stations: [...(s.settings.stations ?? []), station] } }));
+    set(s => ({ settings: { ...s.settings, stations: [...(s.settings.stations ?? []), normalizeStation(station)] } }));
     _persistLocal(get);
     const { settings, user } = get();
     if (isSupabaseEnabled() && user?.id) {
@@ -690,7 +691,9 @@ export const useStore = create<AppState>()((set, get) => ({
     set(s => ({
       settings: {
         ...s.settings,
-        stations: (s.settings.stations ?? []).map(st => st.id === id ? { ...st, ...updates } : st),
+        stations: (s.settings.stations ?? []).map(st =>
+          st.id === id ? normalizeStation({ ...st, ...updates }) : st,
+        ),
       },
     }));
     _persistLocal(get);
@@ -759,6 +762,16 @@ export const useStore = create<AppState>()((set, get) => ({
           issues.push({ menuItemId: item.id, menuItemName: item.name, reason: 'out_of_stock', available: 0, requested: cartItem.quantity });
         } else if (available < cartItem.quantity) {
           issues.push({ menuItemId: item.id, menuItemName: item.name, reason: 'insufficient_stock', available, requested: cartItem.quantity });
+        }
+      }
+      // Check required modifiers
+      for (const mod of item.modifiers ?? []) {
+        if (mod.required) {
+          const hasSelection = cartItem.selectedModifiers.some(sm => sm.modifierId === mod.id);
+          if (!hasSelection) {
+            issues.push({ menuItemId: item.id, menuItemName: item.name, reason: 'missing_required_modifier', available: 0, requested: cartItem.quantity, modifierName: mod.name });
+            break;
+          }
         }
       }
     }
