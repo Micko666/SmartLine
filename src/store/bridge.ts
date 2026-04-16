@@ -14,12 +14,19 @@
 import { updateMenuItemRow, insertMenuItem, bulkUpdateSortOrder } from '@/lib/supabase/queries/menu';
 import { insertTable, updateTableRow, deleteTableRow } from '@/lib/supabase/queries/tables';
 import { updateOrderRow } from '@/lib/supabase/queries/orders';
-import { upsertSettings } from '@/lib/supabase/queries/settings';
+import { upsertSettings, upsertCalendarSettings } from '@/lib/supabase/queries/settings';
 import { insertReservation, deleteReservationBySession } from '@/lib/supabase/queries/reservations';
 import { insertIngredient, updateIngredientRow, deleteIngredientRow } from '@/lib/supabase/queries/ingredients';
 import { insertKitchenEvent } from '@/lib/supabase/queries/kitchenEvents';
 import { insertDecoration, updateDecorationRow, deleteDecorationRow } from '@/lib/supabase/queries/decorations';
-import type { MenuItem, Table, Order, BusinessSettings, StockReservation, Ingredient, KitchenEvent, MapDecoration } from '@/domain/types';
+import { insertCalendarEvent, updateCalendarEventRow, deleteCalendarEventRow } from '@/lib/supabase/queries/calendarEvents';
+import { insertEventPackage, updateEventPackageRow, deleteEventPackageRow } from '@/lib/supabase/queries/eventPackages';
+import { insertEmployee, updateEmployeeRow, deleteEmployeeRow } from '@/lib/supabase/queries/employees';
+import { insertShift, updateShiftRow, deleteShiftRow } from '@/lib/supabase/queries/shifts';
+import type {
+  MenuItem, Table, Order, BusinessSettings, StockReservation, Ingredient, KitchenEvent, MapDecoration,
+  CalendarEvent, EventPackage, Employee, Shift, CalendarSettings,
+} from '@/domain/types';
 
 // ─── Menu ─────────────────────────────────────────────────────────────────────
 
@@ -177,4 +184,117 @@ export async function persistDecorationUpdate(
 
 export async function persistDeleteDecoration(id: string): Promise<void> {
   await deleteDecorationRow(id);
+}
+
+// ─── Calendar Events ──────────────────────────────────────────────────────────
+
+export async function persistNewCalendarEvent(event: CalendarEvent, userId: string): Promise<void> {
+  await insertCalendarEvent(event, userId);
+}
+
+export async function persistCalendarEventUpdate(
+  id: string,
+  updates: Partial<CalendarEvent>,
+): Promise<void> {
+  const dbUpdates: Record<string, unknown> = {};
+  if (updates.status          !== undefined) dbUpdates.status           = updates.status;
+  if (updates.date            !== undefined) dbUpdates.date             = updates.date;
+  if (updates.timeSlot        !== undefined) dbUpdates.time_slot        = updates.timeSlot;
+  if ('endTime'          in updates) dbUpdates.end_time         = updates.endTime          ?? null;
+  if ('approvedBy'       in updates) dbUpdates.approved_by      = updates.approvedBy       ?? null;
+  if ('approvedAt'       in updates) dbUpdates.approved_at      = updates.approvedAt       ?? null;
+  if ('rejectionReason'  in updates) dbUpdates.rejection_reason = updates.rejectionReason  ?? null;
+  if ('guestCount'       in updates) dbUpdates.guest_count      = updates.guestCount;
+  if ('notes'            in updates) dbUpdates.notes            = updates.notes            ?? '';
+  await updateCalendarEventRow(id, dbUpdates);
+}
+
+export async function persistDeleteCalendarEvent(id: string): Promise<void> {
+  await deleteCalendarEventRow(id);
+}
+
+// ─── Event Packages ───────────────────────────────────────────────────────────
+
+export async function persistNewEventPackage(pkg: EventPackage, userId: string): Promise<void> {
+  await insertEventPackage(pkg, userId);
+}
+
+export async function persistEventPackageUpdate(
+  id: string,
+  updates: Partial<EventPackage>,
+): Promise<void> {
+  const dbUpdates: Record<string, unknown> = {};
+  if (updates.name            !== undefined) dbUpdates.name             = updates.name;
+  if (updates.emoji           !== undefined) dbUpdates.emoji            = updates.emoji;
+  if (updates.description     !== undefined) dbUpdates.description      = updates.description;
+  if (updates.minGuests       !== undefined) dbUpdates.min_guests       = updates.minGuests;
+  if (updates.maxGuests       !== undefined) dbUpdates.max_guests       = updates.maxGuests;
+  if ('fixedPrice'      in updates) dbUpdates.fixed_price      = updates.fixedPrice     ?? null;
+  if ('pricePerPerson'  in updates) dbUpdates.price_per_person = updates.pricePerPerson ?? null;
+  if (updates.duration        !== undefined) dbUpdates.duration         = updates.duration;
+  if (updates.details         !== undefined) dbUpdates.details          = updates.details;
+  if (updates.active          !== undefined) dbUpdates.active           = updates.active;
+  await updateEventPackageRow(id, dbUpdates);
+}
+
+export async function persistDeleteEventPackage(id: string): Promise<void> {
+  await deleteEventPackageRow(id);
+}
+
+// ─── Calendar Settings ────────────────────────────────────────────────────────
+
+export async function persistCalendarSettings(
+  settings: CalendarSettings,
+  userId: string,
+): Promise<void> {
+  await upsertCalendarSettings(settings, userId);
+}
+
+// ─── Employees ────────────────────────────────────────────────────────────────
+
+export async function persistNewEmployee(emp: Employee, userId: string): Promise<void> {
+  await insertEmployee(emp, userId);
+}
+
+export async function persistEmployeeUpdate(
+  id: string,
+  updates: Partial<Employee>,
+): Promise<void> {
+  const dbUpdates: Record<string, unknown> = {};
+  if (updates.name   !== undefined) dbUpdates.name   = updates.name;
+  if (updates.role   !== undefined) dbUpdates.role   = updates.role;
+  if (updates.color  !== undefined) dbUpdates.color  = updates.color;
+  if (updates.active !== undefined) dbUpdates.active = updates.active;
+  if ('phone' in updates) dbUpdates.phone = updates.phone ?? null;
+  if ('email' in updates) dbUpdates.email = updates.email ?? null;
+  await updateEmployeeRow(id, dbUpdates);
+}
+
+export async function persistDeleteEmployee(id: string): Promise<void> {
+  await deleteEmployeeRow(id);
+}
+
+// ─── Shifts ───────────────────────────────────────────────────────────────────
+
+export async function persistNewShift(shift: Shift, userId: string): Promise<void> {
+  await insertShift(shift, userId);
+}
+
+export async function persistShiftUpdate(
+  id: string,
+  updates: Partial<Shift>,
+): Promise<void> {
+  const dbUpdates: Record<string, unknown> = {};
+  if (updates.date        !== undefined) dbUpdates.date         = updates.date;
+  if (updates.startTime   !== undefined) dbUpdates.start_time   = updates.startTime;
+  if (updates.endTime     !== undefined) dbUpdates.end_time     = updates.endTime;
+  if (updates.role        !== undefined) dbUpdates.role         = updates.role;
+  if (updates.employeeIds !== undefined) dbUpdates.employee_ids = updates.employeeIds;
+  if (updates.minStaff    !== undefined) dbUpdates.min_staff    = updates.minStaff;
+  if ('notes' in updates) dbUpdates.notes = updates.notes ?? '';
+  await updateShiftRow(id, dbUpdates);
+}
+
+export async function persistDeleteShift(id: string): Promise<void> {
+  await deleteShiftRow(id);
 }

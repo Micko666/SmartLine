@@ -7,6 +7,7 @@ import type {
   CheckoutPayload, CheckoutResult, CartValidationResult, CartValidationIssue,
   PaymentMethod, Ingredient, KitchenEvent, Station, MapDecoration, DecorationType,
   CalendarEvent, CalendarEventStatus, EventPackage, CalendarSettings, WorkingDay, WorkingException,
+  Employee, Shift,
 } from '../domain/types';
 import {
   SEED_MENU_ITEMS, SEED_TABLES, DEFAULT_SETTINGS, DEMO_USER, SEED_CATEGORIES,
@@ -59,6 +60,8 @@ type WorkspaceSnapshot = {
   calendarEvents: CalendarEvent[];
   eventPackages: EventPackage[];
   calendarSettings: CalendarSettings;
+  employees: Employee[];
+  shifts: Shift[];
 };
 
 function defaultWorkspace(user: User): WorkspaceSnapshot {
@@ -82,6 +85,8 @@ function defaultWorkspace(user: User): WorkspaceSnapshot {
     calendarEvents:   [],
     eventPackages:    [],
     calendarSettings: DEFAULT_CALENDAR_SETTINGS,
+    employees:        [],
+    shifts:           [],
   };
 }
 
@@ -129,6 +134,8 @@ function loadWorkspaceStateLocal(userId: string, user: User): WorkspaceSnapshot 
           calendarSettings: parsed.state.calendarSettings
             ? { ...DEFAULT_CALENDAR_SETTINGS, ...parsed.state.calendarSettings }
             : DEFAULT_CALENDAR_SETTINGS,
+          employees:        parsed.state.employees        ?? [],
+          shifts:           parsed.state.shifts           ?? [],
         };
       }
     }
@@ -166,6 +173,8 @@ export interface AppState {
   calendarEvents: CalendarEvent[];
   eventPackages: EventPackage[];
   calendarSettings: CalendarSettings;
+  employees: Employee[];
+  shifts: Shift[];
 
   login:  (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
@@ -229,6 +238,16 @@ export interface AppState {
   deleteEventPackage: (id: string) => void;
 
   updateCalendarSettings: (updates: Partial<CalendarSettings>) => void;
+
+  // ── Employees ───────────────────────────────────────────────────────────────
+  addEmployee:    (data: Omit<Employee, 'id' | 'createdAt'>) => Employee;
+  updateEmployee: (id: string, updates: Partial<Omit<Employee, 'id' | 'createdAt'>>) => void;
+  deleteEmployee: (id: string) => void;
+
+  // ── Shifts ──────────────────────────────────────────────────────────────────
+  addShift:    (data: Omit<Shift, 'id' | 'createdAt'>) => Shift;
+  updateShift: (id: string, updates: Partial<Omit<Shift, 'id' | 'createdAt'>>) => void;
+  deleteShift: (id: string) => void;
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -252,6 +271,8 @@ export const useStore = create<AppState>()((set, get) => ({
   calendarEvents:   [],
   eventPackages:    [],
   calendarSettings: DEFAULT_CALENDAR_SETTINGS,
+  employees:        [],
+  shifts:           [],
 
   // ── Auth ────────────────────────────────────────────────────────────────────
 
@@ -1017,6 +1038,11 @@ export const useStore = create<AppState>()((set, get) => ({
     const event: CalendarEvent = { ...data, id: genId(), createdAt: now(), updatedAt: now() };
     set(s => ({ calendarEvents: [event, ...s.calendarEvents] }));
     _persistLocal(get);
+    const { user } = get();
+    if (isSupabaseEnabled() && user?.id) {
+      bridge.persistNewCalendarEvent(event, user.id).catch(() =>
+        toast.error('Failed to save event.'));
+    }
     return event;
   },
 
@@ -1026,21 +1052,34 @@ export const useStore = create<AppState>()((set, get) => ({
         e.id === id ? { ...e, ...updates, updatedAt: now() } : e),
     }));
     _persistLocal(get);
+    if (isSupabaseEnabled()) {
+      bridge.persistCalendarEventUpdate(id, updates).catch(() =>
+        toast.error('Failed to update event.'));
+    }
   },
 
   deleteCalendarEvent(id) {
     set(s => ({ calendarEvents: s.calendarEvents.filter(e => e.id !== id) }));
     _persistLocal(get);
+    if (isSupabaseEnabled()) {
+      bridge.persistDeleteCalendarEvent(id).catch(() =>
+        toast.error('Failed to delete event.'));
+    }
   },
 
   approveCalendarEvent(id, approvedBy) {
+    const approvedAt = now();
     set(s => ({
       calendarEvents: s.calendarEvents.map(e =>
         e.id === id
-          ? { ...e, status: 'approved' as CalendarEventStatus, approvedBy, approvedAt: now(), updatedAt: now() }
+          ? { ...e, status: 'approved' as CalendarEventStatus, approvedBy, approvedAt, updatedAt: now() }
           : e),
     }));
     _persistLocal(get);
+    if (isSupabaseEnabled()) {
+      bridge.persistCalendarEventUpdate(id, { status: 'approved', approvedBy, approvedAt }).catch(() =>
+        toast.error('Failed to approve event.'));
+    }
   },
 
   rejectCalendarEvent(id, reason) {
@@ -1051,12 +1090,21 @@ export const useStore = create<AppState>()((set, get) => ({
           : e),
     }));
     _persistLocal(get);
+    if (isSupabaseEnabled()) {
+      bridge.persistCalendarEventUpdate(id, { status: 'rejected', rejectionReason: reason ?? '' }).catch(() =>
+        toast.error('Failed to reject event.'));
+    }
   },
 
   addEventPackage(data) {
     const pkg: EventPackage = { ...data, id: genId(), createdAt: now() };
     set(s => ({ eventPackages: [...s.eventPackages, pkg] }));
     _persistLocal(get);
+    const { user } = get();
+    if (isSupabaseEnabled() && user?.id) {
+      bridge.persistNewEventPackage(pkg, user.id).catch(() =>
+        toast.error('Failed to save package.'));
+    }
     return pkg;
   },
 
@@ -1065,16 +1113,100 @@ export const useStore = create<AppState>()((set, get) => ({
       eventPackages: s.eventPackages.map(p => p.id === id ? { ...p, ...updates } : p),
     }));
     _persistLocal(get);
+    if (isSupabaseEnabled()) {
+      bridge.persistEventPackageUpdate(id, updates).catch(() =>
+        toast.error('Failed to update package.'));
+    }
   },
 
   deleteEventPackage(id) {
     set(s => ({ eventPackages: s.eventPackages.filter(p => p.id !== id) }));
     _persistLocal(get);
+    if (isSupabaseEnabled()) {
+      bridge.persistDeleteEventPackage(id).catch(() =>
+        toast.error('Failed to delete package.'));
+    }
   },
 
   updateCalendarSettings(updates) {
     set(s => ({ calendarSettings: { ...s.calendarSettings, ...updates } }));
     _persistLocal(get);
+    const { calendarSettings, user } = get();
+    if (isSupabaseEnabled() && user?.id) {
+      bridge.persistCalendarSettings(calendarSettings, user.id).catch(() =>
+        toast.error('Failed to save calendar settings.'));
+    }
+  },
+
+  // ── Employees ────────────────────────────────────────────────────────────────
+
+  addEmployee(data) {
+    const emp: Employee = { ...data, id: genId(), createdAt: now() };
+    set(s => ({ employees: [...s.employees, emp] }));
+    _persistLocal(get);
+    const { user } = get();
+    if (isSupabaseEnabled() && user?.id) {
+      bridge.persistNewEmployee(emp, user.id).catch(() =>
+        toast.error('Failed to save employee.'));
+    }
+    return emp;
+  },
+
+  updateEmployee(id, updates) {
+    set(s => ({ employees: s.employees.map(e => e.id === id ? { ...e, ...updates } : e) }));
+    _persistLocal(get);
+    if (isSupabaseEnabled()) {
+      bridge.persistEmployeeUpdate(id, updates).catch(() =>
+        toast.error('Failed to update employee.'));
+    }
+  },
+
+  deleteEmployee(id) {
+    // Remove employee from all shifts before deleting
+    set(s => ({
+      employees: s.employees.filter(e => e.id !== id),
+      shifts: s.shifts.map(sh => ({
+        ...sh,
+        employeeIds: sh.employeeIds.filter(eid => eid !== id),
+      })),
+    }));
+    _persistLocal(get);
+    if (isSupabaseEnabled()) {
+      bridge.persistDeleteEmployee(id).catch(() =>
+        toast.error('Failed to delete employee.'));
+    }
+  },
+
+  // ── Shifts ────────────────────────────────────────────────────────────────────
+
+  addShift(data) {
+    const shift: Shift = { ...data, id: genId(), createdAt: now() };
+    set(s => ({ shifts: [...s.shifts, shift] }));
+    _persistLocal(get);
+    const { user } = get();
+    if (isSupabaseEnabled() && user?.id) {
+      bridge.persistNewShift(shift, user.id).catch(() =>
+        toast.error('Failed to save shift.'));
+    }
+    return shift;
+  },
+
+  updateShift(id, updates) {
+    set(s => ({ shifts: s.shifts.map(sh => sh.id === id ? { ...sh, ...updates } : sh) }));
+    _persistLocal(get);
+    if (isSupabaseEnabled()) {
+      bridge.persistShiftUpdate(id, updates).catch(() =>
+        toast.error('Failed to update shift.'));
+    }
+  },
+
+  deleteShift(id) {
+    set(s => ({ shifts: s.shifts.filter(sh => sh.id !== id) }));
+    _persistLocal(get);
+    if (isSupabaseEnabled()) {
+      bridge.persistDeleteShift(id).catch(() =>
+        toast.error('Failed to delete shift.'));
+    }
   },
 }));
 
@@ -1211,10 +1343,10 @@ function _restoreStock(
 /** Persist workspace snapshot to localStorage (used only when Supabase is disabled). */
 function _persistLocal(get: () => AppState) {
   if (isSupabaseEnabled() || !_activeUserId) return;
-  const { menuItems, categories, tables, orders, receipts, settings, stations, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations, calendarEvents, eventPackages, calendarSettings } = get();
+  const { menuItems, categories, tables, orders, receipts, settings, stations, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations, calendarEvents, eventPackages, calendarSettings, employees, shifts } = get();
   // Keep settings.stations in sync with the top-level stations slice before persisting
   const syncedSettings = { ...settings, stations };
-  saveWorkspaceStateLocal(_activeUserId, { menuItems, categories, tables, orders, receipts, settings: syncedSettings, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations, calendarEvents, eventPackages, calendarSettings });
+  saveWorkspaceStateLocal(_activeUserId, { menuItems, categories, tables, orders, receipts, settings: syncedSettings, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations, calendarEvents, eventPackages, calendarSettings, employees, shifts });
 }
 
 // ─── Test utility ─────────────────────────────────────────────────────────────

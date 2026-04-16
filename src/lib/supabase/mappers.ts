@@ -8,6 +8,7 @@
 import type {
   MenuItem, Table, Order, Receipt, BusinessSettings, StockReservation,
   Ingredient, KitchenEvent, Station,
+  CalendarEvent, EventPackage, Employee, Shift,
 } from '@/domain/types';
 
 // ─── Business Settings ────────────────────────────────────────────────────────
@@ -266,5 +267,155 @@ export function mapReservationRow(row: Record<string, unknown>): StockReservatio
     sessionId: row.session_id as string,
     items:     (row.items as StockReservation['items']) ?? [],
     expiresAt: new Date(row.expires_at as string).getTime(),
+  };
+}
+
+// ─── Calendar Events ──────────────────────────────────────────────────────────
+
+export function mapCalendarEventRow(row: Record<string, unknown>): CalendarEvent {
+  return {
+    id:              row.id as string,
+    date:            row.date as string,
+    timeSlot:        row.time_slot as string,
+    endTime:         (row.end_time as string | undefined) ?? undefined,
+    type:            row.type as CalendarEvent['type'],
+    status:          row.status as CalendarEvent['status'],
+    customerName:    (row.customer_name as string) ?? '',
+    customerPhone:   (row.customer_phone as string) ?? '',
+    customerEmail:   (row.customer_email as string) ?? '',
+    guestCount:      Number(row.guest_count ?? 1),
+    packageId:       (row.package_id as string | undefined) ?? undefined,
+    packageName:     (row.package_name as string | undefined) ?? undefined,
+    notes:           (row.notes as string) ?? '',
+    closureReason:   (row.closure_reason as string | undefined) ?? undefined,
+    createdBy:       (row.created_by as CalendarEvent['createdBy']) ?? 'manager',
+    approvedBy:      (row.approved_by as string | undefined) ?? undefined,
+    approvedAt:      (row.approved_at as string | undefined) ?? undefined,
+    rejectionReason: (row.rejection_reason as string | undefined) ?? undefined,
+    createdAt:       row.created_at as string,
+    updatedAt:       row.updated_at as string,
+  };
+}
+
+export function calendarEventToRow(event: CalendarEvent, userId: string): Record<string, unknown> {
+  return {
+    id:               event.id,
+    user_id:          userId,
+    date:             event.date,
+    time_slot:        event.timeSlot,
+    end_time:         event.endTime    ?? null,
+    type:             event.type,
+    status:           event.status,
+    customer_name:    event.customerName,
+    customer_phone:   event.customerPhone,
+    customer_email:   event.customerEmail,
+    guest_count:      event.guestCount,
+    package_id:       event.packageId   ?? null,
+    package_name:     event.packageName ?? null,
+    notes:            event.notes,
+    closure_reason:   event.closureReason  ?? null,
+    created_by:       event.createdBy,
+    approved_by:      event.approvedBy  ?? null,
+    approved_at:      event.approvedAt  ?? null,
+    rejection_reason: event.rejectionReason ?? null,
+    created_at:       event.createdAt,
+    updated_at:       event.updatedAt,
+  };
+}
+
+// ─── Event Packages ───────────────────────────────────────────────────────────
+
+export function mapEventPackageRow(row: Record<string, unknown>): EventPackage {
+  return {
+    id:             row.id as string,
+    name:           row.name as string,
+    emoji:          (row.emoji as string) ?? '🎉',
+    description:    (row.description as string) ?? '',
+    minGuests:      Number(row.min_guests ?? 1),
+    maxGuests:      Number(row.max_guests ?? 100),
+    fixedPrice:     row.fixed_price != null ? Number(row.fixed_price) : undefined,
+    pricePerPerson: row.price_per_person != null ? Number(row.price_per_person) : undefined,
+    duration:       Number(row.duration ?? 2),
+    details:        (row.details as string) ?? '',
+    active:         Boolean(row.active ?? true),
+    createdAt:      row.created_at as string,
+  };
+}
+
+export function eventPackageToRow(pkg: EventPackage, userId: string): Record<string, unknown> {
+  return {
+    id:               pkg.id,
+    user_id:          userId,
+    name:             pkg.name,
+    emoji:            pkg.emoji,
+    description:      pkg.description,
+    min_guests:       pkg.minGuests,
+    max_guests:       pkg.maxGuests,
+    fixed_price:      pkg.fixedPrice     ?? null,
+    price_per_person: pkg.pricePerPerson ?? null,
+    duration:         pkg.duration,
+    details:          pkg.details,
+    active:           pkg.active,
+    created_at:       pkg.createdAt,
+  };
+}
+
+// ─── Employees ────────────────────────────────────────────────────────────────
+
+export function mapEmployeeRow(row: Record<string, unknown>): Employee {
+  return {
+    id:        row.id as string,
+    name:      row.name as string,
+    role:      (row.role as string) ?? '',
+    phone:     (row.phone as string | undefined) ?? undefined,
+    email:     (row.email as string | undefined) ?? undefined,
+    color:     (row.color as string) ?? '#6366f1',
+    active:    Boolean(row.active ?? true),
+    createdAt: row.created_at as string,
+  };
+}
+
+export function employeeToRow(emp: Employee, userId: string): Record<string, unknown> {
+  return {
+    id:         emp.id,
+    user_id:    userId,
+    name:       emp.name,
+    role:       emp.role,
+    phone:      emp.phone ?? null,
+    email:      emp.email ?? null,
+    color:      emp.color,
+    active:     emp.active,
+    created_at: emp.createdAt,
+  };
+}
+
+// ─── Shifts ───────────────────────────────────────────────────────────────────
+
+export function mapShiftRow(row: Record<string, unknown>): Shift {
+  return {
+    id:          row.id as string,
+    date:        row.date as string,
+    startTime:   row.start_time as string,
+    endTime:     row.end_time as string,
+    role:        (row.role as string) ?? '',
+    employeeIds: (row.employee_ids as string[]) ?? [],
+    minStaff:    Number(row.min_staff ?? 1),
+    notes:       (row.notes as string) ?? '',
+    createdAt:   row.created_at as string,
+  };
+}
+
+export function shiftToRow(shift: Shift, userId: string): Record<string, unknown> {
+  return {
+    id:           shift.id,
+    user_id:      userId,
+    date:         shift.date,
+    start_time:   shift.startTime,
+    end_time:     shift.endTime,
+    role:         shift.role,
+    employee_ids: shift.employeeIds,
+    min_staff:    shift.minStaff,
+    notes:        shift.notes,
+    created_at:   shift.createdAt,
   };
 }

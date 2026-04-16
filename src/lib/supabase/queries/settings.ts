@@ -1,6 +1,6 @@
 import { supabase } from '../client';
 import { mapSettingsRow, settingsToRow } from '../mappers';
-import type { BusinessSettings } from '@/domain/types';
+import type { BusinessSettings, CalendarSettings } from '@/domain/types';
 
 export async function fetchSettings(userId: string): Promise<BusinessSettings | null> {
   const { data, error } = await supabase!
@@ -32,4 +32,26 @@ export async function fetchNextOrderNumber(userId: string): Promise<number> {
     .eq('user_id', userId)
     .single();
   return Number((data as Record<string, unknown> | null)?.next_order_number ?? 1001);
+}
+
+export async function fetchCalendarSettings(userId: string): Promise<CalendarSettings | null> {
+  const { data } = await supabase!
+    .from('business_settings')
+    .select('calendar_settings')
+    .eq('user_id', userId)
+    .single();
+  const raw = (data as Record<string, unknown> | null)?.calendar_settings;
+  if (!raw || Object.keys(raw as object).length === 0) return null;
+  return raw as CalendarSettings;
+}
+
+export async function upsertCalendarSettings(
+  settings: CalendarSettings,
+  userId: string,
+): Promise<void> {
+  const { error } = await supabase!
+    .from('business_settings')
+    .update({ calendar_settings: settings })
+    .eq('user_id', userId);
+  if (error) throw new Error(error.message);
 }

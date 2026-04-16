@@ -411,6 +411,36 @@ export interface CalendarSettings {
   workingExceptions: WorkingException[];
 }
 
+// ─── Employees & Shifts ───────────────────────────────────────────────────────
+
+export interface Employee {
+  id: string;
+  name: string;
+  /** Job title / position — "Chef", "Bartender", "Server", etc. */
+  role: string;
+  phone?: string;
+  email?: string;
+  /** Hex color for roster display — e.g. '#6366f1' */
+  color: string;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface Shift {
+  id: string;
+  date: string;        // ISO date "2026-05-20"
+  startTime: string;   // "09:00"
+  endTime: string;     // "17:00"
+  /** Shift label — "Kitchen", "Bar", "Floor", etc. */
+  role: string;
+  /** IDs of employees assigned to this shift */
+  employeeIds: string[];
+  /** Minimum required staff count — shifts below this are flagged */
+  minStaff: number;
+  notes: string;
+  createdAt: string;
+}
+
 // ─── Analytics ───────────────────────────────────────────────────────────────
 
 export interface DashboardStats {

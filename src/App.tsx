@@ -31,6 +31,7 @@ const Stations       = lazy(() => import('./pages/admin/Stations'));
 const CalendarPage   = lazy(() => import('./pages/admin/Calendar'));
 
 const BookingPage    = lazy(() => import('./pages/customer/BookingPage'));
+const RosterPage     = lazy(() => import('./pages/customer/RosterPage'));
 
 const StationGate    = lazy(() => import('./pages/station/StationGate'));
 
@@ -80,6 +81,9 @@ const App = () => (
 
               {/* ── Public customer booking ── */}
               <Route path="/book/:restaurantToken" element={<BookingPage />} />
+
+              {/* ── Public staff roster ── */}
+              <Route path="/roster/:restaurantToken" element={<RosterPage />} />
 
               {/* ── Station devices (public, PIN gated) ── */}
               <Route path="/station/:restaurantToken/:stationId" element={<StationGate />} />

@@ -12,7 +12,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Clock, Users, CheckCircle, ChefHat } from 'lucide-react';
-import { fetchRestaurantByToken } from '@/lib/supabase/queries/public';
+import { fetchRestaurantByToken, fetchBookingDataByToken, submitBookingToSupabase } from '@/lib/supabase/queries/public';
 import { useStore } from '@/store';
 import { isSupabaseEnabled } from '@/store/flags';
 import type { CalendarSettings, EventPackage, WorkingDay, CalendarEvent } from '@/domain/types';
@@ -44,8 +44,11 @@ interface RestaurantData {
   restaurantName: string;
   calendarSettings: CalendarSettings;
   eventPackages: EventPackage[];
-  calendarEvents: CalendarEvent[];
-  addCalendarEvent: (data: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'>) => CalendarEvent;
+  calendarEvents: Pick<CalendarEvent, 'id' | 'date' | 'timeSlot' | 'type' | 'status'>[];
+  /** restaurantToken — needed for Supabase RPC path */
+  restaurantToken: string;
+  /** submitBooking returns true on success */
+  submitBooking: (data: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'>) => Promise<boolean>;
 }
 
 export default function BookingPage() {
@@ -85,25 +88,47 @@ export default function BookingPage() {
 
         if (!res) { setError('Restaurant not found.'); setLoading(false); return; }
 
-        // Load store-level calendar data (local mode)
         const storeState = useStore.getState();
         const isLocal = !isSupabaseEnabled() || storeState.settings?.restaurantToken === restaurantToken;
 
+        let calSettings: CalendarSettings;
+        let evtPackages: EventPackage[];
+        let calEvents: Pick<CalendarEvent, 'id' | 'date' | 'timeSlot' | 'type' | 'status'>[];
+
+        if (isLocal) {
+          // Demo / local mode — read straight from store
+          calSettings = storeState.calendarSettings;
+          evtPackages = storeState.eventPackages.filter(p => p.active);
+          calEvents   = storeState.calendarEvents.map(e => ({
+            id: e.id, date: e.date, timeSlot: e.timeSlot, type: e.type, status: e.status,
+          }));
+        } else {
+          // Supabase mode — fetch public booking data via RPC
+          const bookingData = await fetchBookingDataByToken(restaurantToken);
+          const defaultSettings: CalendarSettings = {
+            maxEventsPerDay: 10, requireApproval: true, advanceBookingDays: 90,
+            bookingMessage: '', workingDays: [], workingExceptions: [],
+          };
+          calSettings = bookingData?.calendarSettings ?? defaultSettings;
+          evtPackages = bookingData?.eventPackages ?? [];
+          calEvents   = bookingData?.calendarEvents ?? [];
+        }
+
         setData({
-          restaurantName: res.settings?.businessName ?? 'SmartLine',
-          calendarSettings: isLocal
-            ? storeState.calendarSettings
-            : (res as any).calendarSettings ?? {
-                maxEventsPerDay: 10,
-                requireApproval: true,
-                advanceBookingDays: 90,
-                bookingMessage: '',
-                workingDays: [],
-                workingExceptions: [],
-              },
-          eventPackages: isLocal ? storeState.eventPackages.filter(p => p.active) : [],
-          calendarEvents: isLocal ? storeState.calendarEvents : [],
-          addCalendarEvent: storeState.addCalendarEvent,
+          restaurantName:   res.settings?.businessName ?? 'SmartLine',
+          calendarSettings: calSettings,
+          eventPackages:    evtPackages,
+          calendarEvents:   calEvents,
+          restaurantToken:  restaurantToken,
+          submitBooking: async (eventData) => {
+            if (isLocal) {
+              storeState.addCalendarEvent(eventData);
+              return true;
+            } else {
+              const result = await submitBookingToSupabase(restaurantToken, eventData);
+              return result.ok;
+            }
+          },
         });
       } catch {
         setError('Failed to load booking page. Please try again.');
@@ -178,7 +203,7 @@ export default function BookingPage() {
 
   // ── Submit ──────────────────────────────────────────────────────────────────
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!data || !selectedDate || !selectedSlot) return;
     if (!form.name.trim()) return;
@@ -186,7 +211,7 @@ export default function BookingPage() {
     const pkg = data.eventPackages.find(p => p.id === form.packageId);
     const status = data.calendarSettings.requireApproval ? 'pending' : 'approved';
 
-    data.addCalendarEvent({
+    const ok = await data.submitBooking({
       date:          selectedDate,
       timeSlot:      selectedSlot,
       type:          form.packageId ? 'private_event' : 'reservation',
@@ -201,7 +226,7 @@ export default function BookingPage() {
       createdBy:     'customer',
     });
 
-    setSubmitted(true);
+    if (ok) setSubmitted(true);
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
