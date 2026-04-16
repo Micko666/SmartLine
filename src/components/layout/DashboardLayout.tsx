@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingBag, UtensilsCrossed, Package, BarChart3,
   Settings, LogOut, ChefHat, Menu, X, Bell, Clock, TableProperties, ExternalLink,
-  FlaskConical, Monitor,
+  FlaskConical, Monitor, CalendarDays,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store';
@@ -19,6 +19,7 @@ const navItems = [
   { path: '/tables',       label: 'Tables & QR',   icon: TableProperties },
   { path: '/prep-times',   label: 'Prep Times',    icon: Clock },
   { path: '/analytics',    label: 'Analytics',     icon: BarChart3 },
+  { path: '/calendar',     label: 'Calendar',      icon: CalendarDays },
   { path: '/stations',     label: 'Stations',      icon: Monitor },
   { path: '/settings',     label: 'Settings',      icon: Settings },
 ];
@@ -31,12 +32,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Real-time sync — single coordinator owns all admin channels
   useRealtimeCoordinator();
 
-  const { logout, user, orders, menuItems, settings } = useStore(useShallow(s => ({
+  const { logout, user, orders, menuItems, settings, calendarEvents } = useStore(useShallow(s => ({
     logout: s.logout,
     user: s.user,
     orders: s.orders,
     menuItems: s.menuItems,
     settings: s.settings,
+    calendarEvents: s.calendarEvents,
   })));
 
   const handleLogout = () => {
@@ -48,6 +50,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const activeCount = orders.filter(o =>
     o.status === 'paid' || o.status === 'preparing' || o.status === 'ready',
   ).length;
+
+  const pendingBookings = calendarEvents.filter(e => e.status === 'pending').length;
 
   const lowStockCount = menuItems.filter(
     i => i.stock !== null && i.stock <= settings.lowStockThreshold && i.stock > 0,
@@ -88,7 +92,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
           {navItems.map(item => {
             const active = location.pathname === item.path;
-            const isOrders = item.path === '/orders';
+            const isOrders   = item.path === '/orders';
+            const isCalendar = item.path === '/calendar';
             return (
               <Link
                 key={item.path} to={item.path}
@@ -99,6 +104,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <span className="flex-1">{item.label}</span>
                 {isOrders && activeCount > 0 && (
                   <span className="ml-auto text-[10px] font-bold bg-destructive text-destructive-foreground rounded-full w-4 h-4 flex items-center justify-center">{activeCount > 9 ? '9+' : activeCount}</span>
+                )}
+                {isCalendar && pendingBookings > 0 && (
+                  <span className="ml-auto text-[10px] font-bold bg-warning text-warning-foreground rounded-full w-4 h-4 flex items-center justify-center">{pendingBookings > 9 ? '9+' : pendingBookings}</span>
                 )}
               </Link>
             );

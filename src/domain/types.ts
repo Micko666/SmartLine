@@ -327,6 +327,90 @@ export interface CartValidationResult {
   issues: CartValidationIssue[];
 }
 
+// ─── Calendar & Reservations ─────────────────────────────────────────────────
+
+export type CalendarEventStatus = 'pending' | 'approved' | 'rejected' | 'cancelled' | 'completed';
+export type CalendarEventType   = 'reservation' | 'private_event' | 'closure';
+
+export interface EventPackage {
+  id: string;
+  name: string;           // "Birthday Party", "Wedding Reception"
+  emoji: string;          // display icon
+  description: string;
+  minGuests: number;
+  maxGuests: number;
+  /** If set, total fixed price for the package */
+  fixedPrice?: number;
+  /** If set, price per person */
+  pricePerPerson?: number;
+  /** Estimated duration in hours */
+  duration: number;
+  /** What's included / requirements */
+  details: string;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface WorkingDay {
+  dayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0=Sunday
+  isOpen: boolean;
+  openTime: string;   // "09:00"
+  closeTime: string;  // "22:00"
+}
+
+export interface WorkingException {
+  id: string;
+  date: string;        // ISO date "2026-04-20"
+  isClosed: boolean;
+  note: string;
+  openTime?: string;
+  closeTime?: string;
+}
+
+export interface CalendarEvent {
+  id: string;
+  date: string;           // ISO date "2026-05-15"
+  timeSlot: string;       // "18:00"
+  endTime?: string;       // "21:00"
+  type: CalendarEventType;
+  status: CalendarEventStatus;
+
+  // Customer / contact info
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string;
+
+  guestCount: number;
+  packageId?: string;
+  packageName?: string;   // denormalized for display
+  notes: string;
+
+  // Closures (manager-only, no customer info needed)
+  closureReason?: string;
+
+  // Approval workflow
+  createdBy: 'customer' | 'manager' | 'staff';
+  approvedBy?: string;
+  approvedAt?: string;
+  rejectionReason?: string;
+
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CalendarSettings {
+  /** Max bookings/events allowed per day (0 = unlimited) */
+  maxEventsPerDay: number;
+  /** All customer requests require manager approval */
+  requireApproval: boolean;
+  /** How many days in advance customers can book (0 = unlimited) */
+  advanceBookingDays: number;
+  /** Message shown to customers on the booking page */
+  bookingMessage: string;
+  workingDays: WorkingDay[];
+  workingExceptions: WorkingException[];
+}
+
 // ─── Analytics ───────────────────────────────────────────────────────────────
 
 export interface DashboardStats {

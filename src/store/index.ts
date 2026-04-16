@@ -6,6 +6,7 @@ import type {
   Receipt, CartItem, StockReservation, BusinessSettings,
   CheckoutPayload, CheckoutResult, CartValidationResult, CartValidationIssue,
   PaymentMethod, Ingredient, KitchenEvent, Station, MapDecoration, DecorationType,
+  CalendarEvent, CalendarEventStatus, EventPackage, CalendarSettings, WorkingDay, WorkingException,
 } from '../domain/types';
 import {
   SEED_MENU_ITEMS, SEED_TABLES, DEFAULT_SETTINGS, DEMO_USER, SEED_CATEGORIES,
@@ -24,6 +25,25 @@ const RESERVATION_TTL_MS = 5 * 60 * 1000;
 
 // ─── Workspace defaults ───────────────────────────────────────────────────────
 
+const DEFAULT_WORKING_DAYS: WorkingDay[] = [
+  { dayOfWeek: 0, isOpen: false, openTime: '09:00', closeTime: '22:00' },
+  { dayOfWeek: 1, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
+  { dayOfWeek: 2, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
+  { dayOfWeek: 3, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
+  { dayOfWeek: 4, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
+  { dayOfWeek: 5, isOpen: true,  openTime: '09:00', closeTime: '23:00' },
+  { dayOfWeek: 6, isOpen: true,  openTime: '10:00', closeTime: '23:00' },
+];
+
+const DEFAULT_CALENDAR_SETTINGS: CalendarSettings = {
+  maxEventsPerDay:    10,
+  requireApproval:    true,
+  advanceBookingDays: 90,
+  bookingMessage:     'We look forward to hosting you! Fill in your details and we will confirm your reservation shortly.',
+  workingDays:        DEFAULT_WORKING_DAYS,
+  workingExceptions:  [],
+};
+
 type WorkspaceSnapshot = {
   menuItems: MenuItem[];
   categories: string[];
@@ -36,6 +56,9 @@ type WorkspaceSnapshot = {
   ingredients: Ingredient[];
   kitchenEvents: KitchenEvent[];
   decorations: MapDecoration[];
+  calendarEvents: CalendarEvent[];
+  eventPackages: EventPackage[];
+  calendarSettings: CalendarSettings;
 };
 
 function defaultWorkspace(user: User): WorkspaceSnapshot {
@@ -51,11 +74,14 @@ function defaultWorkspace(user: User): WorkspaceSnapshot {
       businessName:    isDemo ? DEFAULT_SETTINGS.businessName : user.businessName,
       restaurantToken: isDemo ? DEFAULT_SETTINGS.restaurantToken : genId(),
     },
-    nextOrderNumber: 1001,
-    reservations:   [],
-    ingredients:    isDemo ? SEED_INGREDIENTS : [],
-    kitchenEvents:  [],
-    decorations:    [],
+    nextOrderNumber:  1001,
+    reservations:     [],
+    ingredients:      isDemo ? SEED_INGREDIENTS : [],
+    kitchenEvents:    [],
+    decorations:      [],
+    calendarEvents:   [],
+    eventPackages:    [],
+    calendarSettings: DEFAULT_CALENDAR_SETTINGS,
   };
 }
 
@@ -96,8 +122,13 @@ function loadWorkspaceStateLocal(userId: string, user: User): WorkspaceSnapshot 
             (r: StockReservation) => r.expiresAt > Date.now(),
           ),
           ingredients:   parsed.state.ingredients   ?? defaults.ingredients,
-          kitchenEvents: (parsed.state.kitchenEvents ?? []).filter((e: KitchenEvent) => new Date(e.createdAt).getTime() > cutoff),
-          decorations:   parsed.state.decorations   ?? [],
+          kitchenEvents:    (parsed.state.kitchenEvents ?? []).filter((e: KitchenEvent) => new Date(e.createdAt).getTime() > cutoff),
+          decorations:      parsed.state.decorations      ?? [],
+          calendarEvents:   parsed.state.calendarEvents   ?? [],
+          eventPackages:    parsed.state.eventPackages    ?? [],
+          calendarSettings: parsed.state.calendarSettings
+            ? { ...DEFAULT_CALENDAR_SETTINGS, ...parsed.state.calendarSettings }
+            : DEFAULT_CALENDAR_SETTINGS,
         };
       }
     }
@@ -132,6 +163,9 @@ export interface AppState {
   ingredients: Ingredient[];
   kitchenEvents: KitchenEvent[];
   decorations: MapDecoration[];
+  calendarEvents: CalendarEvent[];
+  eventPackages: EventPackage[];
+  calendarSettings: CalendarSettings;
 
   login:  (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
@@ -182,6 +216,19 @@ export interface AppState {
   getAvailableStock: (itemId: string) => number;
   getActiveOrders:   () => Order[];
   getTodayOrders:    () => Order[];
+
+  // ── Calendar ────────────────────────────────────────────────────────────────
+  addCalendarEvent:        (data: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'>) => CalendarEvent;
+  updateCalendarEvent:     (id: string, updates: Partial<Omit<CalendarEvent, 'id' | 'createdAt'>>) => void;
+  deleteCalendarEvent:     (id: string) => void;
+  approveCalendarEvent:    (id: string, approvedBy: string) => void;
+  rejectCalendarEvent:     (id: string, reason?: string) => void;
+
+  addEventPackage:    (data: Omit<EventPackage, 'id' | 'createdAt'>) => EventPackage;
+  updateEventPackage: (id: string, updates: Partial<Omit<EventPackage, 'id' | 'createdAt'>>) => void;
+  deleteEventPackage: (id: string) => void;
+
+  updateCalendarSettings: (updates: Partial<CalendarSettings>) => void;
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -197,11 +244,14 @@ export const useStore = create<AppState>()((set, get) => ({
   receipts:        [],
   settings:        DEFAULT_SETTINGS,
   stations:        [],
-  nextOrderNumber: 1001,
-  reservations:    [],
-  ingredients:     [],
-  kitchenEvents:   [],
-  decorations:     [],
+  nextOrderNumber:  1001,
+  reservations:     [],
+  ingredients:      [],
+  kitchenEvents:    [],
+  decorations:      [],
+  calendarEvents:   [],
+  eventPackages:    [],
+  calendarSettings: DEFAULT_CALENDAR_SETTINGS,
 
   // ── Auth ────────────────────────────────────────────────────────────────────
 
@@ -960,6 +1010,72 @@ export const useStore = create<AppState>()((set, get) => ({
       o => new Date(o.createdAt) >= startOfDay && isRevenueOrder(o.status),
     );
   },
+
+  // ── Calendar ─────────────────────────────────────────────────────────────────
+
+  addCalendarEvent(data) {
+    const event: CalendarEvent = { ...data, id: genId(), createdAt: now(), updatedAt: now() };
+    set(s => ({ calendarEvents: [event, ...s.calendarEvents] }));
+    _persistLocal(get);
+    return event;
+  },
+
+  updateCalendarEvent(id, updates) {
+    set(s => ({
+      calendarEvents: s.calendarEvents.map(e =>
+        e.id === id ? { ...e, ...updates, updatedAt: now() } : e),
+    }));
+    _persistLocal(get);
+  },
+
+  deleteCalendarEvent(id) {
+    set(s => ({ calendarEvents: s.calendarEvents.filter(e => e.id !== id) }));
+    _persistLocal(get);
+  },
+
+  approveCalendarEvent(id, approvedBy) {
+    set(s => ({
+      calendarEvents: s.calendarEvents.map(e =>
+        e.id === id
+          ? { ...e, status: 'approved' as CalendarEventStatus, approvedBy, approvedAt: now(), updatedAt: now() }
+          : e),
+    }));
+    _persistLocal(get);
+  },
+
+  rejectCalendarEvent(id, reason) {
+    set(s => ({
+      calendarEvents: s.calendarEvents.map(e =>
+        e.id === id
+          ? { ...e, status: 'rejected' as CalendarEventStatus, rejectionReason: reason ?? '', updatedAt: now() }
+          : e),
+    }));
+    _persistLocal(get);
+  },
+
+  addEventPackage(data) {
+    const pkg: EventPackage = { ...data, id: genId(), createdAt: now() };
+    set(s => ({ eventPackages: [...s.eventPackages, pkg] }));
+    _persistLocal(get);
+    return pkg;
+  },
+
+  updateEventPackage(id, updates) {
+    set(s => ({
+      eventPackages: s.eventPackages.map(p => p.id === id ? { ...p, ...updates } : p),
+    }));
+    _persistLocal(get);
+  },
+
+  deleteEventPackage(id) {
+    set(s => ({ eventPackages: s.eventPackages.filter(p => p.id !== id) }));
+    _persistLocal(get);
+  },
+
+  updateCalendarSettings(updates) {
+    set(s => ({ calendarSettings: { ...s.calendarSettings, ...updates } }));
+    _persistLocal(get);
+  },
 }));
 
 // ─── Local checkout (no Supabase) ────────────────────────────────────────────
@@ -1095,10 +1211,10 @@ function _restoreStock(
 /** Persist workspace snapshot to localStorage (used only when Supabase is disabled). */
 function _persistLocal(get: () => AppState) {
   if (isSupabaseEnabled() || !_activeUserId) return;
-  const { menuItems, categories, tables, orders, receipts, settings, stations, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations } = get();
+  const { menuItems, categories, tables, orders, receipts, settings, stations, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations, calendarEvents, eventPackages, calendarSettings } = get();
   // Keep settings.stations in sync with the top-level stations slice before persisting
   const syncedSettings = { ...settings, stations };
-  saveWorkspaceStateLocal(_activeUserId, { menuItems, categories, tables, orders, receipts, settings: syncedSettings, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations });
+  saveWorkspaceStateLocal(_activeUserId, { menuItems, categories, tables, orders, receipts, settings: syncedSettings, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations, calendarEvents, eventPackages, calendarSettings });
 }
 
 // ─── Test utility ─────────────────────────────────────────────────────────────

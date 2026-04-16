@@ -28,6 +28,9 @@ const Analytics      = lazy(() => import('./pages/admin/Analytics'));
 const Ingredients    = lazy(() => import('./pages/admin/Ingredients'));
 const Settings       = lazy(() => import('./pages/admin/Settings'));
 const Stations       = lazy(() => import('./pages/admin/Stations'));
+const CalendarPage   = lazy(() => import('./pages/admin/Calendar'));
+
+const BookingPage    = lazy(() => import('./pages/customer/BookingPage'));
 
 const StationGate    = lazy(() => import('./pages/station/StationGate'));
 
@@ -73,6 +76,10 @@ const App = () => (
               <Route path="/ingredients"  element={<AdminGuard><Ingredients /></AdminGuard>} />
               <Route path="/settings"     element={<AdminGuard><Settings /></AdminGuard>} />
               <Route path="/stations"     element={<AdminGuard><Stations /></AdminGuard>} />
+              <Route path="/calendar"     element={<AdminGuard><CalendarPage /></AdminGuard>} />
+
+              {/* ── Public customer booking ── */}
+              <Route path="/book/:restaurantToken" element={<BookingPage />} />
 
               {/* ── Station devices (public, PIN gated) ── */}
               <Route path="/station/:restaurantToken/:stationId" element={<StationGate />} />
