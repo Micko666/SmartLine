@@ -398,6 +398,16 @@ export interface CalendarEvent {
   updatedAt: string;
 }
 
+/** Reusable shift template — quick-add preset in the roster grid. */
+export interface ShiftTemplate {
+  id: string;
+  name: string;      // "Kitchen AM", "Bar PM"
+  startTime: string; // "09:00"
+  endTime: string;   // "17:00"
+  role: string;      // default role label
+  color: string;     // hex accent color for the block
+}
+
 export interface CalendarSettings {
   /** Max bookings/events allowed per day (0 = unlimited) */
   maxEventsPerDay: number;
@@ -409,6 +419,8 @@ export interface CalendarSettings {
   bookingMessage: string;
   workingDays: WorkingDay[];
   workingExceptions: WorkingException[];
+  /** Quick-add shift presets shown in the roster toolbar */
+  shiftTemplates: ShiftTemplate[];
 }
 
 // ─── Employees & Shifts ───────────────────────────────────────────────────────

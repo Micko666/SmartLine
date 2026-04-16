@@ -22,7 +22,7 @@ import { useEffect, useRef } from 'react';
 import { useStore } from '@/store';
 import { isSupabaseEnabled } from '@/store/flags';
 import { supabase } from '../client';
-import { mapOrderRow, mapKitchenEventRow } from '../mappers';
+import { mapOrderRow, mapKitchenEventRow, mapCalendarEventRow } from '../mappers';
 import type { OrderStatus } from '@/domain/types';
 
 type Channel = ReturnType<NonNullable<typeof supabase>['channel']>;
@@ -98,6 +98,29 @@ export function useRealtimeCoordinator() {
                   }
                 : item,
             ),
+          }));
+        },
+      )
+
+      // ── Calendar events (customer booking requests land here) ──────────────
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'calendar_events', filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const newEvent = mapCalendarEventRow(payload.new as Record<string, unknown>);
+          useStore.setState(s => {
+            if (s.calendarEvents.some(e => e.id === newEvent.id)) return s;
+            return { calendarEvents: [newEvent, ...s.calendarEvents] };
+          });
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'calendar_events', filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const updated = mapCalendarEventRow(payload.new as Record<string, unknown>);
+          useStore.setState(s => ({
+            calendarEvents: s.calendarEvents.map(e => e.id === updated.id ? updated : e),
           }));
         },
       )

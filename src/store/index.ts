@@ -43,6 +43,7 @@ const DEFAULT_CALENDAR_SETTINGS: CalendarSettings = {
   bookingMessage:     'We look forward to hosting you! Fill in your details and we will confirm your reservation shortly.',
   workingDays:        DEFAULT_WORKING_DAYS,
   workingExceptions:  [],
+  shiftTemplates:     [],
 };
 
 type WorkspaceSnapshot = {
