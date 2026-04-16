@@ -125,6 +125,8 @@ export interface AppState {
   orders: Order[];
   receipts: Receipt[];
   settings: BusinessSettings;
+  /** Top-level stations slice — runtime source of truth. settings.stations mirrors this for persistence. */
+  stations: Station[];
   nextOrderNumber: number;
   reservations: StockReservation[];
   ingredients: Ingredient[];
@@ -194,6 +196,7 @@ export const useStore = create<AppState>()((set, get) => ({
   orders:          [],
   receipts:        [],
   settings:        DEFAULT_SETTINGS,
+  stations:        [],
   nextOrderNumber: 1001,
   reservations:    [],
   ingredients:     [],
@@ -208,7 +211,7 @@ export const useStore = create<AppState>()((set, get) => ({
       _activeUserId = DEMO_USER.id;
       localStorage.setItem(AUTH_KEY, JSON.stringify({ user: DEMO_USER, isAuthenticated: true }));
       const workspace = loadWorkspaceStateLocal(DEMO_USER.id, DEMO_USER);
-      set({ user: DEMO_USER, isAuthenticated: true, _hasHydrated: true, ...workspace });
+      set({ user: DEMO_USER, isAuthenticated: true, _hasHydrated: true, ...workspace, stations: workspace.settings.stations ?? [] });
       return { success: true };
     }
 
@@ -234,7 +237,7 @@ export const useStore = create<AppState>()((set, get) => ({
 
       const { loadWorkspaceFromSupabase } = await import('./hydration');
       const workspace = await loadWorkspaceFromSupabase(user.id, user);
-      set({ user, isAuthenticated: true, _hasHydrated: true, ...workspace });
+      set({ user, isAuthenticated: true, _hasHydrated: true, ...workspace, stations: workspace.settings.stations ?? [] });
       return { success: true };
     }
 
@@ -253,7 +256,7 @@ export const useStore = create<AppState>()((set, get) => ({
     _activeUserId = foundUser.id;
     localStorage.setItem(AUTH_KEY, JSON.stringify({ user: foundUser, isAuthenticated: true }));
     const workspace = loadWorkspaceStateLocal(foundUser.id, foundUser);
-    set({ user: foundUser, isAuthenticated: true, _hasHydrated: true, ...workspace });
+    set({ user: foundUser, isAuthenticated: true, _hasHydrated: true, ...workspace, stations: workspace.settings.stations ?? [] });
     return { success: true };
   },
 
@@ -268,7 +271,7 @@ export const useStore = create<AppState>()((set, get) => ({
     set({
       user: null, isAuthenticated: false,
       menuItems: [], categories: [], tables: [], orders: [], receipts: [],
-      settings: DEFAULT_SETTINGS, nextOrderNumber: 1001, reservations: [],
+      settings: DEFAULT_SETTINGS, stations: [], nextOrderNumber: 1001, reservations: [],
       ingredients: [], kitchenEvents: [], decorations: [],
     });
   },
@@ -307,7 +310,7 @@ export const useStore = create<AppState>()((set, get) => ({
       await Promise.all(workspace.menuItems.map(item => insertMenuItem(item, user.id)));
       await Promise.all(workspace.tables.map(table => insertTable(table, user.id)));
 
-      set({ user, isAuthenticated: true, _hasHydrated: true, ...workspace });
+      set({ user, isAuthenticated: true, _hasHydrated: true, ...workspace, stations: workspace.settings.stations ?? [] });
       return { success: true };
     }
 
@@ -326,7 +329,7 @@ export const useStore = create<AppState>()((set, get) => ({
     _activeUserId = newUser.id;
     localStorage.setItem(AUTH_KEY, JSON.stringify({ user: newUser, isAuthenticated: true }));
     const workspace = defaultWorkspace(newUser);
-    set({ user: newUser, isAuthenticated: true, _hasHydrated: true, ...workspace });
+    set({ user: newUser, isAuthenticated: true, _hasHydrated: true, ...workspace, stations: workspace.settings.stations ?? [] });
     return { success: true };
   },
 
@@ -684,7 +687,11 @@ export const useStore = create<AppState>()((set, get) => ({
   // ── Stations ─────────────────────────────────────────────────────────────────
 
   addStation(station) {
-    set(s => ({ settings: { ...s.settings, stations: [...(s.settings.stations ?? []), normalizeStation(station)] } }));
+    const normalized = normalizeStation(station);
+    set(s => {
+      const next = [...s.stations, normalized];
+      return { stations: next, settings: { ...s.settings, stations: next } };
+    });
     _persistLocal(get);
     const { settings, user } = get();
     if (isSupabaseEnabled() && user?.id) {
@@ -694,14 +701,12 @@ export const useStore = create<AppState>()((set, get) => ({
   },
 
   updateStation(id, updates) {
-    set(s => ({
-      settings: {
-        ...s.settings,
-        stations: (s.settings.stations ?? []).map(st =>
-          st.id === id ? normalizeStation({ ...st, ...updates }) : st,
-        ),
-      },
-    }));
+    set(s => {
+      const next = s.stations.map(st =>
+        st.id === id ? normalizeStation({ ...st, ...updates }) : st,
+      );
+      return { stations: next, settings: { ...s.settings, stations: next } };
+    });
     _persistLocal(get);
     const { settings, user } = get();
     if (isSupabaseEnabled() && user?.id) {
@@ -711,12 +716,10 @@ export const useStore = create<AppState>()((set, get) => ({
   },
 
   deleteStation(id) {
-    set(s => ({
-      settings: {
-        ...s.settings,
-        stations: (s.settings.stations ?? []).filter(st => st.id !== id),
-      },
-    }));
+    set(s => {
+      const next = s.stations.filter(st => st.id !== id);
+      return { stations: next, settings: { ...s.settings, stations: next } };
+    });
     _persistLocal(get);
     const { settings, user } = get();
     if (isSupabaseEnabled() && user?.id) {
@@ -1092,8 +1095,10 @@ function _restoreStock(
 /** Persist workspace snapshot to localStorage (used only when Supabase is disabled). */
 function _persistLocal(get: () => AppState) {
   if (isSupabaseEnabled() || !_activeUserId) return;
-  const { menuItems, categories, tables, orders, receipts, settings, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations } = get();
-  saveWorkspaceStateLocal(_activeUserId, { menuItems, categories, tables, orders, receipts, settings, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations });
+  const { menuItems, categories, tables, orders, receipts, settings, stations, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations } = get();
+  // Keep settings.stations in sync with the top-level stations slice before persisting
+  const syncedSettings = { ...settings, stations };
+  saveWorkspaceStateLocal(_activeUserId, { menuItems, categories, tables, orders, receipts, settings: syncedSettings, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations });
 }
 
 // ─── Test utility ─────────────────────────────────────────────────────────────

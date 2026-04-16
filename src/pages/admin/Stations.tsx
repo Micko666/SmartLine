@@ -527,15 +527,15 @@ function StationCard({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Stations() {
-  const { settings, menuItems, addStation, updateStation, deleteStation } = useStore(useShallow(s => ({
+  const { settings, stations, menuItems, addStation, updateStation, deleteStation } = useStore(useShallow(s => ({
     settings: s.settings,
+    stations: s.stations,
     menuItems: s.menuItems,
     addStation: s.addStation,
     updateStation: s.updateStation,
     deleteStation: s.deleteStation,
   })));
 
-  const stations = settings.stations ?? [];
   const restaurantToken = settings.restaurantToken;
 
   // Deduplicated category list from active menu items

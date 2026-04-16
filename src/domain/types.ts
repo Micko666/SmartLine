@@ -214,6 +214,8 @@ export interface KitchenEvent {
   menuItemName?: string;
   quantity?: number;
   estimatedCost?: number;
+  /** Station that logged this event — enables per-station analytics. */
+  stationId?: string;
   createdAt: string;
 }
 
@@ -285,7 +287,11 @@ export interface BusinessSettings {
   logoUrl: string;
   /** Stable token used to scope customer sessions per restaurant. Embedded in QR URLs. */
   restaurantToken: string;
-  /** Station profiles for kitchen/service/bar devices. Stored in Supabase as JSONB. */
+  /**
+   * Station profiles — persisted here for Supabase JSONB compatibility.
+   * Runtime reads should use the top-level `stations` store slice instead.
+   * @internal
+   */
   stations?: Station[];
 }
 

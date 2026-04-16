@@ -237,6 +237,7 @@ export function mapKitchenEventRow(row: Record<string, unknown>): KitchenEvent {
     menuItemName:   (row.menu_item_name as string | undefined) ?? undefined,
     quantity:       row.quantity != null ? Number(row.quantity) : undefined,
     estimatedCost:  row.estimated_cost != null ? Number(row.estimated_cost) : undefined,
+    stationId:      (row.station_id as string | undefined) ?? undefined,
     createdAt:      row.created_at as string,
   };
 }
@@ -253,6 +254,7 @@ export function kitchenEventToRow(event: KitchenEvent, userId: string): Record<s
     menu_item_name:  event.menuItemName  ?? null,
     quantity:        event.quantity      ?? null,
     estimated_cost:  event.estimatedCost ?? null,
+    station_id:      event.stationId     ?? null,
   };
 }
 

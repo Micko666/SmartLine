@@ -26,7 +26,7 @@ type SupabaseChannel = ReturnType<NonNullable<typeof supabase>['channel']>;
 
 export type KitchenEventType = 'delay' | 'remake' | 'waste' | 'note';
 
-export function useStationOrders(restaurantToken: string, userId?: string) {
+export function useStationOrders(restaurantToken: string, userId?: string, stationId?: string) {
   const isLocal = !supabase;
 
   // ── Store subscriptions (always called — hook rules) ──────────────────────
@@ -122,9 +122,9 @@ export function useStationOrders(restaurantToken: string, userId?: string) {
     menuItemName?: string;
     quantity?: number;
   }): Promise<boolean> => {
-    useStore.getState().logKitchenEvent(payload);
+    useStore.getState().logKitchenEvent({ ...payload, stationId });
     return true;
-  }, []);
+  }, [stationId]);
 
   const localRemakeOrder = useCallback(async (orderId: string, notes: string): Promise<boolean> => {
     const order = useStore.getState().orders.find(o => o.id === orderId);
@@ -134,11 +134,12 @@ export function useStationOrders(restaurantToken: string, userId?: string) {
         orderNumber: order.orderNumber,
         type: 'remake',
         notes: notes || 'Sent back for rework',
+        stationId,
       });
     }
     useStore.getState().advanceOrderStatus(orderId);
     return true;
-  }, []);
+  }, [stationId]);
 
   // Remote (Supabase) actions
   const remoteAdvanceOrder = useCallback(async (orderId: string, newStatus: string): Promise<boolean> => {
@@ -203,10 +204,11 @@ export function useStationOrders(restaurantToken: string, userId?: string) {
       p_menu_item_id: payload.menuItemId ?? null,
       p_menu_item_name: payload.menuItemName ?? null,
       p_quantity: payload.quantity ?? null,
+      p_station_id: stationId ?? null,
     });
     if (error || !(data as { ok: boolean }).ok) return false;
     return true;
-  }, [restaurantToken]);
+  }, [restaurantToken, stationId]);
 
   const remoteRemakeOrder = useCallback(async (orderId: string, notes: string): Promise<boolean> => {
     const order = remoteOrders.find(o => o.id === orderId);

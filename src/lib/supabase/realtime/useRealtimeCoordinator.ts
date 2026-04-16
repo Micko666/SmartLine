@@ -1,19 +1,22 @@
 /**
- * Real-time orders subscription — keeps the admin order queue up to date
- * across all devices for the same restaurant.
+ * Unified realtime coordinator — single Supabase channel for the admin dashboard.
+ *
+ * Replaces the separate useOrdersSubscription + useMenuSubscription hooks that
+ * were each managing their own channel lifecycle with no shared error state or
+ * reconnection strategy.
+ *
+ * One channel. One cleanup path. All store updates flow through one place.
+ *
+ * Handles:
+ *   - orders INSERT/UPDATE      → patch Zustand orders slice
+ *   - kitchen_events INSERT     → prepend to kitchenEvents slice (cap 500)
+ *   - menu_items UPDATE         → patch stock/status in menuItems slice
+ *
+ * On tab-regain (visibilitychange): targeted re-fetch of active orders only
+ * (paid/preparing/ready, limit 100) to catch any missed events without a full
+ * table scan.
  *
  * Mount once in DashboardLayout. Unmounts cleanly on logout / route change.
- *
- * Strategy:
- *  1. Supabase Realtime channel — instant in-place patch on INSERT/UPDATE.
- *     Event-driven; zero DB queries unless an order actually changes.
- *  2. visibilitychange — when the admin switches back to this tab, fetch ONLY
- *     the active (paid/preparing/ready) orders with LIMIT 50. This catches any
- *     missed events without doing a full table scan every 30 seconds.
- *
- * Previously used a 30-second full table poll which caused statement timeouts
- * on the free Supabase tier, breaking station RPC calls and slowing the
- * customer menu. Polling has been removed.
  */
 import { useEffect, useRef } from 'react';
 import { useStore } from '@/store';
@@ -22,26 +25,27 @@ import { supabase } from '../client';
 import { mapOrderRow, mapKitchenEventRow } from '../mappers';
 import type { OrderStatus } from '@/domain/types';
 
-type SupabaseChannel = NonNullable<typeof supabase> extends { channel: (...a: unknown[]) => infer C } ? C : never;
+type Channel = ReturnType<NonNullable<typeof supabase>['channel']>;
 
 const ACTIVE_STATUSES: OrderStatus[] = ['paid', 'preparing', 'ready'];
 
-export function useOrdersSubscription() {
+export function useRealtimeCoordinator() {
   const userId = useStore(s => s.user?.id);
-  const channelRef = useRef<SupabaseChannel | null>(null);
+  const channelRef = useRef<Channel | null>(null);
 
   useEffect(() => {
     if (!isSupabaseEnabled() || !supabase || !userId) return;
 
-    // Remove stale channel from a previous run
+    // Remove any stale channel from a previous render cycle
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current);
       channelRef.current = null;
     }
 
-    // Realtime: in-place patch — no DB query on each event
     channelRef.current = supabase
-      .channel(`admin-orders:${userId}`)
+      .channel(`admin:${userId}`)
+
+      // ── Orders ─────────────────────────────────────────────────────────────
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'orders', filter: `user_id=eq.${userId}` },
@@ -63,6 +67,8 @@ export function useOrdersSubscription() {
           }));
         },
       )
+
+      // ── Kitchen events ──────────────────────────────────────────────────────
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'kitchen_events', filter: `user_id=eq.${userId}` },
@@ -74,11 +80,32 @@ export function useOrdersSubscription() {
           });
         },
       )
+
+      // ── Menu items (stock / status changes) ────────────────────────────────
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'menu_items', filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const row = payload.new as Record<string, unknown>;
+          useStore.setState(s => ({
+            menuItems: s.menuItems.map(item =>
+              item.id === row.id
+                ? {
+                    ...item,
+                    stock:     row.stock != null ? Number(row.stock) : null,
+                    status:    (row.status as typeof item.status) ?? item.status,
+                    updatedAt: row.updated_at as string,
+                  }
+                : item,
+            ),
+          }));
+        },
+      )
+
       .subscribe();
 
-    // visibilitychange: targeted fetch of only active orders when tab regains focus.
-    // Limited to 50 rows — fast even without a covering index. Merges with the
-    // existing store so historical orders (completed/cancelled) are preserved.
+    // Tab-regain: fetch only active orders to catch any missed realtime events.
+    // Merges with historical orders already in the store.
     async function onVisible() {
       if (document.visibilityState !== 'visible' || !supabase) return;
       const { data } = await supabase
@@ -91,7 +118,9 @@ export function useOrdersSubscription() {
       if (!data) return;
       const freshActive = (data as Record<string, unknown>[]).map(mapOrderRow);
       useStore.setState(s => {
-        const historical = s.orders.filter(o => !ACTIVE_STATUSES.includes(o.status as OrderStatus));
+        const historical = s.orders.filter(
+          o => !ACTIVE_STATUSES.includes(o.status as OrderStatus),
+        );
         return { orders: [...freshActive, ...historical] };
       });
     }

@@ -8,8 +8,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
-import { useOrdersSubscription } from '@/lib/supabase/realtime/useOrdersSubscription';
-import { useMenuSubscription } from '@/lib/supabase/realtime/useMenuSubscription';
+import { useRealtimeCoordinator } from '@/lib/supabase/realtime/useRealtimeCoordinator';
 
 const navItems = [
   { path: '/dashboard',    label: 'Dashboard',    icon: LayoutDashboard },
@@ -29,8 +28,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Real-time sync across all devices
-  useOrdersSubscription();
+  // Real-time sync — single coordinator owns all admin channels
+  useRealtimeCoordinator();
 
   const { logout, user, orders, menuItems, settings } = useStore(useShallow(s => ({
     logout: s.logout,
@@ -39,8 +38,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     menuItems: s.menuItems,
     settings: s.settings,
   })));
-
-  useMenuSubscription(user?.id ?? null);
 
   const handleLogout = () => {
     logout();

@@ -114,7 +114,7 @@ function BarOrderRow({
 // ─── BarStation ───────────────────────────────────────────────────────────────
 
 export default function BarStation({ station, restaurantToken, userId, restaurantName, onLock }: Props) {
-  const { orders, online, advanceOrder } = useStationOrders(restaurantToken, userId);
+  const { orders, online, advanceOrder } = useStationOrders(restaurantToken, userId, station.id);
   const [advancing, setAdvancing] = useState<Set<string>>(new Set());
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
 

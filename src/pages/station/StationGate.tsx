@@ -130,6 +130,7 @@ export default function StationGate() {
           menuItems: res.menuItems,
           tables:    res.tables,
           settings:  res.settings,
+          stations:  res.settings?.stations ?? [],
         });
 
         // Normalize fills in any permission fields missing from older station records

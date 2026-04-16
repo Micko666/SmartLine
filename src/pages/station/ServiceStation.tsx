@@ -77,7 +77,7 @@ function OrderListRow({ order, onClick }: { order: Order; onClick: () => void })
 // ─── ServiceStation ───────────────────────────────────────────────────────────
 
 export default function ServiceStation({ station, restaurantToken, userId, restaurantName, onLock }: Props) {
-  const { orders, online, advanceOrder } = useStationOrders(restaurantToken, userId);
+  const { orders, online, advanceOrder } = useStationOrders(restaurantToken, userId, station.id);
   const { tables, decorations, menuItems, setTableStatus } = useStore(useShallow(s => ({
     tables:         s.tables,
     decorations:    s.decorations,
