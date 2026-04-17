@@ -4,19 +4,19 @@
  * Falls back to defaultWorkspace() if any query fails.
  */
 
-import { fetchMenuItems } from '@/lib/supabase/queries/menu';
-import { fetchTables } from '@/lib/supabase/queries/tables';
+import { fetchMenuItems, insertMenuItem } from '@/lib/supabase/queries/menu';
+import { fetchTables, insertTable } from '@/lib/supabase/queries/tables';
 import { fetchOrders } from '@/lib/supabase/queries/orders';
 import { fetchReceipts } from '@/lib/supabase/queries/receipts';
-import { fetchSettings, fetchNextOrderNumber, upsertSettings, fetchCalendarSettings } from '@/lib/supabase/queries/settings';
+import { fetchSettings, fetchNextOrderNumber, upsertSettings, upsertCalendarSettings, fetchCalendarSettings } from '@/lib/supabase/queries/settings';
 import { fetchReservations } from '@/lib/supabase/queries/reservations';
 import { fetchIngredients } from '@/lib/supabase/queries/ingredients';
 import { fetchKitchenEvents } from '@/lib/supabase/queries/kitchenEvents';
 import { fetchDecorations } from '@/lib/supabase/queries/decorations';
 import { fetchCalendarEvents } from '@/lib/supabase/queries/calendarEvents';
 import { fetchEventPackages } from '@/lib/supabase/queries/eventPackages';
-import { fetchEmployees } from '@/lib/supabase/queries/employees';
-import { fetchShifts } from '@/lib/supabase/queries/shifts';
+import { fetchEmployees, insertEmployee } from '@/lib/supabase/queries/employees';
+import { fetchShifts, insertShift } from '@/lib/supabase/queries/shifts';
 import type {
   User, MenuItem, Table, Order, Receipt, BusinessSettings, StockReservation,
   Ingredient, KitchenEvent, MapDecoration, CalendarEvent, EventPackage, CalendarSettings,
@@ -112,8 +112,39 @@ export async function loadWorkspaceFromSupabase(
     decorations,
     calendarEvents,
     eventPackages,
-    calendarSettings: calendarSettingsRaw ?? defaultCalendarSettings,
+    // Treat missing OR empty-object calendarSettings as absent — use defaults
+    calendarSettings: (calendarSettingsRaw && (calendarSettingsRaw as CalendarSettings).workingDays?.length)
+      ? calendarSettingsRaw
+      : defaultCalendarSettings,
     employees,
     shifts,
   };
+}
+
+/**
+ * One-time migration: push all local store data to Supabase.
+ * Called on login when Supabase returns an empty workspace (no menu items,
+ * no tables) but the current local store has data — meaning the user was
+ * working in local mode before connecting Supabase.
+ *
+ * Also called manually from Settings → "Sync to Cloud".
+ */
+export async function pushLocalToSupabase(
+  local: {
+    menuItems: MenuItem[];
+    tables: Table[];
+    employees: Employee[];
+    shifts: Shift[];
+    settings: BusinessSettings;
+    calendarSettings: CalendarSettings;
+    nextOrderNumber: number;
+  },
+  userId: string,
+): Promise<void> {
+  await upsertSettings(local.settings, userId, local.nextOrderNumber).catch(() => {});
+  await upsertCalendarSettings(local.calendarSettings, userId).catch(() => {});
+  await Promise.all(local.menuItems.map(item => insertMenuItem(item, userId).catch(() => {})));
+  await Promise.all(local.tables.map(table => insertTable(table, userId).catch(() => {})));
+  await Promise.all(local.employees.map(emp => insertEmployee(emp, userId).catch(() => {})));
+  await Promise.all(local.shifts.map(shift => insertShift(shift, userId).catch(() => {})));
 }

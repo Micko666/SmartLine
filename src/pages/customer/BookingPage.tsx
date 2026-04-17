@@ -112,10 +112,21 @@ export default function BookingPage() {
           const bd = await fetchBookingDataByToken(restaurantToken);
           const def: CalendarSettings = {
             maxEventsPerDay: 10, requireApproval: true, advanceBookingDays: 90,
-            bookingMessage: '', workingDays: [], workingExceptions: [],
-            shiftTemplates: [], weekTemplate: [],
+            bookingMessage: '',
+            workingDays: [
+              { dayOfWeek: 1, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
+              { dayOfWeek: 2, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
+              { dayOfWeek: 3, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
+              { dayOfWeek: 4, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
+              { dayOfWeek: 5, isOpen: true,  openTime: '09:00', closeTime: '23:00' },
+              { dayOfWeek: 6, isOpen: true,  openTime: '10:00', closeTime: '23:00' },
+              { dayOfWeek: 0, isOpen: false, openTime: '10:00', closeTime: '20:00' },
+            ],
+            workingExceptions: [], shiftTemplates: [], weekTemplate: [],
           };
-          calSettings = bd?.calendarSettings ?? def;
+          // Treat empty-object response ({}) the same as missing — use defaults
+          const raw = bd?.calendarSettings;
+          calSettings = (raw && raw.workingDays?.length) ? raw : def;
           evtPackages = bd?.eventPackages ?? [];
           calEvents   = bd?.calendarEvents ?? [];
         }

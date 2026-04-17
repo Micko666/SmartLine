@@ -311,8 +311,31 @@ export const useStore = create<AppState>()((set, get) => ({
         createdAt:    sbUser.created_at,
       };
 
-      const { loadWorkspaceFromSupabase } = await import('./hydration');
+      const { loadWorkspaceFromSupabase, pushLocalToSupabase } = await import('./hydration');
       const workspace = await loadWorkspaceFromSupabase(user.id, user);
+
+      // If Supabase returned an empty workspace but we have local data (user was
+      // working in local / demo mode before linking Supabase), push local data up
+      // so the cloud catches up immediately — no data is lost.
+      const localState = get();
+      const supabaseIsEmpty = workspace.menuItems.length === 0 && workspace.tables.length === 0;
+      const localHasData    = localState.menuItems.length > 0 || localState.tables.length > 0;
+      if (supabaseIsEmpty && localHasData) {
+        await pushLocalToSupabase({
+          menuItems:        localState.menuItems,
+          tables:           localState.tables,
+          employees:        localState.employees,
+          shifts:           localState.shifts,
+          settings:         { ...localState.settings, restaurantToken: workspace.settings.restaurantToken },
+          calendarSettings: localState.calendarSettings,
+          nextOrderNumber:  localState.nextOrderNumber,
+        }, user.id).catch(() => {/* non-blocking */});
+        // Re-load so the store is consistent with what was just pushed
+        const refreshed = await loadWorkspaceFromSupabase(user.id, user);
+        set({ user, isAuthenticated: true, _hasHydrated: true, ...refreshed, stations: refreshed.settings.stations ?? [] });
+        return { success: true };
+      }
+
       set({ user, isAuthenticated: true, _hasHydrated: true, ...workspace, stations: workspace.settings.stations ?? [] });
       return { success: true };
     }
