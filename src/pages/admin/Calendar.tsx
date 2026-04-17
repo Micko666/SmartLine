@@ -25,6 +25,7 @@ import { useShallow } from 'zustand/react/shallow';
 import type {
   CalendarEvent, CalendarEventType, EventPackage, WorkingDay,
   Employee, Shift, ShiftAssignment, ShiftTemplate,
+  WeeklyShiftSlot, WeeklyDayTemplate,
 } from '@/domain/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -611,6 +612,263 @@ function ShiftTemplateForm({ initial, onSave, onClose }: {
   );
 }
 
+// ─── Week Template Editor ─────────────────────────────────────────────────────
+
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+// JS dayOfWeek: 0=Sun…6=Sat. Our display order is Mon(1)…Sun(0).
+const DISPLAY_DOW: Array<0|1|2|3|4|5|6> = [1,2,3,4,5,6,0];
+
+function WeekTemplateEditor({ template, onSave, onClose }: {
+  template: WeeklyDayTemplate[];
+  onSave: (t: WeeklyDayTemplate[]) => void;
+  onClose: () => void;
+}) {
+  // Local mutable copy
+  const [tpl, setTpl] = useState<WeeklyDayTemplate[]>(() => {
+    // Ensure all 7 days are present
+    return DISPLAY_DOW.map(dow => template.find(d => d.dayOfWeek === dow) ?? { dayOfWeek: dow, slots: [] });
+  });
+
+  // Per-day "add slot" form state
+  const [addingDow, setAddingDow] = useState<number | null>(null);
+  const [newSlot, setNewSlot] = useState({ name: '', startTime: '09:00', endTime: '17:00', color: PRESET_COLORS[0], minStaff: 1 });
+
+  function updateDay(dow: number, slots: WeeklyShiftSlot[]) {
+    setTpl(prev => prev.map(d => d.dayOfWeek === dow ? { ...d, slots } : d));
+  }
+
+  function removeSlot(dow: number, slotId: string) {
+    const day = tpl.find(d => d.dayOfWeek === dow);
+    if (!day) return;
+    updateDay(dow, day.slots.filter(s => s.id !== slotId));
+  }
+
+  function addSlot(dow: number) {
+    if (!newSlot.name.trim()) return;
+    const day = tpl.find(d => d.dayOfWeek === dow);
+    if (!day) return;
+    updateDay(dow, [...day.slots, { id: crypto.randomUUID(), name: newSlot.name.trim(), startTime: newSlot.startTime, endTime: newSlot.endTime, color: newSlot.color, minStaff: newSlot.minStaff }]);
+    setNewSlot(s => ({ ...s, name: '' }));
+    setAddingDow(null);
+  }
+
+  function copyToWeekdays(dow: number) {
+    const day = tpl.find(d => d.dayOfWeek === dow);
+    if (!day) return;
+    // Copy Mon-Fri slots from this day (clone with new ids)
+    setTpl(prev => prev.map(d => {
+      if ([1,2,3,4,5].includes(d.dayOfWeek)) {
+        return { ...d, slots: day.slots.map(s => ({ ...s, id: crypto.randomUUID() })) };
+      }
+      return d;
+    }));
+    toast.success('Copied to weekdays');
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Define your default weekly shift structure. These are just templates — click <strong>Apply to week</strong> in the roster to stamp them out as actual shifts.
+      </p>
+      <div className="space-y-2">
+        {DISPLAY_DOW.map((dow, idx) => {
+          const day = tpl.find(d => d.dayOfWeek === dow)!;
+          const isOpen = addingDow === dow;
+          return (
+            <div key={dow} className="rounded-xl border border-border bg-muted/20 overflow-hidden">
+              <div className="flex items-center gap-3 px-3 py-2.5">
+                <span className="text-xs font-bold text-muted-foreground w-7 shrink-0">{DAY_LABELS[idx]}</span>
+                <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
+                  {day.slots.length === 0 && <span className="text-xs text-muted-foreground/60 italic">Day off</span>}
+                  {day.slots.map(slot => (
+                    <span key={slot.id} className="inline-flex items-center gap-1 text-[11px] font-medium text-white px-2 py-0.5 rounded-lg"
+                      style={{ backgroundColor: slot.color }}>
+                      {slot.name} <span className="opacity-75">{slot.startTime}–{slot.endTime}</span>
+                      <button type="button" onClick={() => removeSlot(dow, slot.id)} className="ml-0.5 hover:opacity-70">
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {day.slots.length > 0 && idx < 5 && (
+                    <button type="button" onClick={() => copyToWeekdays(dow)} title="Copy to all weekdays"
+                      className="text-[10px] text-muted-foreground hover:text-primary px-1.5 py-0.5 rounded hover:bg-primary/10 transition-colors">
+                      Copy M–F
+                    </button>
+                  )}
+                  <button type="button" onClick={() => setAddingDow(isOpen ? null : dow)}
+                    className={`p-1.5 rounded-lg transition-colors ${isOpen ? 'bg-primary text-primary-foreground' : 'hover:bg-muted text-muted-foreground'}`}>
+                    <Plus className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+              {isOpen && (
+                <div className="border-t border-border bg-card px-3 py-3 space-y-3">
+                  <div className="flex gap-2 items-end flex-wrap">
+                    <div className="flex-1 min-w-[120px]">
+                      <label className="form-label">Shift name</label>
+                      <input type="text" value={newSlot.name} onChange={e => setNewSlot(s => ({...s, name: e.target.value}))}
+                        className="input-field w-full" placeholder="Morning, Evening…" autoFocus
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSlot(dow); } }} />
+                    </div>
+                    <div>
+                      <label className="form-label">Start</label>
+                      <input type="time" value={newSlot.startTime} onChange={e => setNewSlot(s => ({...s, startTime: e.target.value}))} className="input-field" />
+                    </div>
+                    <div>
+                      <label className="form-label">End</label>
+                      <input type="time" value={newSlot.endTime} onChange={e => setNewSlot(s => ({...s, endTime: e.target.value}))} className="input-field" />
+                    </div>
+                    <div>
+                      <label className="form-label">Min staff</label>
+                      <input type="number" min={1} max={20} value={newSlot.minStaff} onChange={e => setNewSlot(s => ({...s, minStaff: Number(e.target.value)}))} className="input-field w-16" />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex gap-1.5 flex-wrap flex-1">
+                      {PRESET_COLORS.map(c => (
+                        <button key={c} type="button" onClick={() => setNewSlot(s => ({...s, color: c}))}
+                          className={`w-6 h-6 rounded-lg border-2 transition-all ${newSlot.color === c ? 'border-foreground scale-110' : 'border-transparent'}`}
+                          style={{ backgroundColor: c }} />
+                      ))}
+                    </div>
+                    <button type="button" onClick={() => addSlot(dow)} className="btn-primary text-sm px-3 py-1.5 shrink-0">
+                      Add
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex gap-2 pt-1">
+        <button type="button" onClick={onClose} className="btn-ghost px-4">Cancel</button>
+        <button type="button" onClick={() => { onSave(tpl); onClose(); }} className="btn-primary flex-1">Save default week</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Shift assign panel (replaces modal click for quick staff assignment) ──────
+
+function ShiftAssignPanel({ shift, employees, stations, onClose, onEditFull, onDelete, onUpdateAssignments }: {
+  shift: Shift;
+  employees: Employee[];
+  stations: { id: string; name: string; color: string }[];
+  onClose: () => void;
+  onEditFull: () => void;
+  onDelete: () => void;
+  onUpdateAssignments: (a: ShiftAssignment[]) => void;
+}) {
+  const station      = stations.find(s => s.id === shift.stationId);
+  const activeEmps   = employees.filter(e => e.active);
+  const assignedIds  = new Set(shift.assignments.map(a => a.employeeId));
+
+  function toggle(empId: string) {
+    if (assignedIds.has(empId)) {
+      onUpdateAssignments(shift.assignments.filter(a => a.employeeId !== empId));
+    } else {
+      const emp  = employees.find(e => e.id === empId);
+      onUpdateAssignments([...shift.assignments, { employeeId: empId, role: emp?.role || 'Staff' }]);
+    }
+  }
+
+  function changeRole(empId: string, role: string) {
+    onUpdateAssignments(shift.assignments.map(a => a.employeeId === empId ? { ...a, role } : a));
+  }
+
+  return (
+    <div className="glass-card border border-primary/20 p-4 space-y-4">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-3 h-10 rounded-full shrink-0" style={{ backgroundColor: shift.color }} />
+          <div className="min-w-0">
+            <p className="font-display font-bold text-base leading-tight">{shift.name}</p>
+            <p className="text-sm text-muted-foreground font-mono">{shift.startTime}–{shift.endTime} · {shiftHours(shift.startTime, shift.endTime)}h</p>
+            {station && (
+              <span className="inline-block text-[10px] px-2 py-0.5 rounded-full font-medium text-white mt-1" style={{ backgroundColor: station.color }}>
+                {station.name}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button onClick={onEditFull} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground" title="Edit full details">
+            <Edit2 className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => { if (confirm('Delete this shift?')) onDelete(); }} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive" title="Delete shift">
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Currently assigned */}
+      <div>
+        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+          Staff assigned ({shift.assignments.length}{shift.minStaff > 0 ? `/${shift.minStaff} min` : ''})
+        </p>
+        {shift.assignments.length === 0 ? (
+          <p className="text-sm text-muted-foreground italic">Nobody assigned yet — tap a team member below to add them.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {shift.assignments.map((a) => {
+              const emp = employees.find(e => e.id === a.employeeId);
+              if (!emp) return null;
+              return (
+                <div key={a.employeeId} className="flex items-center gap-2.5 p-2 rounded-xl bg-muted/40">
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0" style={{ backgroundColor: emp.color }}>
+                    {initials(emp.name)}
+                  </div>
+                  <span className="text-sm font-medium flex-1 min-w-0 truncate">{emp.name}</span>
+                  <input
+                    type="text" value={a.role}
+                    onChange={e => changeRole(a.employeeId, e.target.value)}
+                    className="input-field py-0.5 text-xs w-28 shrink-0"
+                    placeholder="Role…"
+                  />
+                  <button onClick={() => toggle(a.employeeId)} className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Add from team */}
+      {activeEmps.some(e => !assignedIds.has(e.id)) && (
+        <div>
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Add from team</p>
+          <div className="flex flex-wrap gap-1.5">
+            {activeEmps.filter(e => !assignedIds.has(e.id)).map(emp => (
+              <button key={emp.id} onClick={() => toggle(emp.id)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-border hover:border-current bg-card hover:shadow-sm transition-all text-xs font-medium"
+                style={{ color: emp.color }}>
+                <span className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0" style={{ backgroundColor: emp.color }}>
+                  {initials(emp.name)}
+                </span>
+                {emp.name.split(' ')[0]}
+                {emp.role && <span className="text-muted-foreground font-normal">· {emp.role}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {shift.notes && (
+        <p className="text-xs text-muted-foreground border-t border-border pt-3">{shift.notes}</p>
+      )}
+    </div>
+  );
+}
+
 // ─── Work Log ─────────────────────────────────────────────────────────────────
 
 function WorkLog({ shifts, employees }: { shifts: Shift[]; employees: Employee[] }) {
@@ -754,6 +1012,7 @@ export default function CalendarPage() {
     updateCalendarSettings,
     addEmployee, updateEmployee, deleteEmployee,
     addShift, updateShift, deleteShift,
+    applyWeekTemplate, updateWeekTemplate,
   } = useStore(useShallow(s => ({
     calendarEvents: s.calendarEvents, eventPackages: s.eventPackages,
     calendarSettings: s.calendarSettings, settings: s.settings, user: s.user,
@@ -764,6 +1023,7 @@ export default function CalendarPage() {
     updateCalendarSettings: s.updateCalendarSettings,
     addEmployee: s.addEmployee, updateEmployee: s.updateEmployee, deleteEmployee: s.deleteEmployee,
     addShift: s.addShift, updateShift: s.updateShift, deleteShift: s.deleteShift,
+    applyWeekTemplate: s.applyWeekTemplate, updateWeekTemplate: s.updateWeekTemplate,
   })));
 
   const sym            = settings.currencySymbol;
@@ -793,6 +1053,8 @@ export default function CalendarPage() {
   const [shiftInitDate, setShiftInitDate]           = useState<string | undefined>();
   const [showTemplateForm, setShowTemplateForm]     = useState(false);
   const [editingTemplate, setEditingTemplate]       = useState<ShiftTemplate | null>(null);
+  const [activeShiftId, setActiveShiftId]           = useState<string | null>(null);
+  const [showWeekTemplateEditor, setShowWeekTemplateEditor] = useState(false);
 
   // ── Calendar helpers ───────────────────────────────────────────────────────
 
@@ -840,7 +1102,9 @@ export default function CalendarPage() {
 
   const employeeMap = useMemo(() => new Map(employees.map(e => [e.id, e])), [employees]);
 
-  const rosterLink = `${window.location.origin}/roster/${settings.restaurantToken}`;
+  const rosterLink  = `${window.location.origin}/roster/${settings.restaurantToken}`;
+  const weekTemplate = calendarSettings.weekTemplate ?? [];
+  const hasWeekTemplate = weekTemplate.some(d => d.slots.length > 0);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -865,6 +1129,12 @@ export default function CalendarPage() {
     updateCalendarSettings({
       workingExceptions: [...calendarSettings.workingExceptions, { id: crypto.randomUUID(), date, isClosed, note, openTime: '09:00', closeTime: '22:00' }],
     });
+  }
+
+  function quickUpdateAssignments(shiftId: string, assignments: ShiftAssignment[]) {
+    const shift = shifts.find(s => s.id === shiftId);
+    if (!shift) return;
+    updateShift(shiftId, { ...shift, assignments });
   }
 
   function saveTemplate(data: Omit<ShiftTemplate, 'id'>) {
@@ -910,12 +1180,8 @@ export default function CalendarPage() {
                   <Link className="w-3.5 h-3.5" /> Staff link
                 </button>
                 <button onClick={() => { setEditingEmployee(null); setShowEmployeeForm(true); }}
-                  className="btn-ghost flex items-center gap-1.5 text-sm">
-                  <UserPlus className="w-4 h-4" /> Employee
-                </button>
-                <button onClick={() => { setEditingShift(null); setShiftInitDate(today()); setShowShiftForm(true); }}
                   className="btn-primary flex items-center gap-1.5">
-                  <Plus className="w-4 h-4" /> Shift
+                  <UserPlus className="w-4 h-4" /> Add employee
                 </button>
               </div>
             )}
@@ -1123,6 +1389,7 @@ export default function CalendarPage() {
         {/* ── ROSTER TAB ── */}
         {tab === 'roster' && (
           <div className="space-y-4">
+            {/* Sub-view toggle */}
             <div className="flex items-center gap-1 bg-muted/50 p-1 rounded-xl w-fit">
               {([['grid','Schedule',LayoutGrid],['log','Work Log',History]] as const).map(([v, label, Icon]) => (
                 <button key={v} onClick={() => setRosterView(v as RosterView)}
@@ -1134,6 +1401,50 @@ export default function CalendarPage() {
 
             {rosterView === 'grid' && (
               <>
+                {/* Default week banner */}
+                <div className="glass-card overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 gap-3 flex-wrap">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                        <Layers className="w-4 h-4 text-primary" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-sm leading-tight">Default week</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {hasWeekTemplate
+                            ? weekTemplate.flatMap(d => d.slots).length + ' shift slots defined — apply to any week in one click'
+                            : 'Define your weekly structure once, reuse every week'
+                          }
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {hasWeekTemplate && (
+                        <button onClick={() => {
+                          applyWeekTemplate(rosterWeekDays[0]);
+                        }} className="btn-primary text-sm flex items-center gap-1.5 py-1.5">
+                          <LayoutGrid className="w-3.5 h-3.5" /> Apply to this week
+                        </button>
+                      )}
+                      <button onClick={() => setShowWeekTemplateEditor(v => !v)}
+                        className={`btn-ghost text-sm flex items-center gap-1.5 py-1.5 ${showWeekTemplateEditor ? 'text-primary' : ''}`}>
+                        <Edit2 className="w-3.5 h-3.5" />
+                        {hasWeekTemplate ? 'Edit' : 'Set up'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {showWeekTemplateEditor && (
+                    <div className="border-t border-border p-4">
+                      <WeekTemplateEditor
+                        template={weekTemplate}
+                        onSave={tpl => { updateWeekTemplate(tpl); toast.success('Default week saved'); }}
+                        onClose={() => setShowWeekTemplateEditor(false)}
+                      />
+                    </div>
+                  )}
+                </div>
+
                 {/* Team bar */}
                 {employees.length > 0 ? (
                   <div className="glass-card p-3">
@@ -1142,7 +1453,7 @@ export default function CalendarPage() {
                       {employees.filter(e => e.active).map(emp => (
                         <button key={emp.id}
                           onClick={() => { setEditingEmployee(emp); setShowEmployeeForm(true); }}
-                          className="group flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border hover:border-current transition-colors text-xs font-medium"
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border hover:border-current transition-colors text-xs font-medium"
                           style={{ color: emp.color }}>
                           <span className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white" style={{ backgroundColor: emp.color }}>
                             {initials(emp.name)}
@@ -1164,6 +1475,7 @@ export default function CalendarPage() {
                   <div className="glass-card p-8 text-center">
                     <Users className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
                     <p className="font-semibold text-muted-foreground">No employees yet</p>
+                    <p className="text-sm text-muted-foreground mt-1">Add your team members first, then assign them to shifts.</p>
                     <button onClick={() => { setEditingEmployee(null); setShowEmployeeForm(true); }} className="btn-primary mt-4">
                       <UserPlus className="w-4 h-4 inline mr-1.5" />Add first employee
                     </button>
@@ -1173,16 +1485,16 @@ export default function CalendarPage() {
                 {/* Week grid */}
                 <div className="glass-card p-4">
                   <div className="flex items-center justify-between mb-4">
-                    <button onClick={() => setRosterWeekOffset(w => w-1)} className="p-2 rounded-xl hover:bg-muted"><ChevronLeft className="w-4 h-4" /></button>
+                    <button onClick={() => { setRosterWeekOffset(w => w-1); setActiveShiftId(null); }} className="p-2 rounded-xl hover:bg-muted"><ChevronLeft className="w-4 h-4" /></button>
                     <div className="text-center">
                       <p className="font-semibold text-sm">
                         {new Date(rosterWeekDays[0]+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}
                         {' – '}
                         {new Date(rosterWeekDays[6]+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}
                       </p>
-                      {rosterWeekOffset !== 0 && <button onClick={() => setRosterWeekOffset(0)} className="text-xs text-primary hover:underline">This week</button>}
+                      {rosterWeekOffset !== 0 && <button onClick={() => { setRosterWeekOffset(0); setActiveShiftId(null); }} className="text-xs text-primary hover:underline">This week</button>}
                     </div>
-                    <button onClick={() => setRosterWeekOffset(w => w+1)} className="p-2 rounded-xl hover:bg-muted"><ChevronRight className="w-4 h-4" /></button>
+                    <button onClick={() => { setRosterWeekOffset(w => w+1); setActiveShiftId(null); }} className="p-2 rounded-xl hover:bg-muted"><ChevronRight className="w-4 h-4" /></button>
                   </div>
                   <div className="grid grid-cols-7 gap-2">
                     {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((label, i) => {
@@ -1199,10 +1511,11 @@ export default function CalendarPage() {
                           {dayShifts.map(shift => {
                             const understaffed = shift.assignments.length < shift.minStaff;
                             const station      = stations.find(s => s.id === shift.stationId);
+                            const isActive     = activeShiftId === shift.id;
                             return (
                               <div key={shift.id}
-                                className={`group rounded-xl border overflow-hidden text-xs transition-all hover:shadow-sm cursor-pointer ${understaffed ? 'border-warning/50 bg-warning/5' : 'border-border bg-card'}`}
-                                onClick={() => { setEditingShift(shift); setShiftInitDate(undefined); setShowShiftForm(true); }}>
+                                className={`rounded-xl border overflow-hidden text-xs transition-all cursor-pointer ${isActive ? 'ring-2 ring-primary shadow-md' : 'hover:shadow-sm'} ${understaffed ? 'border-warning/50 bg-warning/5' : 'border-border bg-card'}`}
+                                onClick={() => setActiveShiftId(isActive ? null : shift.id)}>
                                 <div className="h-1.5" style={{ backgroundColor: shift.color }} />
                                 <div className="p-2">
                                   <p className="font-semibold text-[11px] truncate">{shift.name}</p>
@@ -1212,34 +1525,29 @@ export default function CalendarPage() {
                                       {station.name}
                                     </span>
                                   )}
-                                  <div className="mt-1.5 space-y-1">
-                                    {shift.assignments.length === 0 ? (
-                                      <p className="text-[10px] text-muted-foreground/60 italic">No staff</p>
-                                    ) : (
-                                      shift.assignments.map((a, idx) => {
+                                  {shift.assignments.length === 0 ? (
+                                    <p className="text-[10px] text-muted-foreground/60 italic mt-1.5">No staff</p>
+                                  ) : (
+                                    <div className="flex mt-1.5 -space-x-1">
+                                      {shift.assignments.slice(0,4).map((a) => {
                                         const emp = employeeMap.get(a.employeeId);
                                         if (!emp) return null;
                                         return (
-                                          <div key={idx} className="flex items-center gap-1.5">
-                                            <span className="w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0" style={{ backgroundColor: emp.color }}>
-                                              {initials(emp.name)}
-                                            </span>
-                                            <div className="min-w-0">
-                                              <span className="text-[10px] font-medium truncate block">{emp.name.split(' ')[0]}</span>
-                                              <span className="text-[9px] text-muted-foreground">{a.role}</span>
-                                            </div>
-                                          </div>
+                                          <span key={a.employeeId} title={`${emp.name} · ${a.role}`}
+                                            className="w-5 h-5 rounded-full border-2 border-card flex items-center justify-center text-[7px] font-bold text-white shrink-0"
+                                            style={{ backgroundColor: emp.color }}>
+                                            {initials(emp.name)}
+                                          </span>
                                         );
-                                      })
-                                    )}
-                                  </div>
+                                      })}
+                                      {shift.assignments.length > 4 && (
+                                        <span className="w-5 h-5 rounded-full border-2 border-card bg-muted flex items-center justify-center text-[7px] font-bold text-muted-foreground">
+                                          +{shift.assignments.length - 4}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
                                   {understaffed && <p className="text-[10px] text-warning font-semibold mt-1">Need {shift.minStaff - shift.assignments.length} more</p>}
-                                  <div className="flex gap-1 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button onClick={e => { e.stopPropagation(); if(confirm('Delete shift?')) deleteShift(shift.id); }}
-                                      className="text-[9px] text-muted-foreground hover:text-destructive flex items-center gap-0.5 ml-auto">
-                                      <Trash2 className="w-2.5 h-2.5" /> delete
-                                    </button>
-                                  </div>
                                 </div>
                               </div>
                             );
@@ -1253,6 +1561,34 @@ export default function CalendarPage() {
                     })}
                   </div>
                 </div>
+
+                {/* Assignment panel — shows when a shift is selected */}
+                {activeShiftId && (() => {
+                  const activeShift = shifts.find(s => s.id === activeShiftId);
+                  if (!activeShift) return null;
+                  return (
+                    <ShiftAssignPanel
+                      shift={activeShift}
+                      employees={employees}
+                      stations={stations}
+                      onClose={() => setActiveShiftId(null)}
+                      onEditFull={() => {
+                        setEditingShift(activeShift);
+                        setShiftInitDate(undefined);
+                        setShowShiftForm(true);
+                        setActiveShiftId(null);
+                      }}
+                      onDelete={() => {
+                        deleteShift(activeShiftId);
+                        setActiveShiftId(null);
+                        toast.success('Shift deleted');
+                      }}
+                      onUpdateAssignments={assignments =>
+                        quickUpdateAssignments(activeShiftId, assignments)
+                      }
+                    />
+                  );
+                })()}
               </>
             )}
 
@@ -1449,7 +1785,7 @@ export default function CalendarPage() {
       {showShiftForm && (
         <Modal
           title={editingShift ? `Edit: ${editingShift.name}` : 'New Shift'}
-          subtitle={editingShift ? `${editingShift.date} · ${editingShift.startTime}–${editingShift.endTime}` : 'Set up the time block then assign staff with their roles'}
+          subtitle={editingShift ? `${editingShift.date} · ${editingShift.startTime}–${editingShift.endTime}` : 'Set up the time block — assign staff directly on the schedule'}
           wide
           onClose={() => { setShowShiftForm(false); setEditingShift(null); setShiftInitDate(undefined); }}>
           <ShiftForm
@@ -1459,8 +1795,14 @@ export default function CalendarPage() {
             stations={stations}
             templates={shiftTemplates}
             onSave={data => {
-              if (editingShift) { updateShift(editingShift.id, data); toast.success('Shift updated'); }
-              else { addShift(data); toast.success('Shift added'); }
+              if (editingShift) {
+                updateShift(editingShift.id, data);
+                toast.success('Shift updated');
+                setActiveShiftId(editingShift.id);  // reopen assignment panel
+              } else {
+                addShift(data);
+                toast.success('Shift added');
+              }
               setShowShiftForm(false); setEditingShift(null); setShiftInitDate(undefined);
             }}
             onClose={() => { setShowShiftForm(false); setEditingShift(null); setShiftInitDate(undefined); }} />

@@ -74,7 +74,9 @@ export default function OrderPortal() {
     (async () => {
       try {
         let res = await fetchRestaurantByToken(restaurantToken);
-        if (!res && !isSupabaseEnabled()) {
+        if (!res) {
+          // Supabase may be configured but this token only exists locally (demo / dev).
+          // Always try the local store as fallback.
           const state = useStore.getState();
           if (state.settings?.restaurantToken === restaurantToken) {
             res = { userId: state.user?.id ?? '', settings: state.settings, menuItems: state.menuItems, tables: state.tables };
