@@ -657,7 +657,7 @@ function WeekTemplateEditor({ template, onSave, onClose }: {
     if (!day) return;
     // Copy Mon-Fri slots from this day (clone with new ids)
     setTpl(prev => prev.map(d => {
-      if ([1,2,3,4,5].includes(d.dayOfWeek)) {
+      if ([1,2,3,4,5,6,7].includes(d.dayOfWeek)) {
         return { ...d, slots: day.slots.map(s => ({ ...s, id: crypto.randomUUID() })) };
       }
       return d;
