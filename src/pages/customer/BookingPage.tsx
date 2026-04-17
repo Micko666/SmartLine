@@ -1,21 +1,30 @@
 /**
- * BookingPage — public customer-facing reservation page.
+ * BookingPage — public customer-facing booking page.
  * Accessed via /book/:restaurantToken
  *
- * Shows:
- *  - Restaurant name + booking message
- *  - Month calendar with working days highlighted; closed days greyed out
- *  - On day select: available time slots
- *  - Booking form: name, phone, email, guests, package, notes
- *  - Submits as CalendarEvent with status=pending (or approved if requireApproval=false)
+ * Flow:
+ *   1. Mode selector: Dine In / Takeaway / Delivery / Plan an Event
+ *   2. (Event only) Package picker
+ *   3. Date picker (calendar)
+ *   4. Time slot picker
+ *   5. Contact & details form
+ *   6. Confirmation screen
  */
 import { useState, useMemo, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Clock, Users, CheckCircle, ChefHat } from 'lucide-react';
+import {
+  ChevronLeft, ChevronRight, Clock, Users, CheckCircle, ChefHat,
+  UtensilsCrossed, ShoppingBag, Bike, Star, ArrowLeft,
+} from 'lucide-react';
 import { fetchRestaurantByToken, fetchBookingDataByToken, submitBookingToSupabase } from '@/lib/supabase/queries/public';
 import { useStore } from '@/store';
 import { isSupabaseEnabled } from '@/store/flags';
-import type { CalendarSettings, EventPackage, WorkingDay, CalendarEvent } from '@/domain/types';
+import type { CalendarSettings, CalendarEventType, EventPackage, WorkingDay, CalendarEvent } from '@/domain/types';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type ServiceMode = 'dine-in' | 'takeaway' | 'delivery' | 'event';
+type Step = 'mode' | 'packages' | 'date' | 'time' | 'form';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,18 +47,30 @@ function buildTimeSlots(openTime: string, closeTime: string, slotMinutes = 60): 
   return slots;
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+const MODE_CONFIG: Record<ServiceMode, {
+  label: string;
+  subtitle: string;
+  icon: React.FC<{ className?: string }>;
+  color: string;
+  eventType: CalendarEventType;
+}> = {
+  'dine-in':  { label: 'Dine In',        subtitle: 'Reserve a table',           icon: UtensilsCrossed, color: 'text-primary',     eventType: 'reservation'    },
+  'takeaway': { label: 'Takeaway',        subtitle: 'Pick up your order',         icon: ShoppingBag,     color: 'text-orange-500',   eventType: 'takeaway'       },
+  'delivery': { label: 'Delivery',        subtitle: 'We bring it to you',         icon: Bike,            color: 'text-blue-500',     eventType: 'delivery'       },
+  'event':    { label: 'Plan an Event',   subtitle: 'Birthdays, parties & more',  icon: Star,            color: 'text-purple-500',   eventType: 'private_event'  },
+};
+
+// ─── Shared data interface ────────────────────────────────────────────────────
 
 interface RestaurantData {
   restaurantName: string;
   calendarSettings: CalendarSettings;
   eventPackages: EventPackage[];
   calendarEvents: Pick<CalendarEvent, 'id' | 'date' | 'timeSlot' | 'type' | 'status'>[];
-  /** restaurantToken — needed for Supabase RPC path */
-  restaurantToken: string;
-  /** submitBooking returns true on success */
   submitBooking: (data: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'>) => Promise<boolean>;
 }
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function BookingPage() {
   const { restaurantToken } = useParams<{ restaurantToken: string }>();
@@ -59,33 +80,32 @@ export default function BookingPage() {
   const [data, setData]       = useState<RestaurantData | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
-  // Step state
-  const [currentDate, setCurrentDate] = useState(new Date());
+  // Flow state
+  const [mode, setMode]                 = useState<ServiceMode | null>(null);
+  const [step, setStep]                 = useState<Step>('mode');
+  const [currentDate, setCurrentDate]   = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
 
   // Form state
   const [form, setForm] = useState({
-    name: '', phone: '', email: '', guests: 2, packageId: '', notes: '',
+    name: '', phone: '', email: '', guests: 2,
+    packageId: '', notes: '', address: '',
   });
 
-  // ── Load restaurant data ───────────────────────────────────────────────────
+  // ── Load ───────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!restaurantToken) { setError('Invalid booking link.'); setLoading(false); return; }
-
     (async () => {
       try {
         let res = await fetchRestaurantByToken(restaurantToken);
-
-        // Local fallback for demo/dev
         if (!res && !isSupabaseEnabled()) {
           const state = useStore.getState();
           if (state.settings?.restaurantToken === restaurantToken) {
             res = { userId: state.user?.id ?? '', settings: state.settings, menuItems: state.menuItems, tables: state.tables };
           }
         }
-
         if (!res) { setError('Restaurant not found.'); setLoading(false); return; }
 
         const storeState = useStore.getState();
@@ -96,14 +116,10 @@ export default function BookingPage() {
         let calEvents: Pick<CalendarEvent, 'id' | 'date' | 'timeSlot' | 'type' | 'status'>[];
 
         if (isLocal) {
-          // Demo / local mode — read straight from store
           calSettings = storeState.calendarSettings;
           evtPackages = storeState.eventPackages.filter(p => p.active);
-          calEvents   = storeState.calendarEvents.map(e => ({
-            id: e.id, date: e.date, timeSlot: e.timeSlot, type: e.type, status: e.status,
-          }));
+          calEvents   = storeState.calendarEvents.map(e => ({ id: e.id, date: e.date, timeSlot: e.timeSlot, type: e.type, status: e.status }));
         } else {
-          // Supabase mode — fetch public booking data via RPC
           const bookingData = await fetchBookingDataByToken(restaurantToken);
           const defaultSettings: CalendarSettings = {
             maxEventsPerDay: 10, requireApproval: true, advanceBookingDays: 90,
@@ -119,102 +135,98 @@ export default function BookingPage() {
           calendarSettings: calSettings,
           eventPackages:    evtPackages,
           calendarEvents:   calEvents,
-          restaurantToken:  restaurantToken,
           submitBooking: async (eventData) => {
-            if (isLocal) {
-              storeState.addCalendarEvent(eventData);
-              return true;
-            } else {
-              const result = await submitBookingToSupabase(restaurantToken, eventData);
-              return result.ok;
-            }
+            if (isLocal) { storeState.addCalendarEvent(eventData); return true; }
+            return (await submitBookingToSupabase(restaurantToken, eventData)).ok;
           },
         });
       } catch {
-        setError('Failed to load booking page. Please try again.');
+        setError('Failed to load booking page.');
       } finally {
         setLoading(false);
       }
     })();
   }, [restaurantToken]);
 
-  // ── Calendar helpers ────────────────────────────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   const year  = currentDate.getFullYear();
   const month = currentDate.getMonth();
   const firstDay    = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-  const todayStr = today();
+  const todayStr    = today();
 
   function isAvailableDay(dateStr: string): boolean {
-    if (!data) return false;
-    const { calendarSettings } = data;
-
-    // Must not be in the past
-    if (dateStr < todayStr) return false;
-
-    // Advance booking limit
-    if (calendarSettings.advanceBookingDays > 0) {
-      const maxDate = new Date();
-      maxDate.setDate(maxDate.getDate() + calendarSettings.advanceBookingDays);
-      if (dateStr > isoDate(maxDate)) return false;
+    if (!data || dateStr < todayStr) return false;
+    const { calendarSettings: cs } = data;
+    if (cs.advanceBookingDays > 0) {
+      const max = new Date(); max.setDate(max.getDate() + cs.advanceBookingDays);
+      if (dateStr > isoDate(max)) return false;
     }
-
-    const d = new Date(dateStr);
+    const d   = new Date(dateStr);
     const dow = d.getDay() as WorkingDay['dayOfWeek'];
-
-    // Check exceptions first
-    const exception = calendarSettings.workingExceptions.find(ex => ex.date === dateStr);
-    if (exception) {
-      if (exception.isClosed) return false;
-      return true;
+    const exc = cs.workingExceptions.find(ex => ex.date === dateStr);
+    if (exc) return !exc.isClosed;
+    if (!cs.workingDays.find(w => w.dayOfWeek === dow)?.isOpen) return false;
+    if (cs.maxEventsPerDay > 0) {
+      const count = data.calendarEvents.filter(e => e.date === dateStr && (e.status === 'approved' || e.status === 'pending')).length;
+      if (count >= cs.maxEventsPerDay) return false;
     }
-
-    // Weekly schedule
-    const wd = calendarSettings.workingDays.find(w => w.dayOfWeek === dow);
-    if (!wd?.isOpen) return false;
-
-    // Capacity check
-    if (calendarSettings.maxEventsPerDay > 0) {
-      const eventsOnDay = data.calendarEvents.filter(
-        e => e.date === dateStr && (e.status === 'approved' || e.status === 'pending'),
-      ).length;
-      if (eventsOnDay >= calendarSettings.maxEventsPerDay) return false;
-    }
-
-    // Block days that have a closure event
-    const hasClosure = data.calendarEvents.some(e => e.date === dateStr && e.type === 'closure' && e.status === 'approved');
-    if (hasClosure) return false;
-
-    return true;
+    return !data.calendarEvents.some(e => e.date === dateStr && e.type === 'closure' && e.status === 'approved');
   }
 
   const timeSlots = useMemo(() => {
     if (!selectedDate || !data) return [];
-    const { calendarSettings } = data;
-    const d = new Date(selectedDate);
+    const { calendarSettings: cs } = data;
+    const d   = new Date(selectedDate);
     const dow = d.getDay() as WorkingDay['dayOfWeek'];
-    const exception = calendarSettings.workingExceptions.find(ex => ex.date === selectedDate);
-    const open  = exception?.openTime  ?? calendarSettings.workingDays.find(w => w.dayOfWeek === dow)?.openTime  ?? '09:00';
-    const close = exception?.closeTime ?? calendarSettings.workingDays.find(w => w.dayOfWeek === dow)?.closeTime ?? '22:00';
+    const exc = cs.workingExceptions.find(ex => ex.date === selectedDate);
+    const open  = exc?.openTime  ?? cs.workingDays.find(w => w.dayOfWeek === dow)?.openTime  ?? '09:00';
+    const close = exc?.closeTime ?? cs.workingDays.find(w => w.dayOfWeek === dow)?.closeTime ?? '22:00';
     return buildTimeSlots(open, close);
   }, [selectedDate, data]);
 
-  // ── Submit ──────────────────────────────────────────────────────────────────
+  // ── Navigation ─────────────────────────────────────────────────────────────
+
+  function selectMode(m: ServiceMode) {
+    setMode(m);
+    // Events go to package selection first (if packages exist), then date
+    if (m === 'event' && data && data.eventPackages.length > 0) {
+      setStep('packages');
+    } else {
+      setStep('date');
+    }
+  }
+
+  function goBack() {
+    if (step === 'packages') { setMode(null); setStep('mode'); }
+    else if (step === 'date') {
+      if (mode === 'event' && data && data.eventPackages.length > 0) setStep('packages');
+      else { setMode(null); setStep('mode'); }
+    }
+    else if (step === 'time') { setSelectedDate(null); setStep('date'); }
+    else if (step === 'form') { setSelectedSlot(null); setStep('time'); }
+  }
+
+  // ── Submit ─────────────────────────────────────────────────────────────────
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!data || !selectedDate || !selectedSlot) return;
+    if (!data || !selectedDate || !selectedSlot || !mode) return;
     if (!form.name.trim()) return;
 
-    const pkg = data.eventPackages.find(p => p.id === form.packageId);
+    const cfg    = MODE_CONFIG[mode];
+    const pkg    = data.eventPackages.find(p => p.id === form.packageId);
     const status = data.calendarSettings.requireApproval ? 'pending' : 'approved';
+
+    const deliveryNote = mode === 'delivery' && form.address.trim()
+      ? `Delivery to: ${form.address.trim()}${form.notes ? ' — ' + form.notes : ''}`
+      : form.notes;
 
     const ok = await data.submitBooking({
       date:          selectedDate,
       timeSlot:      selectedSlot,
-      type:          form.packageId ? 'private_event' : 'reservation',
+      type:          cfg.eventType,
       status,
       customerName:  form.name.trim(),
       customerPhone: form.phone.trim(),
@@ -222,14 +234,21 @@ export default function BookingPage() {
       guestCount:    form.guests,
       packageId:     form.packageId || undefined,
       packageName:   pkg?.name,
-      notes:         form.notes,
+      notes:         deliveryNote,
       createdBy:     'customer',
     });
 
     if (ok) setSubmitted(true);
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  function resetFlow() {
+    setMode(null); setStep('mode');
+    setSelectedDate(null); setSelectedSlot(null);
+    setForm({ name: '', phone: '', email: '', guests: 2, packageId: '', notes: '', address: '' });
+    setSubmitted(false);
+  }
+
+  // ── Loading / error screens ────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -250,139 +269,207 @@ export default function BookingPage() {
     );
   }
 
-  if (submitted) {
-    const status = data.calendarSettings.requireApproval ? 'pending' : 'confirmed';
+  // ── Success screen ─────────────────────────────────────────────────────────
+
+  if (submitted && mode) {
+    const cfg    = MODE_CONFIG[mode];
+    const needs  = data.calendarSettings.requireApproval;
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-5 text-center px-4 bg-background">
         <div className="w-16 h-16 rounded-2xl bg-success/10 flex items-center justify-center">
           <CheckCircle className="w-8 h-8 text-success" />
         </div>
         <div>
-          <h1 className="font-display text-2xl font-bold">Request received!</h1>
-          {status === 'pending' ? (
-            <p className="text-muted-foreground mt-2 max-w-sm">
-              Your booking request has been sent. The restaurant will confirm shortly — you'll be contacted at {form.phone || form.email || 'the details you provided'}.
+          <h1 className="font-display text-2xl font-bold">
+            {mode === 'delivery' ? 'Order placed!' : mode === 'takeaway' ? 'Order received!' : 'Request received!'}
+          </h1>
+          {needs ? (
+            <p className="text-muted-foreground mt-2 max-w-sm text-sm">
+              Your {cfg.label.toLowerCase()} request has been sent.
+              {' '}The restaurant will confirm shortly.
             </p>
           ) : (
-            <p className="text-muted-foreground mt-2 max-w-sm">
-              Your reservation for {new Date(selectedDate! + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} at {selectedSlot} is confirmed!
+            <p className="text-muted-foreground mt-2 max-w-sm text-sm">
+              Your {cfg.label.toLowerCase()} for{' '}
+              {new Date(selectedDate! + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}{' '}
+              at {selectedSlot} is confirmed.
             </p>
           )}
         </div>
-        <button
-          onClick={() => {
-            setSubmitted(false);
-            setSelectedDate(null);
-            setSelectedSlot(null);
-            setForm({ name: '', phone: '', email: '', guests: 2, packageId: '', notes: '' });
-          }}
-          className="btn-ghost"
-        >
-          Make another booking
+        <button onClick={resetFlow} className="btn-ghost text-sm">
+          Make another request
         </button>
       </div>
     );
   }
 
+  // ── Shared header ──────────────────────────────────────────────────────────
+
+  const showBack = step !== 'mode';
+
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
       <header className="border-b border-border bg-card/80 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-lg mx-auto px-4 py-3 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center shrink-0">
-            <ChefHat className="w-4 h-4 text-primary-foreground" />
+          {showBack ? (
+            <button onClick={goBack} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground shrink-0">
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          ) : (
+            <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center shrink-0">
+              <ChefHat className="w-4 h-4 text-primary-foreground" />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="font-display font-bold text-sm leading-tight truncate">{data.restaurantName}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {step === 'mode'     && 'How can we help?'}
+              {step === 'packages' && 'Choose your event type'}
+              {step === 'date'     && (mode ? MODE_CONFIG[mode].label : 'Choose a date')}
+              {step === 'time'     && 'Choose a time'}
+              {step === 'form'     && 'Your details'}
+            </p>
           </div>
-          <div>
-            <p className="font-display font-bold text-sm leading-tight">{data.restaurantName}</p>
-            <p className="text-[11px] text-muted-foreground">Make a reservation</p>
-          </div>
+          {mode && step !== 'mode' && (
+            <div className={`text-xs font-semibold px-2.5 py-1 rounded-full bg-muted ${MODE_CONFIG[mode].color}`}>
+              {MODE_CONFIG[mode].label}
+            </div>
+          )}
         </div>
       </header>
 
-      <div className="max-w-lg mx-auto px-4 py-6 space-y-6">
+      <div className="max-w-lg mx-auto px-4 py-6 space-y-5">
 
-        {/* Booking message */}
-        {data.calendarSettings.bookingMessage && (
+        {data.calendarSettings.bookingMessage && step === 'mode' && (
           <p className="text-sm text-muted-foreground text-center px-2">{data.calendarSettings.bookingMessage}</p>
         )}
 
-        {/* Step 1 — Pick a date */}
-        <div className="glass-card p-5">
-          <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">1. Choose a date</h2>
-
-          {/* Month nav */}
-          <div className="flex items-center justify-between mb-3">
-            <button
-              onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
-              className="p-1.5 rounded-lg hover:bg-muted transition-colors"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="font-semibold text-sm">{MONTH_NAMES[month]} {year}</span>
-            <button
-              onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
-              className="p-1.5 rounded-lg hover:bg-muted transition-colors"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-7 mb-1">
-            {DAY_NAMES.map(d => (
-              <div key={d} className="text-center text-[10px] font-semibold text-muted-foreground py-1">{d}</div>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-7 gap-1">
-            {Array.from({ length: firstDay }).map((_, i) => <div key={`b${i}`} />)}
-            {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
-              const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-              const available  = isAvailableDay(dateStr);
-              const isSelected = dateStr === selectedDate;
-              const isToday    = dateStr === todayStr;
-
+        {/* ── STEP: Mode selector ── */}
+        {step === 'mode' && (
+          <div className="grid grid-cols-2 gap-3">
+            {(Object.entries(MODE_CONFIG) as [ServiceMode, typeof MODE_CONFIG[ServiceMode]][]).map(([key, cfg]) => {
+              const Icon = cfg.icon;
+              // Hide event mode if no packages configured
+              if (key === 'event' && data.eventPackages.length === 0) return null;
               return (
                 <button
-                  key={day}
-                  disabled={!available}
-                  onClick={() => { setSelectedDate(dateStr); setSelectedSlot(null); }}
-                  className={`
-                    h-10 rounded-xl text-sm font-medium transition-all
-                    ${isSelected ? 'bg-primary text-primary-foreground' : ''}
-                    ${!isSelected && available ? 'hover:bg-muted text-foreground' : ''}
-                    ${!available ? 'text-muted-foreground/30 cursor-not-allowed' : ''}
-                    ${isToday && !isSelected ? 'ring-1 ring-primary' : ''}
-                  `}
+                  key={key}
+                  onClick={() => selectMode(key)}
+                  className="glass-card p-5 text-left hover:shadow-md transition-all hover:scale-[1.02] active:scale-[0.99] group"
                 >
-                  {day}
+                  <div className={`w-10 h-10 rounded-xl bg-muted flex items-center justify-center mb-3 ${cfg.color} group-hover:scale-110 transition-transform`}>
+                    <Icon className="w-5 h-5" />
+                  </div>
+                  <p className="font-semibold text-sm text-foreground">{cfg.label}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{cfg.subtitle}</p>
                 </button>
               );
             })}
           </div>
-        </div>
+        )}
 
-        {/* Step 2 — Pick a time */}
-        {selectedDate && (
+        {/* ── STEP: Package selector (event mode) ── */}
+        {step === 'packages' && (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">Choose an event type, or continue without a package.</p>
+            <div className="space-y-3">
+              <button
+                onClick={() => { setForm(f => ({ ...f, packageId: '' })); setStep('date'); }}
+                className={`w-full p-4 rounded-2xl border text-left transition-all ${!form.packageId ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border bg-card hover:border-primary/50'}`}
+              >
+                <p className="font-semibold text-sm">Custom / no package</p>
+                <p className="text-xs text-muted-foreground mt-0.5">I'll describe what I need in the notes</p>
+              </button>
+              {data.eventPackages.map(pkg => (
+                <button
+                  key={pkg.id}
+                  onClick={() => { setForm(f => ({ ...f, packageId: pkg.id })); setStep('date'); }}
+                  className={`w-full p-4 rounded-2xl border text-left transition-all ${form.packageId === pkg.id ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border bg-card hover:border-primary/50'}`}
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl shrink-0">{pkg.emoji}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm">{pkg.name}</p>
+                      {pkg.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{pkg.description}</p>}
+                      <div className="flex flex-wrap gap-3 mt-2 text-xs text-muted-foreground">
+                        <span><Users className="w-3 h-3 inline mr-0.5" />{pkg.minGuests}–{pkg.maxGuests} guests</span>
+                        <span><Clock className="w-3 h-3 inline mr-0.5" />{pkg.duration}h</span>
+                        {pkg.pricePerPerson != null && <span className="font-semibold text-foreground">From ${pkg.pricePerPerson}/person</span>}
+                        {pkg.fixedPrice     != null && <span className="font-semibold text-foreground">${pkg.fixedPrice}</span>}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP: Date picker ── */}
+        {step === 'date' && (
           <div className="glass-card p-5">
-            <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">2. Choose a time</h2>
-            <p className="text-sm font-medium mb-3">
+            <div className="flex items-center justify-between mb-4">
+              <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() - 1, 1))} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="font-semibold text-sm">{MONTH_NAMES[month]} {year}</span>
+              <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() + 1, 1))} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-7 mb-1">
+              {DAY_NAMES.map(d => (
+                <div key={d} className="text-center text-[10px] font-semibold text-muted-foreground py-1">{d}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+              {Array.from({ length: firstDay }).map((_, i) => <div key={`b${i}`} />)}
+              {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
+                const ds        = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const available = isAvailableDay(ds);
+                const isToday   = ds === todayStr;
+                const selected  = ds === selectedDate;
+                return (
+                  <button
+                    key={day}
+                    disabled={!available}
+                    onClick={() => { setSelectedDate(ds); setStep('time'); }}
+                    className={`
+                      h-10 rounded-xl text-sm font-medium transition-all
+                      ${selected  ? 'bg-primary text-primary-foreground' : ''}
+                      ${!selected && available ? 'hover:bg-muted text-foreground' : ''}
+                      ${!available ? 'text-muted-foreground/30 cursor-not-allowed' : ''}
+                      ${isToday && !selected ? 'ring-1 ring-primary' : ''}
+                    `}
+                  >
+                    {day}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP: Time slot ── */}
+        {step === 'time' && selectedDate && (
+          <div className="glass-card p-5">
+            <p className="text-sm font-medium mb-4">
               {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
             </p>
             {timeSlots.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No time slots available for this date.</p>
+              <div className="text-center py-6">
+                <p className="text-sm text-muted-foreground">No time slots available for this date.</p>
+                <button onClick={goBack} className="btn-ghost text-sm mt-3">Choose another date</button>
+              </div>
             ) : (
               <div className="grid grid-cols-4 gap-2">
                 {timeSlots.map(slot => (
                   <button
                     key={slot}
-                    onClick={() => setSelectedSlot(slot)}
-                    className={`py-2 rounded-xl text-sm font-medium border transition-all ${
-                      selectedSlot === slot
-                        ? 'bg-primary text-primary-foreground border-primary'
-                        : 'border-border hover:border-primary hover:text-primary'
-                    }`}
+                    onClick={() => { setSelectedSlot(slot); setStep('form'); }}
+                    className="py-2.5 rounded-xl text-sm font-medium border border-border hover:border-primary hover:text-primary hover:bg-primary/5 transition-all"
                   >
-                    <Clock className="w-3 h-3 inline mr-1" />{slot}
+                    {slot}
                   </button>
                 ))}
               </div>
@@ -390,98 +477,77 @@ export default function BookingPage() {
           </div>
         )}
 
-        {/* Step 3 — Fill form */}
-        {selectedDate && selectedSlot && (
+        {/* ── STEP: Details form ── */}
+        {step === 'form' && selectedDate && selectedSlot && mode && (
           <div className="glass-card p-5">
-            <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">3. Your details</h2>
+            {/* Summary bar */}
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-muted/50 mb-5 text-xs">
+              <span className="font-medium text-foreground">
+                {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+              </span>
+              <span className="text-muted-foreground">at</span>
+              <span className="font-medium text-foreground">{selectedSlot}</span>
+              {form.packageId && data.eventPackages.find(p => p.id === form.packageId) && (
+                <>
+                  <span className="text-muted-foreground">·</span>
+                  <span className="font-medium text-foreground">{data.eventPackages.find(p => p.id === form.packageId)!.emoji} {data.eventPackages.find(p => p.id === form.packageId)!.name}</span>
+                </>
+              )}
+            </div>
+
             <form onSubmit={handleSubmit} className="space-y-4">
 
               <div>
                 <label className="text-xs text-muted-foreground font-medium mb-1 block">Full name *</label>
-                <input
-                  type="text" value={form.name} required
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  className="input-field w-full"
-                  placeholder="Your name"
-                />
+                <input type="text" required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  className="input-field w-full" placeholder="Your name" />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-muted-foreground font-medium mb-1 block">Phone</label>
-                  <input
-                    type="tel" value={form.phone}
-                    onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-                    className="input-field w-full"
-                    placeholder="+1 234 567 890"
-                  />
+                  <input type="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
+                    className="input-field w-full" placeholder="+1 234 567 890" />
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground font-medium mb-1 block">Email</label>
-                  <input
-                    type="email" value={form.email}
-                    onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                    className="input-field w-full"
-                    placeholder="you@example.com"
-                  />
+                  <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                    className="input-field w-full" placeholder="you@example.com" />
                 </div>
               </div>
 
-              <div>
-                <label className="text-xs text-muted-foreground font-medium mb-1 block">Number of guests</label>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, guests: Math.max(1, f.guests - 1) }))}
-                    className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center font-bold hover:bg-muted/80 transition-colors"
-                  >−</button>
-                  <span className="text-lg font-bold w-8 text-center">{form.guests}</span>
-                  <button
-                    type="button"
-                    onClick={() => setForm(f => ({ ...f, guests: f.guests + 1 }))}
-                    className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center font-bold hover:bg-muted/80 transition-colors"
-                  >+</button>
-                  <span className="text-sm text-muted-foreground ml-1"><Users className="w-3.5 h-3.5 inline" /> guests</span>
-                </div>
-              </div>
-
-              {data.eventPackages.length > 0 && (
+              {/* Guest count — shown for dine-in and events */}
+              {(mode === 'dine-in' || mode === 'event') && (
                 <div>
-                  <label className="text-xs text-muted-foreground font-medium mb-1 block">Event type (optional)</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setForm(f => ({ ...f, packageId: '' }))}
-                      className={`p-3 rounded-xl border text-left transition-all ${!form.packageId ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'}`}
-                    >
-                      <p className="text-sm font-medium">Regular visit</p>
-                      <p className="text-xs text-muted-foreground">Standard reservation</p>
-                    </button>
-                    {data.eventPackages.map(pkg => (
-                      <button
-                        key={pkg.id}
-                        type="button"
-                        onClick={() => setForm(f => ({ ...f, packageId: pkg.id }))}
-                        className={`p-3 rounded-xl border text-left transition-all ${form.packageId === pkg.id ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'}`}
-                      >
-                        <p className="text-sm font-medium">{pkg.emoji} {pkg.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {pkg.pricePerPerson != null ? `From $${pkg.pricePerPerson}/person` : pkg.fixedPrice != null ? `$${pkg.fixedPrice}` : pkg.description || `${pkg.minGuests}–${pkg.maxGuests} guests`}
-                        </p>
-                      </button>
-                    ))}
+                  <label className="text-xs text-muted-foreground font-medium mb-1 block">Number of guests</label>
+                  <div className="flex items-center gap-3">
+                    <button type="button" onClick={() => setForm(f => ({ ...f, guests: Math.max(1, f.guests - 1) }))}
+                      className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center font-bold hover:bg-muted/80 transition-colors">−</button>
+                    <span className="text-lg font-bold w-8 text-center">{form.guests}</span>
+                    <button type="button" onClick={() => setForm(f => ({ ...f, guests: f.guests + 1 }))}
+                      className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center font-bold hover:bg-muted/80 transition-colors">+</button>
+                    <span className="text-sm text-muted-foreground ml-1"><Users className="w-3.5 h-3.5 inline" /> guests</span>
                   </div>
                 </div>
               )}
 
+              {/* Delivery address */}
+              {mode === 'delivery' && (
+                <div>
+                  <label className="text-xs text-muted-foreground font-medium mb-1 block">Delivery address *</label>
+                  <input type="text" required value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
+                    className="input-field w-full" placeholder="Street, city, postcode" />
+                </div>
+              )}
+
               <div>
-                <label className="text-xs text-muted-foreground font-medium mb-1 block">Special requests (optional)</label>
+                <label className="text-xs text-muted-foreground font-medium mb-1 block">
+                  {mode === 'takeaway' || mode === 'delivery' ? 'Order notes (optional)' : 'Special requests (optional)'}
+                </label>
                 <textarea
-                  value={form.notes}
-                  onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                  rows={2}
-                  className="input-field w-full resize-none"
-                  placeholder="Dietary requirements, allergies, special setup…"
+                  value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                  rows={2} className="input-field w-full resize-none"
+                  placeholder={mode === 'takeaway' ? 'Dietary requirements, preferred pickup…' : mode === 'delivery' ? 'Dietary requirements, gate code…' : 'Dietary requirements, occasion, setup requests…'}
                 />
               </div>
 
@@ -489,15 +555,17 @@ export default function BookingPage() {
                 <p className="text-xs text-muted-foreground mb-3">
                   {data.calendarSettings.requireApproval
                     ? 'Your request will be reviewed and confirmed by the restaurant.'
-                    : 'Your reservation will be confirmed immediately.'}
+                    : 'Your booking will be confirmed immediately.'}
                 </p>
                 <button type="submit" className="btn-primary w-full text-base py-3">
-                  Submit booking request
+                  {mode === 'delivery' ? 'Place delivery order' : mode === 'takeaway' ? 'Place takeaway order' : 'Send booking request'}
                 </button>
               </div>
+
             </form>
           </div>
         )}
+
       </div>
     </div>
   );

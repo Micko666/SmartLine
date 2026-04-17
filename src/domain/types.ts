@@ -330,7 +330,7 @@ export interface CartValidationResult {
 // ─── Calendar & Reservations ─────────────────────────────────────────────────
 
 export type CalendarEventStatus = 'pending' | 'approved' | 'rejected' | 'cancelled' | 'completed';
-export type CalendarEventType   = 'reservation' | 'private_event' | 'closure';
+export type CalendarEventType   = 'reservation' | 'private_event' | 'closure' | 'takeaway' | 'delivery';
 
 export interface EventPackage {
   id: string;

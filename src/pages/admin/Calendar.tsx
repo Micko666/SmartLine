@@ -1,21 +1,22 @@
 /**
- * Calendar — Reservations, Events, Roster & Settings.
+ * Calendar — Bookings & Staff Roster.
  *
- * Roster tab design philosophy:
- *   - A "Shift" is a named time block (Morning, Evening, Bar PM…).
- *   - Each shift holds N assignments: employee + their role for that shift.
- *   - One employee can appear in multiple shifts (e.g. covers two blocks).
- *   - Split-role within a shift is captured via a free-text roleNote
- *     (e.g. "07-10 prep cook, rest line cook").
- *   - Work Log sub-tab shows past shifts as a filterable history table
- *     with per-employee hour totals — the analytics integration point.
+ * Tab 1 — Bookings:
+ *   Monthly calendar view, day-detail panel, pending queue.
+ *   Toggle button reveals event packages panel inline.
+ *
+ * Tab 2 — Roster:
+ *   Weekly shift grid + Work Log sub-view.
+ *   Each shift holds named assignments: employee + role + optional split note.
+ *
+ * ⚙️ icon → Settings modal (booking rules, working hours, templates, link).
  */
 import { useState, useMemo } from 'react';
 import {
   ChevronLeft, ChevronRight, Plus, Check, X, Clock, Users,
   CalendarDays, Settings2, Package, AlertCircle, Edit2, Trash2,
-  Phone, Mail, Star, Link, UserPlus, Layers, History,
-  LayoutGrid, Info,
+  Phone, Mail, Link, UserPlus, Layers, History,
+  LayoutGrid, Info, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -43,7 +44,7 @@ function shiftHours(startTime: string, endTime: string): number {
   const [eh, em] = endTime.split(':').map(Number);
   const start = sh * 60 + sm;
   let end = eh * 60 + em;
-  if (end <= start) end += 24 * 60; // overnight
+  if (end <= start) end += 24 * 60;
   return Math.round((end - start) / 60 * 10) / 10;
 }
 
@@ -56,7 +57,12 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const TYPE_EMOJI: Record<CalendarEventType, string> = {
-  reservation: '🪑', private_event: '🎉', closure: '🔒',
+  reservation: '🪑', private_event: '🎉', closure: '🔒', takeaway: '🥡', delivery: '🚚',
+};
+
+const TYPE_LABEL: Record<CalendarEventType, string> = {
+  reservation: 'Reservation', private_event: 'Private Event',
+  closure: 'Closure / Blocked', takeaway: 'Takeaway', delivery: 'Delivery',
 };
 
 const PRESET_COLORS = [
@@ -136,9 +142,9 @@ function EventForm({ initialDate, packages, onSave, onClose }: {
         <div>
           <label className="form-label">Type</label>
           <select value={form.type} onChange={e => setForm(f => ({...f, type: e.target.value as CalendarEventType}))} className="input-field w-full">
-            <option value="reservation">Reservation</option>
-            <option value="private_event">Private Event</option>
-            <option value="closure">Closure / Blocked</option>
+            {(Object.entries(TYPE_LABEL) as [CalendarEventType, string][]).map(([v, label]) => (
+              <option key={v} value={v}>{label}</option>
+            ))}
           </select>
         </div>
       </div>
@@ -212,8 +218,9 @@ function EventForm({ initialDate, packages, onSave, onClose }: {
 
 // ─── Package form ─────────────────────────────────────────────────────────────
 
-function PackageForm({ initial, onSave, onClose }: {
+function PackageForm({ initial, sym, onSave, onClose }: {
   initial?: Partial<EventPackage>;
+  sym: string;
   onSave: (data: Omit<EventPackage, 'id' | 'createdAt'>) => void;
   onClose: () => void;
 }) {
@@ -263,11 +270,11 @@ function PackageForm({ initial, onSave, onClose }: {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="form-label">Fixed price (optional)</label>
+          <label className="form-label">Fixed price ({sym})</label>
           <input type="number" min={0} step={0.01} value={form.fixedPrice ?? ''} onChange={e => setForm(f => ({...f, fixedPrice: e.target.value ? Number(e.target.value) : undefined}))} className="input-field w-full" placeholder="Leave blank if per-person" />
         </div>
         <div>
-          <label className="form-label">Per person (optional)</label>
+          <label className="form-label">Per person ({sym})</label>
           <input type="number" min={0} step={0.01} value={form.pricePerPerson ?? ''} onChange={e => setForm(f => ({...f, pricePerPerson: e.target.value ? Number(e.target.value) : undefined}))} className="input-field w-full" placeholder="Leave blank if fixed" />
         </div>
       </div>
@@ -318,7 +325,7 @@ function EmployeeForm({ initial, onSave, onClose }: {
       <div>
         <label className="form-label">Default role / position</label>
         <input type="text" value={form.role} onChange={e => setForm(f => ({...f, role: e.target.value}))} className="input-field w-full" placeholder="Chef, Server, Bartender…" />
-        <p className="text-[10px] text-muted-foreground mt-1">This is a general label — you'll set specific roles per shift.</p>
+        <p className="text-[10px] text-muted-foreground mt-1">General label — set specific roles per shift.</p>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -352,7 +359,7 @@ function EmployeeForm({ initial, onSave, onClose }: {
   );
 }
 
-// ─── Shift form (core of the new system) ─────────────────────────────────────
+// ─── Shift form ───────────────────────────────────────────────────────────────
 
 function ShiftForm({ initial, initialDate, employees, stations, templates, onSave, onClose }: {
   initial?: Shift;
@@ -364,22 +371,19 @@ function ShiftForm({ initial, initialDate, employees, stations, templates, onSav
   onClose: () => void;
 }) {
   const [form, setForm] = useState({
-    date:        initial?.date      ?? initialDate ?? today(),
-    name:        initial?.name      ?? '',
-    startTime:   initial?.startTime ?? '09:00',
-    endTime:     initial?.endTime   ?? '17:00',
-    color:       initial?.color     ?? PRESET_COLORS[0],
-    stationId:   initial?.stationId ?? '',
-    minStaff:    initial?.minStaff  ?? 1,
-    notes:       initial?.notes     ?? '',
+    date:      initial?.date      ?? initialDate ?? today(),
+    name:      initial?.name      ?? '',
+    startTime: initial?.startTime ?? '09:00',
+    endTime:   initial?.endTime   ?? '17:00',
+    color:     initial?.color     ?? PRESET_COLORS[0],
+    stationId: initial?.stationId ?? '',
+    minStaff:  initial?.minStaff  ?? 1,
+    notes:     initial?.notes     ?? '',
   });
-
   const [assignments, setAssignments] = useState<ShiftAssignment[]>(initial?.assignments ?? []);
-
-  // Row for adding a new assignment
-  const [newEmpId, setNewEmpId]   = useState('');
-  const [newRole, setNewRole]     = useState('');
-  const [newNote, setNewNote]     = useState('');
+  const [newEmpId, setNewEmpId] = useState('');
+  const [newRole, setNewRole]   = useState('');
+  const [newNote, setNewNote]   = useState('');
 
   const activeEmployees = employees.filter(e => e.active);
   const assignedIds     = new Set(assignments.map(a => a.employeeId));
@@ -388,14 +392,8 @@ function ShiftForm({ initial, initialDate, employees, stations, templates, onSav
   function addAssignment() {
     if (!newEmpId) { toast.error('Pick an employee'); return; }
     const emp = employees.find(e => e.id === newEmpId);
-    setAssignments(prev => [...prev, {
-      employeeId: newEmpId,
-      role: newRole.trim() || emp?.role || 'Staff',
-      roleNote: newNote.trim() || undefined,
-    }]);
-    setNewEmpId('');
-    setNewRole('');
-    setNewNote('');
+    setAssignments(prev => [...prev, { employeeId: newEmpId, role: newRole.trim() || emp?.role || 'Staff', roleNote: newNote.trim() || undefined }]);
+    setNewEmpId(''); setNewRole(''); setNewNote('');
   }
 
   function removeAssignment(idx: number) {
@@ -404,10 +402,6 @@ function ShiftForm({ initial, initialDate, employees, stations, templates, onSav
 
   function updateAssignment(idx: number, field: keyof ShiftAssignment, value: string) {
     setAssignments(prev => prev.map((a, i) => i === idx ? { ...a, [field]: value || undefined } : a));
-  }
-
-  function applyTemplate(t: ShiftTemplate) {
-    setForm(f => ({ ...f, name: t.name, startTime: t.startTime, endTime: t.endTime, color: t.color }));
   }
 
   return (
@@ -423,7 +417,8 @@ function ShiftForm({ initial, initialDate, employees, stations, templates, onSav
           <label className="form-label">Quick templates</label>
           <div className="flex flex-wrap gap-1.5 mt-1">
             {templates!.map(t => (
-              <button key={t.id} type="button" onClick={() => applyTemplate(t)}
+              <button key={t.id} type="button"
+                onClick={() => setForm(f => ({ ...f, name: t.name, startTime: t.startTime, endTime: t.endTime, color: t.color }))}
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-white hover:opacity-80"
                 style={{ backgroundColor: t.color }}>
                 {t.name} <span className="opacity-75">{t.startTime}–{t.endTime}</span>
@@ -480,43 +475,27 @@ function ShiftForm({ initial, initialDate, employees, stations, templates, onSav
         </div>
       )}
 
-      {/* ── Staff assignments ── */}
+      {/* Staff assignments */}
       <div>
         <div className="flex items-center justify-between mb-2">
           <label className="form-label mb-0">Staff assignments</label>
           <span className="text-xs text-muted-foreground">{assignments.length} assigned · min {form.minStaff}</span>
         </div>
-
-        {/* Existing assignments */}
         {assignments.length > 0 && (
           <div className="space-y-1.5 mb-3">
             {assignments.map((a, idx) => {
               const emp = employees.find(e => e.id === a.employeeId);
               return (
                 <div key={idx} className="flex items-center gap-2 p-2 rounded-xl bg-muted/30 border border-border">
-                  {/* Avatar */}
                   <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
                     style={{ backgroundColor: emp?.color ?? '#64748b' }}>
                     {emp ? initials(emp.name) : '?'}
                   </div>
-                  {/* Name */}
                   <span className="text-sm font-medium w-24 shrink-0 truncate">{emp?.name ?? 'Unknown'}</span>
-                  {/* Role input */}
-                  <input
-                    type="text"
-                    value={a.role}
-                    onChange={e => updateAssignment(idx, 'role', e.target.value)}
-                    className="input-field py-1 text-xs flex-1 min-w-0"
-                    placeholder="Role…"
-                  />
-                  {/* Note input */}
-                  <input
-                    type="text"
-                    value={a.roleNote ?? ''}
-                    onChange={e => updateAssignment(idx, 'roleNote', e.target.value)}
-                    className="input-field py-1 text-xs flex-1 min-w-0 hidden sm:block"
-                    placeholder="Split note… e.g. 9-12 prep"
-                  />
+                  <input type="text" value={a.role} onChange={e => updateAssignment(idx, 'role', e.target.value)}
+                    className="input-field py-1 text-xs flex-1 min-w-0" placeholder="Role…" />
+                  <input type="text" value={a.roleNote ?? ''} onChange={e => updateAssignment(idx, 'roleNote', e.target.value)}
+                    className="input-field py-1 text-xs flex-1 min-w-0 hidden sm:block" placeholder="Split note…" />
                   <button type="button" onClick={() => removeAssignment(idx)}
                     className="p-1 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0">
                     <X className="w-3.5 h-3.5" />
@@ -526,8 +505,6 @@ function ShiftForm({ initial, initialDate, employees, stations, templates, onSav
             })}
           </div>
         )}
-
-        {/* Add new assignment row */}
         {availableEmps.length > 0 ? (
           <div className="flex items-center gap-2 p-2 rounded-xl border border-dashed border-border bg-muted/10">
             <select value={newEmpId} onChange={e => {
@@ -536,9 +513,7 @@ function ShiftForm({ initial, initialDate, employees, stations, templates, onSav
               if (emp?.role && !newRole) setNewRole(emp.role);
             }} className="input-field py-1 text-xs flex-1 min-w-0">
               <option value="">Pick employee…</option>
-              {availableEmps.map(e => (
-                <option key={e.id} value={e.id}>{e.name}{e.role ? ` (${e.role})` : ''}</option>
-              ))}
+              {availableEmps.map(e => <option key={e.id} value={e.id}>{e.name}{e.role ? ` (${e.role})` : ''}</option>)}
             </select>
             <input type="text" value={newRole} onChange={e => setNewRole(e.target.value)}
               className="input-field py-1 text-xs flex-1 min-w-0" placeholder="Role…" />
@@ -554,10 +529,9 @@ function ShiftForm({ initial, initialDate, employees, stations, templates, onSav
         ) : (
           <p className="text-xs text-muted-foreground italic">All active employees assigned.</p>
         )}
-
         <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
           <Info className="w-3 h-3 shrink-0" />
-          Split note: e.g. "07–10 prep cook, rest line cook" for partial role changes within the shift.
+          Split note: e.g. "07–10 prep cook, rest line cook"
         </p>
       </div>
 
@@ -576,9 +550,8 @@ function ShiftForm({ initial, initialDate, employees, stations, templates, onSav
       </div>
       <div>
         <label className="form-label">Shift notes</label>
-        <textarea rows={2} value={form.notes} onChange={e => setForm(f => ({...f, notes: e.target.value}))} className="input-field w-full resize-none" placeholder="Optional notes for the team…" />
+        <textarea rows={2} value={form.notes} onChange={e => setForm(f => ({...f, notes: e.target.value}))} className="input-field w-full resize-none" placeholder="Optional notes…" />
       </div>
-
       <div className="flex gap-2 pt-1">
         <button type="button" onClick={onClose} className="btn-ghost px-4">Cancel</button>
         <button type="submit" className="btn-primary flex-1">Save shift</button>
@@ -598,13 +571,8 @@ function ShiftTemplateForm({ initial, onSave, onClose }: {
     name: initial?.name ?? '', startTime: initial?.startTime ?? '09:00',
     endTime: initial?.endTime ?? '17:00', role: initial?.role ?? '', color: initial?.color ?? PRESET_COLORS[0],
   });
-
   return (
-    <form onSubmit={e => {
-      e.preventDefault();
-      if (!form.name.trim()) return;
-      onSave(form);
-    }} className="space-y-4">
+    <form onSubmit={e => { e.preventDefault(); if (!form.name.trim()) return; onSave(form); }} className="space-y-4">
       <div>
         <label className="form-label">Template name *</label>
         <input type="text" required value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} className="input-field w-full" placeholder="Morning, Kitchen AM, Bar PM…" />
@@ -643,7 +611,7 @@ function ShiftTemplateForm({ initial, onSave, onClose }: {
   );
 }
 
-// ─── Work Log view ─────────────────────────────────────────────────────────────
+// ─── Work Log ─────────────────────────────────────────────────────────────────
 
 function WorkLog({ shifts, employees }: { shifts: Shift[]; employees: Employee[] }) {
   const [filterEmpId, setFilterEmpId] = useState('');
@@ -652,17 +620,13 @@ function WorkLog({ shifts, employees }: { shifts: Shift[]; employees: Employee[]
   const empMap = useMemo(() => new Map(employees.map(e => [e.id, e])), [employees]);
 
   const cutoff = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - filterDays);
-    return isoDate(d);
+    const d = new Date(); d.setDate(d.getDate() - filterDays); return isoDate(d);
   }, [filterDays]);
 
-  // Flatten: one row per assignment in a past/today shift
   const rows = useMemo(() => {
     const result: { shift: Shift; assignment: ShiftAssignment; emp: Employee; hours: number }[] = [];
     for (const shift of shifts) {
-      if (shift.date > today()) continue;
-      if (shift.date < cutoff) continue;
+      if (shift.date > today() || shift.date < cutoff) continue;
       for (const a of shift.assignments) {
         if (filterEmpId && a.employeeId !== filterEmpId) continue;
         const emp = empMap.get(a.employeeId);
@@ -673,21 +637,16 @@ function WorkLog({ shifts, employees }: { shifts: Shift[]; employees: Employee[]
     return result.sort((a, b) => b.shift.date.localeCompare(a.shift.date));
   }, [shifts, empMap, filterEmpId, cutoff]);
 
-  // Per-employee totals
   const totals = useMemo(() => {
     const map = new Map<string, number>();
-    for (const r of rows) {
-      map.set(r.emp.id, (map.get(r.emp.id) ?? 0) + r.hours);
-    }
+    for (const r of rows) map.set(r.emp.id, (map.get(r.emp.id) ?? 0) + r.hours);
     return Array.from(map.entries())
       .map(([id, hours]) => ({ emp: empMap.get(id)!, hours }))
-      .filter(t => t.emp)
-      .sort((a, b) => b.hours - a.hours);
+      .filter(t => t.emp).sort((a, b) => b.hours - a.hours);
   }, [rows, empMap]);
 
   return (
     <div className="space-y-4">
-      {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">
         <select value={filterEmpId} onChange={e => setFilterEmpId(e.target.value)} className="input-field text-sm py-1.5">
           <option value="">All employees</option>
@@ -701,16 +660,13 @@ function WorkLog({ shifts, employees }: { shifts: Shift[]; employees: Employee[]
         </select>
         <span className="text-xs text-muted-foreground ml-auto">{rows.length} records</span>
       </div>
-
-      {/* Totals bar */}
       {totals.length > 0 && (
         <div className="glass-card p-4">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Hours summary</p>
           <div className="flex flex-wrap gap-3">
             {totals.map(t => (
               <div key={t.emp.id} className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
-                  style={{ backgroundColor: t.emp.color }}>
+                <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0" style={{ backgroundColor: t.emp.color }}>
                   {initials(t.emp.name)}
                 </div>
                 <div>
@@ -722,13 +678,11 @@ function WorkLog({ shifts, employees }: { shifts: Shift[]; employees: Employee[]
           </div>
         </div>
       )}
-
-      {/* Log table */}
       {rows.length === 0 ? (
         <div className="glass-card p-10 text-center">
           <History className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
           <p className="text-muted-foreground font-semibold">No work log entries</p>
-          <p className="text-sm text-muted-foreground mt-1">Shifts from the past will appear here once staff are assigned.</p>
+          <p className="text-sm text-muted-foreground mt-1">Past shifts with assigned staff will appear here.</p>
         </div>
       ) : (
         <div className="glass-card overflow-hidden">
@@ -760,8 +714,7 @@ function WorkLog({ shifts, employees }: { shifts: Shift[]; employees: Employee[]
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-2">
-                      <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
-                        style={{ backgroundColor: r.emp.color }}>
+                      <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0" style={{ backgroundColor: r.emp.color }}>
                         {initials(r.emp.name)}
                       </div>
                       <span className="text-xs font-medium">{r.emp.name}</span>
@@ -771,9 +724,7 @@ function WorkLog({ shifts, employees }: { shifts: Shift[]; employees: Employee[]
                     <span className="text-xs px-2 py-0.5 rounded-full bg-muted font-medium">{r.assignment.role}</span>
                   </td>
                   <td className="px-4 py-2.5 hidden sm:table-cell">
-                    {r.assignment.roleNote && (
-                      <span className="text-[11px] text-muted-foreground italic">{r.assignment.roleNote}</span>
-                    )}
+                    {r.assignment.roleNote && <span className="text-[11px] text-muted-foreground italic">{r.assignment.roleNote}</span>}
                   </td>
                   <td className="px-4 py-2.5 text-right">
                     <span className="text-xs font-semibold text-foreground">{r.hours}h</span>
@@ -790,7 +741,7 @@ function WorkLog({ shifts, employees }: { shifts: Shift[]; employees: Employee[]
 
 // ─── Main page ─────────────────────────────────────────────────────────────────
 
-type Tab = 'calendar' | 'packages' | 'roster' | 'settings';
+type Tab = 'bookings' | 'roster';
 type RosterView = 'grid' | 'log';
 
 export default function CalendarPage() {
@@ -804,56 +755,49 @@ export default function CalendarPage() {
     addEmployee, updateEmployee, deleteEmployee,
     addShift, updateShift, deleteShift,
   } = useStore(useShallow(s => ({
-    calendarEvents:       s.calendarEvents,
-    eventPackages:        s.eventPackages,
-    calendarSettings:     s.calendarSettings,
-    settings:             s.settings,
-    user:                 s.user,
-    employees:            s.employees,
-    shifts:               s.shifts,
-    addCalendarEvent:     s.addCalendarEvent,
-    deleteCalendarEvent:  s.deleteCalendarEvent,
-    approveCalendarEvent: s.approveCalendarEvent,
-    rejectCalendarEvent:  s.rejectCalendarEvent,
-    addEventPackage:      s.addEventPackage,
-    updateEventPackage:   s.updateEventPackage,
-    deleteEventPackage:   s.deleteEventPackage,
+    calendarEvents: s.calendarEvents, eventPackages: s.eventPackages,
+    calendarSettings: s.calendarSettings, settings: s.settings, user: s.user,
+    employees: s.employees, shifts: s.shifts,
+    addCalendarEvent: s.addCalendarEvent, deleteCalendarEvent: s.deleteCalendarEvent,
+    approveCalendarEvent: s.approveCalendarEvent, rejectCalendarEvent: s.rejectCalendarEvent,
+    addEventPackage: s.addEventPackage, updateEventPackage: s.updateEventPackage, deleteEventPackage: s.deleteEventPackage,
     updateCalendarSettings: s.updateCalendarSettings,
-    addEmployee:          s.addEmployee,
-    updateEmployee:       s.updateEmployee,
-    deleteEmployee:       s.deleteEmployee,
-    addShift:             s.addShift,
-    updateShift:          s.updateShift,
-    deleteShift:          s.deleteShift,
+    addEmployee: s.addEmployee, updateEmployee: s.updateEmployee, deleteEmployee: s.deleteEmployee,
+    addShift: s.addShift, updateShift: s.updateShift, deleteShift: s.deleteShift,
   })));
 
-  const sym = settings.currencySymbol;
+  const sym            = settings.currencySymbol;
   const shiftTemplates = calendarSettings.shiftTemplates ?? [];
-  const stations = settings.stations ?? [];
+  const stations       = settings.stations ?? [];
 
-  const [tab, setTab]             = useState<Tab>('calendar');
-  const [rosterView, setRosterView] = useState<RosterView>('grid');
-  const [currentDate, setCurrentDate] = useState(new Date());
+  // ── UI state ──────────────────────────────────────────────────────────────────
+
+  const [tab, setTab]                   = useState<Tab>('bookings');
+  const [rosterView, setRosterView]     = useState<RosterView>('grid');
+  const [currentDate, setCurrentDate]   = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(today());
-  const [showEventForm, setShowEventForm]     = useState(false);
-  const [showPackageForm, setShowPackageForm] = useState(false);
-  const [editingPackage, setEditingPackage]   = useState<EventPackage | null>(null);
-  const [rejectId, setRejectId]   = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState('');
+  const [showPackagesPanel, setShowPackagesPanel] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
-  const [rosterWeekOffset, setRosterWeekOffset] = useState(0);
-  const [showEmployeeForm, setShowEmployeeForm]   = useState(false);
-  const [editingEmployee, setEditingEmployee]     = useState<Employee | null>(null);
-  const [showShiftForm, setShowShiftForm]         = useState(false);
-  const [editingShift, setEditingShift]           = useState<Shift | null>(null);
-  const [shiftInitDate, setShiftInitDate]         = useState<string | undefined>();
-  const [showTemplateForm, setShowTemplateForm]   = useState(false);
-  const [editingTemplate, setEditingTemplate]     = useState<ShiftTemplate | null>(null);
+  // Modals
+  const [showEventForm, setShowEventForm]           = useState(false);
+  const [showPackageForm, setShowPackageForm]       = useState(false);
+  const [editingPackage, setEditingPackage]         = useState<EventPackage | null>(null);
+  const [rejectId, setRejectId]                     = useState<string | null>(null);
+  const [rejectReason, setRejectReason]             = useState('');
+  const [rosterWeekOffset, setRosterWeekOffset]     = useState(0);
+  const [showEmployeeForm, setShowEmployeeForm]     = useState(false);
+  const [editingEmployee, setEditingEmployee]       = useState<Employee | null>(null);
+  const [showShiftForm, setShowShiftForm]           = useState(false);
+  const [editingShift, setEditingShift]             = useState<Shift | null>(null);
+  const [shiftInitDate, setShiftInitDate]           = useState<string | undefined>();
+  const [showTemplateForm, setShowTemplateForm]     = useState(false);
+  const [editingTemplate, setEditingTemplate]       = useState<ShiftTemplate | null>(null);
 
-  // ── Calendar helpers ─────────────────────────────────────────────────────────
+  // ── Calendar helpers ───────────────────────────────────────────────────────
 
-  const year  = currentDate.getFullYear();
-  const month = currentDate.getMonth();
+  const year        = currentDate.getFullYear();
+  const month       = currentDate.getMonth();
   const firstDay    = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
@@ -876,27 +820,21 @@ export default function CalendarPage() {
     return calendarSettings.workingDays.find(wd => wd.dayOfWeek === dow)?.isOpen ?? false;
   }
 
-  // ── Roster helpers ────────────────────────────────────────────────────────────
+  // ── Roster helpers ─────────────────────────────────────────────────────────
 
   const rosterWeekDays = useMemo(() => {
     const base = new Date();
     const day  = base.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
-    base.setDate(base.getDate() + diff + rosterWeekOffset * 7);
+    base.setDate(base.getDate() + (day === 0 ? -6 : 1 - day) + rosterWeekOffset * 7);
     base.setHours(0, 0, 0, 0);
     return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(base);
-      d.setDate(base.getDate() + i);
-      return d.toISOString().slice(0, 10);
+      const d = new Date(base); d.setDate(base.getDate() + i); return d.toISOString().slice(0, 10);
     });
   }, [rosterWeekOffset]);
 
   const shiftsByDate = useMemo(() => {
     const map = new Map<string, Shift[]>();
-    for (const sh of shifts) {
-      if (!map.has(sh.date)) map.set(sh.date, []);
-      map.get(sh.date)!.push(sh);
-    }
+    for (const sh of shifts) { if (!map.has(sh.date)) map.set(sh.date, []); map.get(sh.date)!.push(sh); }
     return map;
   }, [shifts]);
 
@@ -904,12 +842,9 @@ export default function CalendarPage() {
 
   const rosterLink = `${window.location.origin}/roster/${settings.restaurantToken}`;
 
-  // ── Handlers ─────────────────────────────────────────────────────────────────
+  // ── Handlers ──────────────────────────────────────────────────────────────
 
-  function handleApprove(id: string) {
-    approveCalendarEvent(id, user?.name ?? 'Manager');
-    toast.success('Approved');
-  }
+  function handleApprove(id: string) { approveCalendarEvent(id, user?.name ?? 'Manager'); toast.success('Approved'); }
   function handleReject() {
     if (!rejectId) return;
     rejectCalendarEvent(rejectId, rejectReason);
@@ -918,16 +853,14 @@ export default function CalendarPage() {
   }
 
   function updateWorkingDay(dow: number, updates: Partial<WorkingDay>) {
-    updateCalendarSettings({
-      workingDays: calendarSettings.workingDays.map(d => d.dayOfWeek === dow ? { ...d, ...updates } : d),
-    });
+    updateCalendarSettings({ workingDays: calendarSettings.workingDays.map(d => d.dayOfWeek === dow ? { ...d, ...updates } : d) });
   }
 
   function addException() {
     const date = prompt('Enter date (YYYY-MM-DD):');
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
     if (calendarSettings.workingExceptions.find(e => e.date === date)) { toast.error('Already exists'); return; }
-    const note = prompt('Note:') ?? '';
+    const note     = prompt('Note:') ?? '';
     const isClosed = confirm('Mark as CLOSED?');
     updateCalendarSettings({
       workingExceptions: [...calendarSettings.workingExceptions, { id: crypto.randomUUID(), date, isClosed, note, openTime: '09:00', closeTime: '22:00' }],
@@ -943,7 +876,7 @@ export default function CalendarPage() {
     toast.success(editingTemplate ? 'Template updated' : 'Template created');
   }
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   const selectedDayEvents = eventsByDate[selectedDate] ?? [];
 
@@ -956,23 +889,18 @@ export default function CalendarPage() {
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <h1 className="font-display text-2xl font-bold">Calendar</h1>
-            <p className="text-muted-foreground text-sm mt-0.5">Reservations, events & staff roster</p>
+            <p className="text-muted-foreground text-sm mt-0.5">Bookings & staff roster</p>
           </div>
           <div className="flex items-center gap-2">
             {pendingEvents.length > 0 && (
-              <button onClick={() => setTab('calendar')}
+              <button onClick={() => setTab('bookings')}
                 className="flex items-center gap-1.5 text-xs font-semibold text-warning px-2.5 py-1.5 bg-warning/10 rounded-lg border border-warning/20 hover:bg-warning/15 transition-colors">
                 <AlertCircle className="w-3.5 h-3.5" /> {pendingEvents.length} pending
               </button>
             )}
-            {tab === 'calendar' && (
+            {tab === 'bookings' && (
               <button onClick={() => setShowEventForm(true)} className="btn-primary flex items-center gap-2">
                 <Plus className="w-4 h-4" /> New event
-              </button>
-            )}
-            {tab === 'packages' && (
-              <button onClick={() => { setEditingPackage(null); setShowPackageForm(true); }} className="btn-primary flex items-center gap-2">
-                <Plus className="w-4 h-4" /> New package
               </button>
             )}
             {tab === 'roster' && rosterView === 'grid' && (
@@ -991,186 +919,210 @@ export default function CalendarPage() {
                 </button>
               </div>
             )}
+            {/* Settings gear */}
+            <button onClick={() => setShowSettingsModal(true)}
+              className="p-2 rounded-xl hover:bg-muted transition-colors text-muted-foreground" title="Settings">
+              <Settings2 className="w-4 h-4" />
+            </button>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-0 border-b border-border overflow-x-auto">
-          {(['calendar','packages','roster','settings'] as Tab[]).map(t => (
+        <div className="flex gap-0 border-b border-border">
+          {(['bookings', 'roster'] as Tab[]).map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-4 py-2.5 text-sm font-semibold capitalize transition-colors border-b-2 -mb-px whitespace-nowrap flex items-center gap-1.5 ${tab === t ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
-              {t === 'calendar' && <CalendarDays className="w-3.5 h-3.5" />}
-              {t === 'packages' && <Package className="w-3.5 h-3.5" />}
+              {t === 'bookings' && <CalendarDays className="w-3.5 h-3.5" />}
               {t === 'roster'   && <Users className="w-3.5 h-3.5" />}
-              {t === 'settings' && <Settings2 className="w-3.5 h-3.5" />}
               {t}
-              {t === 'calendar' && pendingEvents.length > 0 && (
+              {t === 'bookings' && pendingEvents.length > 0 && (
                 <span className="text-[10px] bg-warning text-white px-1.5 py-0.5 rounded-full font-bold">{pendingEvents.length}</span>
               )}
             </button>
           ))}
         </div>
 
-        {/* ── CALENDAR TAB ── */}
-        {tab === 'calendar' && (
-          <div className="grid lg:grid-cols-3 gap-5">
-            <div className="lg:col-span-2 glass-card p-5">
-              <div className="flex items-center justify-between mb-4">
-                <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()-1, 1))} className="p-2 rounded-xl hover:bg-muted transition-colors"><ChevronLeft className="w-4 h-4" /></button>
-                <h2 className="font-display font-bold text-lg">{MONTH_NAMES[month]} {year}</h2>
-                <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()+1, 1))} className="p-2 rounded-xl hover:bg-muted transition-colors"><ChevronRight className="w-4 h-4" /></button>
-              </div>
-              <div className="grid grid-cols-7 mb-1">
-                {DAY_NAMES.map(d => <div key={d} className="text-center text-[11px] font-semibold text-muted-foreground py-1">{d}</div>)}
-              </div>
-              <div className="grid grid-cols-7 gap-px bg-border rounded-xl overflow-hidden">
-                {Array.from({length: firstDay}).map((_, i) => <div key={`b${i}`} className="bg-card h-14 sm:h-16" />)}
-                {Array.from({length: daysInMonth}, (_, i) => i+1).map(day => {
-                  const ds = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-                  const evs = eventsByDate[ds] ?? [];
-                  const isToday = ds === today();
-                  return (
-                    <button key={day} onClick={() => setSelectedDate(ds)}
-                      className={`bg-card h-14 sm:h-16 p-1.5 flex flex-col items-start transition-colors hover:bg-muted/50 ${ds === selectedDate ? 'ring-2 ring-inset ring-primary' : ''} ${!isWorkingDay(ds) ? 'opacity-40' : ''}`}>
-                      <span className={`text-xs font-semibold w-5 h-5 flex items-center justify-center rounded-full ${isToday ? 'bg-primary text-primary-foreground' : ''}`}>{day}</span>
-                      <div className="flex flex-wrap gap-0.5 mt-0.5">
-                        {evs.some(e => e.status==='pending') && <span className="w-1.5 h-1.5 rounded-full bg-warning" />}
-                        {evs.some(e => e.status==='approved') && <span className="w-1.5 h-1.5 rounded-full bg-success" />}
-                        {evs.some(e => e.type==='closure') && <span className="w-1.5 h-1.5 rounded-full bg-destructive" />}
-                      </div>
-                      {evs.length > 0 && <span className="text-[9px] text-muted-foreground mt-auto">{evs.length}ev</span>}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="flex gap-4 mt-3 text-[11px] text-muted-foreground flex-wrap">
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-success" /> Approved</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-warning" /> Pending</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-destructive" /> Blocked</span>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="glass-card p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-display font-semibold text-sm">
-                    {new Date(selectedDate+'T12:00:00').toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'})}
-                  </h3>
-                  <button onClick={() => setShowEventForm(true)} className="text-primary text-xs font-semibold flex items-center gap-0.5 hover:underline">
-                    <Plus className="w-3 h-3" /> Add
-                  </button>
+        {/* ── BOOKINGS TAB ── */}
+        {tab === 'bookings' && (
+          <div className="space-y-5">
+            <div className="grid lg:grid-cols-3 gap-5">
+              {/* Calendar */}
+              <div className="lg:col-span-2 glass-card p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()-1, 1))} className="p-2 rounded-xl hover:bg-muted transition-colors"><ChevronLeft className="w-4 h-4" /></button>
+                  <h2 className="font-display font-bold text-lg">{MONTH_NAMES[month]} {year}</h2>
+                  <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()+1, 1))} className="p-2 rounded-xl hover:bg-muted transition-colors"><ChevronRight className="w-4 h-4" /></button>
                 </div>
-                {selectedDayEvents.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No events.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {selectedDayEvents.sort((a,b) => a.timeSlot.localeCompare(b.timeSlot)).map(ev => (
-                      <div key={ev.id} className="p-3 rounded-xl border border-border bg-muted/20">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-                              <span className="text-sm">{TYPE_EMOJI[ev.type]}</span>
-                              <span className="text-xs font-semibold truncate">{ev.type==='closure' ? ev.closureReason||'Closed' : ev.customerName}</span>
-                              <StatusBadge status={ev.status} />
+                <div className="grid grid-cols-7 mb-1">
+                  {DAY_NAMES.map(d => <div key={d} className="text-center text-[11px] font-semibold text-muted-foreground py-1">{d}</div>)}
+                </div>
+                <div className="grid grid-cols-7 gap-px bg-border rounded-xl overflow-hidden">
+                  {Array.from({length: firstDay}).map((_, i) => <div key={`b${i}`} className="bg-card h-14 sm:h-16" />)}
+                  {Array.from({length: daysInMonth}, (_, i) => i+1).map(day => {
+                    const ds  = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                    const evs = eventsByDate[ds] ?? [];
+                    const isToday = ds === today();
+                    return (
+                      <button key={day} onClick={() => setSelectedDate(ds)}
+                        className={`bg-card h-14 sm:h-16 p-1.5 flex flex-col items-start transition-colors hover:bg-muted/50 ${ds === selectedDate ? 'ring-2 ring-inset ring-primary' : ''} ${!isWorkingDay(ds) ? 'opacity-40' : ''}`}>
+                        <span className={`text-xs font-semibold w-5 h-5 flex items-center justify-center rounded-full ${isToday ? 'bg-primary text-primary-foreground' : ''}`}>{day}</span>
+                        <div className="flex flex-wrap gap-0.5 mt-0.5">
+                          {evs.some(e => e.status==='pending')  && <span className="w-1.5 h-1.5 rounded-full bg-warning" />}
+                          {evs.some(e => e.status==='approved') && <span className="w-1.5 h-1.5 rounded-full bg-success" />}
+                          {evs.some(e => e.type==='closure')    && <span className="w-1.5 h-1.5 rounded-full bg-destructive" />}
+                        </div>
+                        {evs.length > 0 && <span className="text-[9px] text-muted-foreground mt-auto">{evs.length}ev</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex gap-4 mt-3 text-[11px] text-muted-foreground flex-wrap">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-success" /> Approved</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-warning" /> Pending</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-destructive" /> Blocked</span>
+                </div>
+              </div>
+
+              {/* Day detail + pending */}
+              <div className="space-y-4">
+                <div className="glass-card p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-display font-semibold text-sm">
+                      {new Date(selectedDate+'T12:00:00').toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'})}
+                    </h3>
+                    <button onClick={() => setShowEventForm(true)} className="text-primary text-xs font-semibold flex items-center gap-0.5 hover:underline">
+                      <Plus className="w-3 h-3" /> Add
+                    </button>
+                  </div>
+                  {selectedDayEvents.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No events.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {selectedDayEvents.sort((a,b) => a.timeSlot.localeCompare(b.timeSlot)).map(ev => (
+                        <div key={ev.id} className="p-3 rounded-xl border border-border bg-muted/20">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                                <span className="text-sm">{TYPE_EMOJI[ev.type]}</span>
+                                <span className="text-xs font-semibold truncate">{ev.type==='closure' ? ev.closureReason||'Closed' : ev.customerName}</span>
+                                <StatusBadge status={ev.status} />
+                              </div>
+                              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                                <span><Clock className="w-3 h-3 inline" /> {ev.timeSlot}{ev.endTime ? `–${ev.endTime}` : ''}</span>
+                                {ev.guestCount > 0 && <span><Users className="w-3 h-3 inline" /> {ev.guestCount}</span>}
+                              </div>
+                              {ev.packageName && <span className="text-[10px] text-primary font-medium">{ev.packageName}</span>}
+                              {ev.notes && <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-1">{ev.notes}</p>}
                             </div>
-                            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                              <span><Clock className="w-3 h-3 inline" /> {ev.timeSlot}{ev.endTime ? `–${ev.endTime}` : ''}</span>
-                              {ev.guestCount > 0 && <span><Users className="w-3 h-3 inline" /> {ev.guestCount}</span>}
+                            <div className="flex gap-1 shrink-0">
+                              {ev.status === 'pending' && (
+                                <>
+                                  <button onClick={() => handleApprove(ev.id)} className="p-1.5 rounded-lg bg-success/10 text-success hover:bg-success/20"><Check className="w-3.5 h-3.5" /></button>
+                                  <button onClick={() => setRejectId(ev.id)} className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20"><X className="w-3.5 h-3.5" /></button>
+                                </>
+                              )}
+                              <button onClick={() => { if(confirm('Delete event?')) deleteCalendarEvent(ev.id); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><Trash2 className="w-3.5 h-3.5" /></button>
                             </div>
-                            {ev.packageName && <span className="text-[10px] text-primary font-medium">{ev.packageName}</span>}
-                          </div>
-                          <div className="flex gap-1 shrink-0">
-                            {ev.status === 'pending' && (
-                              <>
-                                <button onClick={() => handleApprove(ev.id)} className="p-1.5 rounded-lg bg-success/10 text-success hover:bg-success/20"><Check className="w-3.5 h-3.5" /></button>
-                                <button onClick={() => setRejectId(ev.id)} className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20"><X className="w-3.5 h-3.5" /></button>
-                              </>
-                            )}
-                            <button onClick={() => { if(confirm('Delete event?')) deleteCalendarEvent(ev.id); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                         </div>
-                        {ev.notes && <p className="text-[11px] text-muted-foreground mt-1 truncate">{ev.notes}</p>}
-                      </div>
-                    ))}
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {pendingEvents.length > 0 && (
+                  <div className="glass-card p-4">
+                    <h3 className="font-display font-semibold text-sm mb-3 flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 text-warning" /> Pending ({pendingEvents.length})
+                    </h3>
+                    <div className="space-y-2">
+                      {pendingEvents.slice(0,5).map(ev => (
+                        <div key={ev.id} className="p-2.5 rounded-xl bg-warning/5 border border-warning/20">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold truncate">{ev.customerName}</p>
+                              <p className="text-[11px] text-muted-foreground">
+                                {new Date(ev.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})} · {ev.timeSlot} · {TYPE_EMOJI[ev.type]}
+                              </p>
+                            </div>
+                            <div className="flex gap-1 shrink-0">
+                              <button onClick={() => handleApprove(ev.id)} className="p-1.5 rounded-lg bg-success/10 text-success hover:bg-success/20"><Check className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => setRejectId(ev.id)} className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20"><X className="w-3.5 h-3.5" /></button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {pendingEvents.length > 5 && <p className="text-[11px] text-muted-foreground text-center">+{pendingEvents.length-5} more</p>}
+                    </div>
                   </div>
                 )}
               </div>
+            </div>
 
-              {pendingEvents.length > 0 && (
-                <div className="glass-card p-4">
-                  <h3 className="font-display font-semibold text-sm mb-3 flex items-center gap-1.5">
-                    <AlertCircle className="w-3.5 h-3.5 text-warning" /> Pending ({pendingEvents.length})
-                  </h3>
-                  <div className="space-y-2">
-                    {pendingEvents.slice(0,5).map(ev => (
-                      <div key={ev.id} className="p-2.5 rounded-xl bg-warning/5 border border-warning/20">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold truncate">{ev.customerName}</p>
-                            <p className="text-[11px] text-muted-foreground">
-                              {new Date(ev.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})} · {ev.timeSlot} · {ev.guestCount} guests
-                            </p>
+            {/* ── Event packages panel (toggleable) ── */}
+            <div className="glass-card overflow-hidden">
+              <button
+                onClick={() => setShowPackagesPanel(v => !v)}
+                className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/30 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <Package className="w-4 h-4 text-muted-foreground" />
+                  <span className="font-semibold text-sm">Event Packages</span>
+                  {eventPackages.length > 0 && (
+                    <span className="text-xs text-muted-foreground">({eventPackages.filter(p => p.active).length} active)</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={e => { e.stopPropagation(); setEditingPackage(null); setShowPackageForm(true); }}
+                    className="flex items-center gap-1 text-xs text-primary font-medium hover:underline">
+                    <Plus className="w-3 h-3" /> Add
+                  </button>
+                  {showPackagesPanel ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                </div>
+              </button>
+
+              {showPackagesPanel && (
+                <div className="border-t border-border p-5">
+                  {eventPackages.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No packages yet. Create presets customers can choose when booking a private event.</p>
+                  ) : (
+                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {eventPackages.map(pkg => (
+                        <div key={pkg.id} className={`p-4 rounded-xl border border-border ${!pkg.active ? 'opacity-50' : ''}`}>
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-2.5">
+                              <span className="text-2xl">{pkg.emoji}</span>
+                              <div>
+                                <p className="font-semibold text-sm">{pkg.name}</p>
+                                {!pkg.active && <span className="text-[10px] text-muted-foreground">inactive</span>}
+                              </div>
+                            </div>
+                            <div className="flex gap-1 shrink-0">
+                              <button onClick={() => { setEditingPackage(pkg); setShowPackageForm(true); }} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"><Edit2 className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => { if(confirm('Delete package?')) deleteEventPackage(pkg.id); }} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
+                            </div>
                           </div>
-                          <div className="flex gap-1 shrink-0">
-                            <button onClick={() => handleApprove(ev.id)} className="p-1.5 rounded-lg bg-success/10 text-success hover:bg-success/20"><Check className="w-3.5 h-3.5" /></button>
-                            <button onClick={() => setRejectId(ev.id)} className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20"><X className="w-3.5 h-3.5" /></button>
+                          {pkg.description && <p className="text-xs text-muted-foreground mb-2 line-clamp-2">{pkg.description}</p>}
+                          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                            <span><Users className="w-3 h-3 inline" /> {pkg.minGuests}–{pkg.maxGuests}</span>
+                            <span><Clock className="w-3 h-3 inline" /> {pkg.duration}h</span>
+                            {pkg.fixedPrice     != null && <span className="font-semibold text-foreground">{sym}{pkg.fixedPrice}</span>}
+                            {pkg.pricePerPerson != null && <span className="font-semibold text-foreground">{sym}{pkg.pricePerPerson}/person</span>}
                           </div>
                         </div>
-                      </div>
-                    ))}
-                    {pendingEvents.length > 5 && <p className="text-[11px] text-muted-foreground text-center">+{pendingEvents.length-5} more</p>}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {/* ── PACKAGES TAB ── */}
-        {tab === 'packages' && (
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">Create event packages customers can select when booking.</p>
-            {eventPackages.length === 0 ? (
-              <div className="glass-card p-12 text-center">
-                <Star className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
-                <p className="font-semibold text-muted-foreground">No packages yet</p>
-                <button onClick={() => { setEditingPackage(null); setShowPackageForm(true); }} className="btn-primary mt-4"><Plus className="w-4 h-4 inline mr-1.5" />New package</button>
-              </div>
-            ) : (
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {eventPackages.map(pkg => (
-                  <div key={pkg.id} className={`glass-card p-4 ${!pkg.active ? 'opacity-50' : ''}`}>
-                    <div className="flex items-start justify-between gap-2 mb-3">
-                      <div className="flex items-center gap-2.5">
-                        <span className="text-3xl">{pkg.emoji}</span>
-                        <div>
-                          <p className="font-semibold">{pkg.name}</p>
-                          {!pkg.active && <span className="text-[10px] text-muted-foreground">inactive</span>}
-                        </div>
-                      </div>
-                      <div className="flex gap-1 shrink-0">
-                        <button onClick={() => { setEditingPackage(pkg); setShowPackageForm(true); }} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"><Edit2 className="w-3.5 h-3.5" /></button>
-                        <button onClick={() => { if(confirm('Delete?')) deleteEventPackage(pkg.id); }} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
-                      </div>
-                    </div>
-                    {pkg.description && <p className="text-xs text-muted-foreground mb-2">{pkg.description}</p>}
-                    <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      <span><Users className="w-3 h-3 inline" /> {pkg.minGuests}–{pkg.maxGuests}</span>
-                      <span><Clock className="w-3 h-3 inline" /> {pkg.duration}h</span>
-                      {pkg.fixedPrice != null && <span className="font-semibold text-foreground">{sym}{pkg.fixedPrice}</span>}
-                      {pkg.pricePerPerson != null && <span className="font-semibold text-foreground">{sym}{pkg.pricePerPerson}/person</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
         {/* ── ROSTER TAB ── */}
         {tab === 'roster' && (
           <div className="space-y-4">
-            {/* Sub-tab switcher */}
             <div className="flex items-center gap-1 bg-muted/50 p-1 rounded-xl w-fit">
               {([['grid','Schedule',LayoutGrid],['log','Work Log',History]] as const).map(([v, label, Icon]) => (
                 <button key={v} onClick={() => setRosterView(v as RosterView)}
@@ -1180,11 +1132,10 @@ export default function CalendarPage() {
               ))}
             </div>
 
-            {/* ── SCHEDULE GRID ── */}
             {rosterView === 'grid' && (
               <>
-                {/* Employee legend / team bar */}
-                {employees.length > 0 && (
+                {/* Team bar */}
+                {employees.length > 0 ? (
                   <div className="glass-card p-3">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-semibold text-muted-foreground shrink-0">Team:</span>
@@ -1197,7 +1148,7 @@ export default function CalendarPage() {
                             {initials(emp.name)}
                           </span>
                           {emp.name}
-                          {emp.role && <span className="text-muted-foreground font-normal group-hover:text-current transition-colors">· {emp.role}</span>}
+                          {emp.role && <span className="text-muted-foreground font-normal">· {emp.role}</span>}
                         </button>
                       ))}
                       {employees.filter(e => !e.active).length > 0 && (
@@ -1209,13 +1160,13 @@ export default function CalendarPage() {
                       </button>
                     </div>
                   </div>
-                )}
-
-                {employees.length === 0 && (
+                ) : (
                   <div className="glass-card p-8 text-center">
                     <Users className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
                     <p className="font-semibold text-muted-foreground">No employees yet</p>
-                    <button onClick={() => { setEditingEmployee(null); setShowEmployeeForm(true); }} className="btn-primary mt-4"><UserPlus className="w-4 h-4 inline mr-1.5" />Add first employee</button>
+                    <button onClick={() => { setEditingEmployee(null); setShowEmployeeForm(true); }} className="btn-primary mt-4">
+                      <UserPlus className="w-4 h-4 inline mr-1.5" />Add first employee
+                    </button>
                   </div>
                 )}
 
@@ -1233,47 +1184,34 @@ export default function CalendarPage() {
                     </div>
                     <button onClick={() => setRosterWeekOffset(w => w+1)} className="p-2 rounded-xl hover:bg-muted"><ChevronRight className="w-4 h-4" /></button>
                   </div>
-
                   <div className="grid grid-cols-7 gap-2">
                     {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((label, i) => {
                       const dateStr   = rosterWeekDays[i];
                       const dayShifts = shiftsByDate.get(dateStr) ?? [];
                       const isToday   = dateStr === today();
                       const isPast    = dateStr < today();
-
                       return (
                         <div key={dateStr} className={`flex flex-col gap-1.5 ${isPast && !isToday ? 'opacity-60' : ''}`}>
-                          {/* Day header */}
                           <div className={`text-center py-1.5 rounded-xl ${isToday ? 'bg-primary/10 ring-1 ring-primary/30' : ''}`}>
                             <p className={`text-[10px] uppercase tracking-wide font-semibold ${isToday ? 'text-primary' : 'text-muted-foreground'}`}>{label}</p>
-                            <p className={`text-sm font-bold leading-none mt-0.5 ${isToday ? 'text-primary' : 'text-foreground'}`}>
-                              {new Date(dateStr+'T12:00:00').getDate()}
-                            </p>
+                            <p className={`text-sm font-bold leading-none mt-0.5 ${isToday ? 'text-primary' : 'text-foreground'}`}>{new Date(dateStr+'T12:00:00').getDate()}</p>
                           </div>
-
-                          {/* Shift blocks */}
                           {dayShifts.map(shift => {
                             const understaffed = shift.assignments.length < shift.minStaff;
-                            const station = stations.find(s => s.id === shift.stationId);
-
+                            const station      = stations.find(s => s.id === shift.stationId);
                             return (
                               <div key={shift.id}
                                 className={`group rounded-xl border overflow-hidden text-xs transition-all hover:shadow-sm cursor-pointer ${understaffed ? 'border-warning/50 bg-warning/5' : 'border-border bg-card'}`}
                                 onClick={() => { setEditingShift(shift); setShiftInitDate(undefined); setShowShiftForm(true); }}>
-                                {/* Color stripe */}
                                 <div className="h-1.5" style={{ backgroundColor: shift.color }} />
                                 <div className="p-2">
-                                  {/* Shift name + time */}
                                   <p className="font-semibold text-[11px] truncate">{shift.name}</p>
                                   <p className="font-mono text-[10px] text-muted-foreground">{shift.startTime}–{shift.endTime}</p>
                                   {station && (
-                                    <span className="inline-block text-[9px] px-1.5 py-0.5 rounded-full font-medium text-white mt-0.5"
-                                      style={{ backgroundColor: station.color }}>
+                                    <span className="inline-block text-[9px] px-1.5 py-0.5 rounded-full font-medium text-white mt-0.5" style={{ backgroundColor: station.color }}>
                                       {station.name}
                                     </span>
                                   )}
-
-                                  {/* Assignments */}
                                   <div className="mt-1.5 space-y-1">
                                     {shift.assignments.length === 0 ? (
                                       <p className="text-[10px] text-muted-foreground/60 italic">No staff</p>
@@ -1283,8 +1221,7 @@ export default function CalendarPage() {
                                         if (!emp) return null;
                                         return (
                                           <div key={idx} className="flex items-center gap-1.5">
-                                            <span className="w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0"
-                                              style={{ backgroundColor: emp.color }}>
+                                            <span className="w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0" style={{ backgroundColor: emp.color }}>
                                               {initials(emp.name)}
                                             </span>
                                             <div className="min-w-0">
@@ -1296,14 +1233,7 @@ export default function CalendarPage() {
                                       })
                                     )}
                                   </div>
-
-                                  {understaffed && (
-                                    <p className="text-[10px] text-warning font-semibold mt-1">
-                                      Need {shift.minStaff - shift.assignments.length} more
-                                    </p>
-                                  )}
-
-                                  {/* Hover actions */}
+                                  {understaffed && <p className="text-[10px] text-warning font-semibold mt-1">Need {shift.minStaff - shift.assignments.length} more</p>}
                                   <div className="flex gap-1 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <button onClick={e => { e.stopPropagation(); if(confirm('Delete shift?')) deleteShift(shift.id); }}
                                       className="text-[9px] text-muted-foreground hover:text-destructive flex items-center gap-0.5 ml-auto">
@@ -1314,10 +1244,7 @@ export default function CalendarPage() {
                               </div>
                             );
                           })}
-
-                          {/* Add shift */}
-                          <button
-                            onClick={() => { setEditingShift(null); setShiftInitDate(dateStr); setShowShiftForm(true); }}
+                          <button onClick={() => { setEditingShift(null); setShiftInitDate(dateStr); setShowShiftForm(true); }}
                             className="text-[10px] text-muted-foreground hover:text-primary border border-dashed border-border hover:border-primary/50 rounded-xl py-2 transition-colors text-center hover:bg-primary/5">
                             + shift
                           </button>
@@ -1329,17 +1256,18 @@ export default function CalendarPage() {
               </>
             )}
 
-            {/* ── WORK LOG ── */}
             {rosterView === 'log' && <WorkLog shifts={shifts} employees={employees} />}
           </div>
         )}
+      </div>
 
-        {/* ── SETTINGS TAB ── */}
-        {tab === 'settings' && (
-          <div className="space-y-5 max-w-2xl">
+      {/* ── Settings Modal ── */}
+      {showSettingsModal && (
+        <Modal title="Calendar Settings" wide onClose={() => setShowSettingsModal(false)}>
+          <div className="space-y-6">
             {/* Booking rules */}
-            <div className="glass-card p-5 space-y-4">
-              <h3 className="font-display font-semibold">Booking Rules</h3>
+            <div>
+              <h3 className="font-display font-semibold mb-4">Booking Rules</h3>
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
                   <label className="form-label">Max events per day (0 = unlimited)</label>
@@ -1350,55 +1278,23 @@ export default function CalendarPage() {
                   <input type="number" min={0} value={calendarSettings.advanceBookingDays} onChange={e => updateCalendarSettings({advanceBookingDays: Number(e.target.value)})} className="input-field w-full" />
                 </div>
               </div>
-              <label className="flex items-center gap-3 cursor-pointer">
+              <label className="flex items-center gap-3 cursor-pointer mt-4">
                 <input type="checkbox" checked={calendarSettings.requireApproval} onChange={e => updateCalendarSettings({requireApproval: e.target.checked})} className="w-4 h-4 rounded" />
                 <div>
                   <p className="text-sm font-medium">Require manager approval</p>
                   <p className="text-xs text-muted-foreground">All customer requests land as "pending" until approved</p>
                 </div>
               </label>
-              <div>
+              <div className="mt-4">
                 <label className="form-label">Booking page message</label>
-                <textarea value={calendarSettings.bookingMessage} onChange={e => updateCalendarSettings({bookingMessage: e.target.value})} rows={2} className="input-field w-full resize-none" />
+                <textarea value={calendarSettings.bookingMessage} onChange={e => updateCalendarSettings({bookingMessage: e.target.value})} rows={2} className="input-field w-full resize-none" placeholder="Welcome message shown to customers…" />
               </div>
             </div>
 
-            {/* Shift templates */}
-            <div className="glass-card p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="font-display font-semibold flex items-center gap-1.5"><Layers className="w-4 h-4" /> Shift Templates</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">Presets that pre-fill the shift form — name, times, color</p>
-                </div>
-                <button onClick={() => { setEditingTemplate(null); setShowTemplateForm(true); }} className="btn-ghost text-sm flex items-center gap-1.5">
-                  <Plus className="w-3.5 h-3.5" /> Add
-                </button>
-              </div>
-              {shiftTemplates.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No templates. Create presets like "Kitchen AM 9–17" to add shifts faster.</p>
-              ) : (
-                <div className="space-y-2">
-                  {shiftTemplates.map(t => (
-                    <div key={t.id} className="flex items-center justify-between gap-3 p-2.5 rounded-xl border border-border">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="w-3 h-8 rounded-lg shrink-0" style={{ backgroundColor: t.color }} />
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold">{t.name}</p>
-                          <p className="text-xs text-muted-foreground">{t.startTime}–{t.endTime}</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-1 shrink-0">
-                        <button onClick={() => { setEditingTemplate(t); setShowTemplateForm(true); }} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"><Edit2 className="w-3.5 h-3.5" /></button>
-                        <button onClick={() => { if(confirm('Delete template?')) updateCalendarSettings({shiftTemplates: shiftTemplates.filter(x => x.id !== t.id)}); toast.success('Removed'); }} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <div className="border-t border-border" />
 
             {/* Working hours */}
-            <div className="glass-card p-5">
+            <div>
               <h3 className="font-display font-semibold mb-4">Working Hours</h3>
               <div className="space-y-2">
                 {calendarSettings.workingDays.map(wd => (
@@ -1421,8 +1317,10 @@ export default function CalendarPage() {
               </div>
             </div>
 
-            {/* Exceptions */}
-            <div className="glass-card p-5">
+            <div className="border-t border-border" />
+
+            {/* Date exceptions */}
+            <div>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-display font-semibold">Date Exceptions</h3>
                 <button onClick={addException} className="btn-ghost text-sm flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" /> Add</button>
@@ -1447,8 +1345,46 @@ export default function CalendarPage() {
               )}
             </div>
 
+            <div className="border-t border-border" />
+
+            {/* Shift templates */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="font-display font-semibold flex items-center gap-1.5"><Layers className="w-4 h-4" /> Shift Templates</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">Presets that pre-fill the shift form — name, times, color</p>
+                </div>
+                <button onClick={() => { setEditingTemplate(null); setShowTemplateForm(true); }} className="btn-ghost text-sm flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5" /> Add
+                </button>
+              </div>
+              {shiftTemplates.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No templates. Create presets like "Kitchen AM 9–17" to add shifts faster.</p>
+              ) : (
+                <div className="space-y-2">
+                  {shiftTemplates.map(t => (
+                    <div key={t.id} className="flex items-center justify-between gap-3 p-2.5 rounded-xl border border-border">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="w-3 h-8 rounded-lg shrink-0" style={{ backgroundColor: t.color }} />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold">{t.name}</p>
+                          <p className="text-xs text-muted-foreground">{t.startTime}–{t.endTime}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        <button onClick={() => { setEditingTemplate(t); setShowTemplateForm(true); }} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"><Edit2 className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => { if(confirm('Delete template?')) { updateCalendarSettings({shiftTemplates: shiftTemplates.filter(x => x.id !== t.id)}); toast.success('Removed'); } }} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-border" />
+
             {/* Booking link */}
-            <div className="glass-card p-5">
+            <div>
               <h3 className="font-display font-semibold mb-2">Customer Booking Link</h3>
               <div className="flex items-center gap-2">
                 <code className="flex-1 text-xs bg-muted px-3 py-2 rounded-lg font-mono break-all">
@@ -1458,11 +1394,10 @@ export default function CalendarPage() {
               </div>
             </div>
           </div>
-        )}
-      </div>
+        </Modal>
+      )}
 
-      {/* ── Modals ── */}
-
+      {/* ── Event form modal ── */}
       {showEventForm && (
         <Modal title="New Event" onClose={() => setShowEventForm(false)}>
           <EventForm initialDate={selectedDate} packages={eventPackages}
@@ -1471,9 +1406,10 @@ export default function CalendarPage() {
         </Modal>
       )}
 
+      {/* ── Package form modal ── */}
       {showPackageForm && (
         <Modal title={editingPackage ? 'Edit Package' : 'New Package'} onClose={() => { setShowPackageForm(false); setEditingPackage(null); }}>
-          <PackageForm initial={editingPackage ?? undefined}
+          <PackageForm initial={editingPackage ?? undefined} sym={sym}
             onSave={data => {
               if (editingPackage) { updateEventPackage(editingPackage.id, data); toast.success('Updated'); }
               else { addEventPackage(data); toast.success('Created'); }
@@ -1483,6 +1419,7 @@ export default function CalendarPage() {
         </Modal>
       )}
 
+      {/* ── Employee form modal ── */}
       {showEmployeeForm && (
         <Modal title={editingEmployee ? 'Edit Employee' : 'Add Employee'} onClose={() => { setShowEmployeeForm(false); setEditingEmployee(null); }}>
           <EmployeeForm initial={editingEmployee ?? undefined}
@@ -1495,6 +1432,7 @@ export default function CalendarPage() {
         </Modal>
       )}
 
+      {/* ── Shift form modal ── */}
       {showShiftForm && (
         <Modal
           title={editingShift ? `Edit: ${editingShift.name}` : 'New Shift'}
@@ -1516,6 +1454,7 @@ export default function CalendarPage() {
         </Modal>
       )}
 
+      {/* ── Template form modal ── */}
       {showTemplateForm && (
         <Modal title={editingTemplate ? 'Edit Template' : 'New Shift Template'} onClose={() => { setShowTemplateForm(false); setEditingTemplate(null); }}>
           <ShiftTemplateForm initial={editingTemplate ?? undefined} onSave={saveTemplate}
@@ -1523,6 +1462,7 @@ export default function CalendarPage() {
         </Modal>
       )}
 
+      {/* ── Reject modal ── */}
       {rejectId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground/30 backdrop-blur-sm">
           <div className="bg-card rounded-2xl shadow-xl w-full max-w-sm p-5">
