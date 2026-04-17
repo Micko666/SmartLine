@@ -54,6 +54,8 @@ export const DEFAULT_SETTINGS: BusinessSettings = {
   appUrl: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080',
   logoUrl: '',
   restaurantToken: 'demo',
+  orderingPaused: false,
+  orderingPausedMessage: '',
 };
 
 export const DEMO_USER: User = {

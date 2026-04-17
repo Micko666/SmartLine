@@ -288,6 +288,13 @@ export interface BusinessSettings {
   /** Stable token used to scope customer sessions per restaurant. Embedded in QR URLs. */
   restaurantToken: string;
   /**
+   * When true, all online ordering (dine-in table selection, takeaway, delivery)
+   * is paused and customers see the custom message instead.
+   */
+  orderingPaused: boolean;
+  /** Message shown on the order portal when ordering is paused. */
+  orderingPausedMessage: string;
+  /**
    * Station profiles — persisted here for Supabase JSONB compatibility.
    * Runtime reads should use the top-level `stations` store slice instead.
    * @internal

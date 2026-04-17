@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Save, ChefHat, Globe, CreditCard, Package, ImagePlus, Wifi, WifiOff, Link2, UtensilsCrossed, CalendarDays, Users } from 'lucide-react';
+import { Save, ChefHat, Globe, CreditCard, Package, ImagePlus, Wifi, WifiOff, Link2, UtensilsCrossed, CalendarDays, Users, ShoppingBag, PauseCircle } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -156,6 +156,45 @@ export default function Settings() {
               </select>
             </div>
           </div>
+        </section>
+
+        {/* Online Ordering */}
+        <section className="glass-card p-6 space-y-4">
+          <div className="flex items-center gap-2 mb-2">
+            <ShoppingBag className="w-4 h-4 text-primary" />
+            <h2 className="font-display font-semibold">Online Ordering</h2>
+          </div>
+          <div className="flex items-start gap-3 p-4 rounded-xl border border-border bg-muted/20">
+            <div className="flex-1">
+              <p className="text-sm font-semibold">Pause all online ordering</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Closes dine-in table selection, takeaway, and delivery on the public portal. Useful for private events, fully-booked days, or off days.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => up('orderingPaused', !form.orderingPaused)}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${form.orderingPaused ? 'bg-destructive' : 'bg-muted-foreground/30'}`}
+            >
+              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${form.orderingPaused ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          </div>
+          {form.orderingPaused && (
+            <div>
+              <label className="text-xs font-medium mb-1.5 block flex items-center gap-1">
+                <PauseCircle className="w-3 h-3 text-destructive" />
+                Message shown to customers when ordering is paused
+              </label>
+              <textarea
+                value={form.orderingPausedMessage}
+                onChange={e => up('orderingPausedMessage', e.target.value)}
+                rows={3}
+                className={`${input} h-auto py-2 resize-none`}
+                placeholder="e.g. We're closed for a private event today. See you tomorrow from 12:00!"
+              />
+              <p className="text-xs text-muted-foreground mt-1">Leave blank to show a default "We're not accepting orders right now" message.</p>
+            </div>
+          )}
         </section>
 
         {/* QR / App URL */}

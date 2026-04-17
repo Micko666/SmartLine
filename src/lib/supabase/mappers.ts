@@ -29,8 +29,10 @@ export function mapSettingsRow(row: Record<string, unknown>): BusinessSettings {
     zeroStockBehavior:  (row.zero_stock_behavior as BusinessSettings['zeroStockBehavior']) ?? 'disable',
     appUrl:             (row.app_url as string) ?? '',
     logoUrl:            (row.logo_url as string) ?? '',
-    restaurantToken:    row.restaurant_token as string,
-    stations:           (row.stations as Station[] | undefined) ?? [],
+    restaurantToken:        row.restaurant_token as string,
+    orderingPaused:         Boolean(row.ordering_paused ?? false),
+    orderingPausedMessage:  (row.ordering_paused_message as string) ?? '',
+    stations:               (row.stations as Station[] | undefined) ?? [],
   };
 }
 
@@ -51,8 +53,10 @@ export function settingsToRow(s: BusinessSettings, userId: string): Record<strin
     zero_stock_behavior:  s.zeroStockBehavior,
     app_url:              s.appUrl,
     logo_url:             s.logoUrl,
-    restaurant_token:     s.restaurantToken,
-    stations:             s.stations ?? [],
+    restaurant_token:          s.restaurantToken,
+    ordering_paused:           s.orderingPaused ?? false,
+    ordering_paused_message:   s.orderingPausedMessage ?? '',
+    stations:                  s.stations ?? [],
   };
 }
 
