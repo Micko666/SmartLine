@@ -438,15 +438,31 @@ export interface Employee {
   createdAt: string;
 }
 
+/** Per-employee assignment within a shift — captures their role and optional split-role note. */
+export interface ShiftAssignment {
+  employeeId: string;
+  /** Role for this person in this specific shift, e.g. "Manager", "Cook", "Server" */
+  role: string;
+  /**
+   * Optional free-text note for split-role or partial-shift info.
+   * e.g. "07-10 prep cook, rest line cook" or "leaving at 14:00"
+   */
+  roleNote?: string;
+}
+
 export interface Shift {
   id: string;
-  date: string;        // ISO date "2026-05-20"
-  startTime: string;   // "09:00"
-  endTime: string;     // "17:00"
-  /** Shift label — "Kitchen", "Bar", "Floor", etc. */
-  role: string;
-  /** IDs of employees assigned to this shift */
-  employeeIds: string[];
+  date: string;          // ISO date "2026-05-20"
+  /** Display name for this shift block — "Morning", "Bar PM", "Closing" */
+  name: string;
+  startTime: string;     // "09:00"
+  endTime: string;       // "17:00"
+  /** Hex accent color for visual identification on the roster grid */
+  color: string;
+  /** Optional link to an operational station (by Station.id) */
+  stationId?: string;
+  /** Staff assigned to this shift, each with their own role */
+  assignments: ShiftAssignment[];
   /** Minimum required staff count — shifts below this are flagged */
   minStaff: number;
   notes: string;

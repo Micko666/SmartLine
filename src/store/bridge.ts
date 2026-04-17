@@ -286,10 +286,15 @@ export async function persistShiftUpdate(
 ): Promise<void> {
   const dbUpdates: Record<string, unknown> = {};
   if (updates.date        !== undefined) dbUpdates.date         = updates.date;
+  if (updates.name        !== undefined) { dbUpdates.name = updates.name; dbUpdates.role = updates.name; }
   if (updates.startTime   !== undefined) dbUpdates.start_time   = updates.startTime;
   if (updates.endTime     !== undefined) dbUpdates.end_time     = updates.endTime;
-  if (updates.role        !== undefined) dbUpdates.role         = updates.role;
-  if (updates.employeeIds !== undefined) dbUpdates.employee_ids = updates.employeeIds;
+  if (updates.color       !== undefined) dbUpdates.color        = updates.color;
+  if ('stationId' in updates)            dbUpdates.station_id   = updates.stationId ?? null;
+  if (updates.assignments !== undefined) {
+    dbUpdates.assignments  = updates.assignments;
+    dbUpdates.employee_ids = updates.assignments.map(a => a.employeeId);
+  }
   if (updates.minStaff    !== undefined) dbUpdates.min_staff    = updates.minStaff;
   if ('notes' in updates) dbUpdates.notes = updates.notes ?? '';
   await updateShiftRow(id, dbUpdates);

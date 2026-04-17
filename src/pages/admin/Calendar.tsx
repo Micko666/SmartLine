@@ -1,17 +1,21 @@
 /**
- * Calendar — Reservations & Events management for managers.
+ * Calendar — Reservations, Events, Roster & Settings.
  *
- * Tabs:
- *  - Calendar  : month view, day detail, pending request queue
- *  - Packages  : create/edit event packages (birthday, wedding, …)
- *  - Roster    : employee cards + weekly shift grid with template quick-add
- *  - Settings  : working hours, exceptions, booking rules, shift templates
+ * Roster tab design philosophy:
+ *   - A "Shift" is a named time block (Morning, Evening, Bar PM…).
+ *   - Each shift holds N assignments: employee + their role for that shift.
+ *   - One employee can appear in multiple shifts (e.g. covers two blocks).
+ *   - Split-role within a shift is captured via a free-text roleNote
+ *     (e.g. "07-10 prep cook, rest line cook").
+ *   - Work Log sub-tab shows past shifts as a filterable history table
+ *     with per-employee hour totals — the analytics integration point.
  */
 import { useState, useMemo } from 'react';
 import {
   ChevronLeft, ChevronRight, Plus, Check, X, Clock, Users,
   CalendarDays, Settings2, Package, AlertCircle, Edit2, Trash2,
-  Phone, Mail, Star, Link, UserPlus, Zap, Layers,
+  Phone, Mail, Star, Link, UserPlus, Layers, History,
+  LayoutGrid, Info,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -19,19 +23,28 @@ import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import type {
   CalendarEvent, CalendarEventType, EventPackage, WorkingDay,
-  Employee, Shift, ShiftTemplate,
+  Employee, Shift, ShiftAssignment, ShiftTemplate,
 } from '@/domain/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const DAY_NAMES   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const DAY_NAMES   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 function isoDate(d: Date) { return d.toISOString().slice(0, 10); }
-function today() { return isoDate(new Date()); }
+function today()          { return isoDate(new Date()); }
 
 function initials(name: string) {
   return name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase();
+}
+
+function shiftHours(startTime: string, endTime: string): number {
+  const [sh, sm] = startTime.split(':').map(Number);
+  const [eh, em] = endTime.split(':').map(Number);
+  const start = sh * 60 + sm;
+  let end = eh * 60 + em;
+  if (end <= start) end += 24 * 60; // overnight
+  return Math.round((end - start) / 60 * 10) / 10;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -43,9 +56,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const TYPE_EMOJI: Record<CalendarEventType, string> = {
-  reservation:   '🪑',
-  private_event: '🎉',
-  closure:       '🔒',
+  reservation: '🪑', private_event: '🎉', closure: '🔒',
 };
 
 const PRESET_COLORS = [
@@ -53,25 +64,20 @@ const PRESET_COLORS = [
   '#eab308','#22c55e','#14b8a6','#0ea5e9','#64748b',
 ];
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// ─── Shared Modal ─────────────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: string }) {
+function Modal({ title, subtitle, onClose, wide, children }: {
+  title: string; subtitle?: string; onClose: () => void; wide?: boolean; children: React.ReactNode;
+}) {
   return (
-    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border capitalize ${STATUS_COLORS[status] ?? 'bg-muted'}`}>
-      {status}
-    </span>
-  );
-}
-
-// ─── Modal wrapper ────────────────────────────────────────────────────────────
-
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground/30 backdrop-blur-sm">
-      <div className="bg-card rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-border">
-          <h2 className="font-display font-bold text-lg">{title}</h2>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-16 bg-foreground/30 backdrop-blur-sm overflow-y-auto">
+      <div className={`bg-card rounded-2xl shadow-xl w-full ${wide ? 'max-w-2xl' : 'max-w-md'} mb-8`}>
+        <div className="flex items-start justify-between px-5 pt-5 pb-4 border-b border-border">
+          <div>
+            <h2 className="font-display font-bold text-lg leading-tight">{title}</h2>
+            {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground shrink-0 ml-3">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -81,167 +87,121 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   );
 }
 
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border capitalize ${STATUS_COLORS[status] ?? 'bg-muted'}`}>
+      {status}
+    </span>
+  );
+}
+
 // ─── Event form ───────────────────────────────────────────────────────────────
 
-interface EventFormProps {
+function EventForm({ initialDate, packages, onSave, onClose }: {
   initialDate?: string;
   packages: EventPackage[];
   onSave: (data: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'>) => void;
   onClose: () => void;
-}
-
-function EventForm({ initialDate, packages, onSave, onClose }: EventFormProps) {
+}) {
   const [form, setForm] = useState({
-    date:         initialDate ?? today(),
-    timeSlot:     '18:00',
-    endTime:      '21:00',
-    type:         'reservation' as CalendarEventType,
-    customerName:  '',
-    customerPhone: '',
-    customerEmail: '',
-    guestCount:   2,
-    packageId:    '',
-    notes:        '',
-    closureReason: '',
-    status:       'approved' as CalendarEvent['status'],
+    date: initialDate ?? today(), timeSlot: '18:00', endTime: '21:00',
+    type: 'reservation' as CalendarEventType, customerName: '', customerPhone: '',
+    customerEmail: '', guestCount: 2, packageId: '', notes: '',
+    closureReason: '', status: 'approved' as CalendarEvent['status'],
   });
-
   const isClosure = form.type === 'closure';
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!isClosure && !form.customerName.trim()) {
-      toast.error('Customer name is required');
-      return;
-    }
-    const pkg = packages.find(p => p.id === form.packageId);
-    onSave({
-      date:         form.date,
-      timeSlot:     form.timeSlot,
-      endTime:      form.endTime || undefined,
-      type:         form.type,
-      status:       form.status,
-      customerName:  isClosure ? '' : form.customerName,
-      customerPhone: isClosure ? '' : form.customerPhone,
-      customerEmail: isClosure ? '' : form.customerEmail,
-      guestCount:   isClosure ? 0 : form.guestCount,
-      packageId:    form.packageId || undefined,
-      packageName:  pkg?.name,
-      notes:        form.notes,
-      closureReason: isClosure ? form.closureReason : undefined,
-      createdBy:    'manager',
-    });
-  }
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={e => {
+      e.preventDefault();
+      if (!isClosure && !form.customerName.trim()) { toast.error('Customer name required'); return; }
+      const pkg = packages.find(p => p.id === form.packageId);
+      onSave({
+        date: form.date, timeSlot: form.timeSlot, endTime: form.endTime || undefined,
+        type: form.type, status: form.status,
+        customerName: isClosure ? '' : form.customerName,
+        customerPhone: isClosure ? '' : form.customerPhone,
+        customerEmail: isClosure ? '' : form.customerEmail,
+        guestCount: isClosure ? 0 : form.guestCount,
+        packageId: form.packageId || undefined, packageName: pkg?.name,
+        notes: form.notes, closureReason: isClosure ? form.closureReason : undefined,
+        createdBy: 'manager',
+      });
+    }} className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs text-muted-foreground font-medium mb-1 block">Date</label>
-          <input type="date" value={form.date}
-            onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-            className="input-field w-full" required />
+          <label className="form-label">Date</label>
+          <input type="date" value={form.date} onChange={e => setForm(f => ({...f, date: e.target.value}))} className="input-field w-full" required />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground font-medium mb-1 block">Type</label>
-          <select value={form.type}
-            onChange={e => setForm(f => ({ ...f, type: e.target.value as CalendarEventType }))}
-            className="input-field w-full">
+          <label className="form-label">Type</label>
+          <select value={form.type} onChange={e => setForm(f => ({...f, type: e.target.value as CalendarEventType}))} className="input-field w-full">
             <option value="reservation">Reservation</option>
             <option value="private_event">Private Event</option>
             <option value="closure">Closure / Blocked</option>
           </select>
         </div>
       </div>
-
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs text-muted-foreground font-medium mb-1 block">Start time</label>
-          <input type="time" value={form.timeSlot}
-            onChange={e => setForm(f => ({ ...f, timeSlot: e.target.value }))}
-            className="input-field w-full" />
+          <label className="form-label">Start</label>
+          <input type="time" value={form.timeSlot} onChange={e => setForm(f => ({...f, timeSlot: e.target.value}))} className="input-field w-full" />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground font-medium mb-1 block">End time</label>
-          <input type="time" value={form.endTime}
-            onChange={e => setForm(f => ({ ...f, endTime: e.target.value }))}
-            className="input-field w-full" />
+          <label className="form-label">End</label>
+          <input type="time" value={form.endTime} onChange={e => setForm(f => ({...f, endTime: e.target.value}))} className="input-field w-full" />
         </div>
       </div>
-
       {isClosure ? (
         <div>
-          <label className="text-xs text-muted-foreground font-medium mb-1 block">Reason</label>
-          <input type="text" value={form.closureReason}
-            onChange={e => setForm(f => ({ ...f, closureReason: e.target.value }))}
-            placeholder="e.g. Private party, Holiday, Renovation…"
-            className="input-field w-full" />
+          <label className="form-label">Reason</label>
+          <input type="text" value={form.closureReason} onChange={e => setForm(f => ({...f, closureReason: e.target.value}))} placeholder="Holiday, Renovation…" className="input-field w-full" />
         </div>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-muted-foreground font-medium mb-1 block">Customer name *</label>
-              <input type="text" value={form.customerName}
-                onChange={e => setForm(f => ({ ...f, customerName: e.target.value }))}
-                className="input-field w-full" required />
+              <label className="form-label">Customer name *</label>
+              <input type="text" value={form.customerName} onChange={e => setForm(f => ({...f, customerName: e.target.value}))} className="input-field w-full" required />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground font-medium mb-1 block">Guests</label>
-              <input type="number" min={1} max={500} value={form.guestCount}
-                onChange={e => setForm(f => ({ ...f, guestCount: Number(e.target.value) }))}
-                className="input-field w-full" />
+              <label className="form-label">Guests</label>
+              <input type="number" min={1} max={500} value={form.guestCount} onChange={e => setForm(f => ({...f, guestCount: Number(e.target.value)}))} className="input-field w-full" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-muted-foreground font-medium mb-1 block">Phone</label>
-              <input type="tel" value={form.customerPhone}
-                onChange={e => setForm(f => ({ ...f, customerPhone: e.target.value }))}
-                className="input-field w-full" />
+              <label className="form-label">Phone</label>
+              <input type="tel" value={form.customerPhone} onChange={e => setForm(f => ({...f, customerPhone: e.target.value}))} className="input-field w-full" />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground font-medium mb-1 block">Email</label>
-              <input type="email" value={form.customerEmail}
-                onChange={e => setForm(f => ({ ...f, customerEmail: e.target.value }))}
-                className="input-field w-full" />
+              <label className="form-label">Email</label>
+              <input type="email" value={form.customerEmail} onChange={e => setForm(f => ({...f, customerEmail: e.target.value}))} className="input-field w-full" />
             </div>
           </div>
           {packages.filter(p => p.active).length > 0 && (
             <div>
-              <label className="text-xs text-muted-foreground font-medium mb-1 block">Package (optional)</label>
-              <select value={form.packageId}
-                onChange={e => setForm(f => ({ ...f, packageId: e.target.value }))}
-                className="input-field w-full">
+              <label className="form-label">Package (optional)</label>
+              <select value={form.packageId} onChange={e => setForm(f => ({...f, packageId: e.target.value}))} className="input-field w-full">
                 <option value="">No package</option>
-                {packages.filter(p => p.active).map(p => (
-                  <option key={p.id} value={p.id}>{p.emoji} {p.name}</option>
-                ))}
+                {packages.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.emoji} {p.name}</option>)}
               </select>
             </div>
           )}
         </>
       )}
-
       <div>
-        <label className="text-xs text-muted-foreground font-medium mb-1 block">Notes</label>
-        <textarea value={form.notes}
-          onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-          rows={2} className="input-field w-full resize-none"
-          placeholder="Special requests, dietary requirements…" />
+        <label className="form-label">Notes</label>
+        <textarea value={form.notes} onChange={e => setForm(f => ({...f, notes: e.target.value}))} rows={2} className="input-field w-full resize-none" placeholder="Special requests…" />
       </div>
-
       <div>
-        <label className="text-xs text-muted-foreground font-medium mb-1 block">Status</label>
-        <select value={form.status}
-          onChange={e => setForm(f => ({ ...f, status: e.target.value as CalendarEvent['status'] }))}
-          className="input-field w-full">
+        <label className="form-label">Status</label>
+        <select value={form.status} onChange={e => setForm(f => ({...f, status: e.target.value as CalendarEvent['status']}))} className="input-field w-full">
           <option value="approved">Approved</option>
           <option value="pending">Pending</option>
           <option value="cancelled">Cancelled</option>
         </select>
       </div>
-
       <div className="flex gap-2 pt-1">
         <button type="button" onClick={onClose} className="btn-ghost px-4">Cancel</button>
         <button type="submit" className="btn-primary flex-1">Save event</button>
@@ -252,111 +212,73 @@ function EventForm({ initialDate, packages, onSave, onClose }: EventFormProps) {
 
 // ─── Package form ─────────────────────────────────────────────────────────────
 
-interface PackageFormProps {
+function PackageForm({ initial, onSave, onClose }: {
   initial?: Partial<EventPackage>;
   onSave: (data: Omit<EventPackage, 'id' | 'createdAt'>) => void;
   onClose: () => void;
-}
-
-function PackageForm({ initial, onSave, onClose }: PackageFormProps) {
+}) {
   const [form, setForm] = useState({
-    name:           initial?.name ?? '',
-    emoji:          initial?.emoji ?? '🎉',
-    description:    initial?.description ?? '',
-    minGuests:      initial?.minGuests ?? 10,
-    maxGuests:      initial?.maxGuests ?? 100,
-    fixedPrice:     initial?.fixedPrice ?? undefined as number | undefined,
-    pricePerPerson: initial?.pricePerPerson ?? undefined as number | undefined,
-    duration:       initial?.duration ?? 3,
-    details:        initial?.details ?? '',
-    active:         initial?.active ?? true,
+    name: initial?.name ?? '', emoji: initial?.emoji ?? '🎉',
+    description: initial?.description ?? '',
+    minGuests: initial?.minGuests ?? 10, maxGuests: initial?.maxGuests ?? 100,
+    fixedPrice: initial?.fixedPrice as number | undefined,
+    pricePerPerson: initial?.pricePerPerson as number | undefined,
+    duration: initial?.duration ?? 3, details: initial?.details ?? '',
+    active: initial?.active ?? true,
   });
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!form.name.trim()) { toast.error('Package name required'); return; }
-    onSave(form);
-  }
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={e => {
+      e.preventDefault();
+      if (!form.name.trim()) { toast.error('Name required'); return; }
+      onSave(form);
+    }} className="space-y-4">
       <div className="grid grid-cols-4 gap-3">
         <div>
-          <label className="text-xs text-muted-foreground font-medium mb-1 block">Icon</label>
-          <input type="text" value={form.emoji} maxLength={2}
-            onChange={e => setForm(f => ({ ...f, emoji: e.target.value }))}
-            className="input-field w-full text-center text-2xl" />
+          <label className="form-label">Icon</label>
+          <input type="text" value={form.emoji} maxLength={2} onChange={e => setForm(f => ({...f, emoji: e.target.value}))} className="input-field w-full text-center text-2xl" />
         </div>
         <div className="col-span-3">
-          <label className="text-xs text-muted-foreground font-medium mb-1 block">Package name *</label>
-          <input type="text" value={form.name}
-            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-            placeholder="Birthday Party, Wedding Reception…"
-            className="input-field w-full" required />
+          <label className="form-label">Name *</label>
+          <input type="text" value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} className="input-field w-full" required />
         </div>
       </div>
-
       <div>
-        <label className="text-xs text-muted-foreground font-medium mb-1 block">Description</label>
-        <input type="text" value={form.description}
-          onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-          className="input-field w-full"
-          placeholder="Short description shown to customers" />
+        <label className="form-label">Description</label>
+        <input type="text" value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))} className="input-field w-full" />
       </div>
-
       <div className="grid grid-cols-3 gap-3">
         <div>
-          <label className="text-xs text-muted-foreground font-medium mb-1 block">Min guests</label>
-          <input type="number" min={1} value={form.minGuests}
-            onChange={e => setForm(f => ({ ...f, minGuests: Number(e.target.value) }))}
-            className="input-field w-full" />
+          <label className="form-label">Min guests</label>
+          <input type="number" min={1} value={form.minGuests} onChange={e => setForm(f => ({...f, minGuests: Number(e.target.value)}))} className="input-field w-full" />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground font-medium mb-1 block">Max guests</label>
-          <input type="number" min={1} value={form.maxGuests}
-            onChange={e => setForm(f => ({ ...f, maxGuests: Number(e.target.value) }))}
-            className="input-field w-full" />
+          <label className="form-label">Max guests</label>
+          <input type="number" min={1} value={form.maxGuests} onChange={e => setForm(f => ({...f, maxGuests: Number(e.target.value)}))} className="input-field w-full" />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground font-medium mb-1 block">Duration (hrs)</label>
-          <input type="number" min={0.5} step={0.5} value={form.duration}
-            onChange={e => setForm(f => ({ ...f, duration: Number(e.target.value) }))}
-            className="input-field w-full" />
+          <label className="form-label">Duration (hrs)</label>
+          <input type="number" min={0.5} step={0.5} value={form.duration} onChange={e => setForm(f => ({...f, duration: Number(e.target.value)}))} className="input-field w-full" />
         </div>
       </div>
-
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs text-muted-foreground font-medium mb-1 block">Fixed price (optional)</label>
-          <input type="number" min={0} step={0.01}
-            value={form.fixedPrice ?? ''}
-            onChange={e => setForm(f => ({ ...f, fixedPrice: e.target.value ? Number(e.target.value) : undefined }))}
-            className="input-field w-full" placeholder="Leave blank if per-person" />
+          <label className="form-label">Fixed price (optional)</label>
+          <input type="number" min={0} step={0.01} value={form.fixedPrice ?? ''} onChange={e => setForm(f => ({...f, fixedPrice: e.target.value ? Number(e.target.value) : undefined}))} className="input-field w-full" placeholder="Leave blank if per-person" />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground font-medium mb-1 block">Per person (optional)</label>
-          <input type="number" min={0} step={0.01}
-            value={form.pricePerPerson ?? ''}
-            onChange={e => setForm(f => ({ ...f, pricePerPerson: e.target.value ? Number(e.target.value) : undefined }))}
-            className="input-field w-full" placeholder="Leave blank if fixed" />
+          <label className="form-label">Per person (optional)</label>
+          <input type="number" min={0} step={0.01} value={form.pricePerPerson ?? ''} onChange={e => setForm(f => ({...f, pricePerPerson: e.target.value ? Number(e.target.value) : undefined}))} className="input-field w-full" placeholder="Leave blank if fixed" />
         </div>
       </div>
-
       <div>
-        <label className="text-xs text-muted-foreground font-medium mb-1 block">What's included / requirements</label>
-        <textarea value={form.details}
-          onChange={e => setForm(f => ({ ...f, details: e.target.value }))}
-          rows={3} className="input-field w-full resize-none"
-          placeholder="e.g. Dedicated area, custom cake, 3-course meal…" />
+        <label className="form-label">What's included</label>
+        <textarea value={form.details} onChange={e => setForm(f => ({...f, details: e.target.value}))} rows={3} className="input-field w-full resize-none" placeholder="Dedicated area, custom cake, 3-course meal…" />
       </div>
-
       <label className="flex items-center gap-2 cursor-pointer">
-        <input type="checkbox" checked={form.active}
-          onChange={e => setForm(f => ({ ...f, active: e.target.checked }))}
-          className="rounded" />
+        <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({...f, active: e.target.checked}))} className="rounded" />
         <span className="text-sm font-medium">Active (visible to customers)</span>
       </label>
-
       <div className="flex gap-2 pt-1">
         <button type="button" onClick={onClose} className="btn-ghost px-4">Cancel</button>
         <button type="submit" className="btn-primary flex-1">Save package</button>
@@ -367,86 +289,59 @@ function PackageForm({ initial, onSave, onClose }: PackageFormProps) {
 
 // ─── Employee form ─────────────────────────────────────────────────────────────
 
-interface EmployeeFormProps {
+function EmployeeForm({ initial, onSave, onClose }: {
   initial?: Employee;
   onSave: (data: Omit<Employee, 'id' | 'createdAt'>) => void;
   onClose: () => void;
-}
-
-function EmployeeForm({ initial, onSave, onClose }: EmployeeFormProps) {
+}) {
   const [form, setForm] = useState({
-    name:   initial?.name   ?? '',
-    role:   initial?.role   ?? '',
-    phone:  initial?.phone  ?? '',
-    email:  initial?.email  ?? '',
-    color:  initial?.color  ?? PRESET_COLORS[0],
-    active: initial?.active ?? true,
+    name: initial?.name ?? '', role: initial?.role ?? '',
+    phone: initial?.phone ?? '', email: initial?.email ?? '',
+    color: initial?.color ?? PRESET_COLORS[0], active: initial?.active ?? true,
   });
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!form.name.trim()) return;
-    onSave({
-      name:   form.name.trim(),
-      role:   form.role.trim(),
-      phone:  form.phone.trim() || undefined,
-      email:  form.email.trim() || undefined,
-      color:  form.color,
-      active: form.active,
-    });
-  }
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Avatar preview */}
+    <form onSubmit={e => {
+      e.preventDefault();
+      if (!form.name.trim()) return;
+      onSave({ name: form.name.trim(), role: form.role.trim(), phone: form.phone.trim() || undefined, email: form.email.trim() || undefined, color: form.color, active: form.active });
+    }} className="space-y-4">
       <div className="flex justify-center">
-        <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-xl font-bold text-white"
-          style={{ backgroundColor: form.color }}>
+        <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-xl font-bold text-white shadow-sm" style={{ backgroundColor: form.color }}>
           {form.name ? initials(form.name) : '?'}
         </div>
       </div>
-
       <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Name *</label>
-        <input type="text" required value={form.name}
-          onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-          className="input-field w-full" placeholder="Full name" />
+        <label className="form-label">Name *</label>
+        <input type="text" required value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} className="input-field w-full" placeholder="Full name" />
       </div>
       <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Role / Position</label>
-        <input type="text" value={form.role}
-          onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
-          className="input-field w-full" placeholder="Chef, Server, Bartender…" />
+        <label className="form-label">Default role / position</label>
+        <input type="text" value={form.role} onChange={e => setForm(f => ({...f, role: e.target.value}))} className="input-field w-full" placeholder="Chef, Server, Bartender…" />
+        <p className="text-[10px] text-muted-foreground mt-1">This is a general label — you'll set specific roles per shift.</p>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Phone</label>
-          <input type="tel" value={form.phone}
-            onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-            className="input-field w-full" placeholder="+1 234…" />
+          <label className="form-label"><Phone className="w-3 h-3 inline mr-0.5" /> Phone</label>
+          <input type="tel" value={form.phone} onChange={e => setForm(f => ({...f, phone: e.target.value}))} className="input-field w-full" placeholder="+1 234…" />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Email</label>
-          <input type="email" value={form.email}
-            onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-            className="input-field w-full" placeholder="staff@…" />
+          <label className="form-label"><Mail className="w-3 h-3 inline mr-0.5" /> Email</label>
+          <input type="email" value={form.email} onChange={e => setForm(f => ({...f, email: e.target.value}))} className="input-field w-full" placeholder="staff@…" />
         </div>
       </div>
       <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Color</label>
+        <label className="form-label">Color</label>
         <div className="flex gap-2 flex-wrap">
           {PRESET_COLORS.map(c => (
-            <button key={c} type="button"
-              onClick={() => setForm(f => ({ ...f, color: c }))}
+            <button key={c} type="button" onClick={() => setForm(f => ({...f, color: c}))}
               className={`w-8 h-8 rounded-xl border-2 transition-all ${form.color === c ? 'border-foreground scale-110 shadow-md' : 'border-transparent hover:scale-105'}`}
               style={{ backgroundColor: c }} />
           ))}
         </div>
       </div>
       <label className="flex items-center gap-2 cursor-pointer">
-        <input type="checkbox" checked={form.active}
-          onChange={e => setForm(f => ({ ...f, active: e.target.checked }))}
-          className="w-4 h-4 rounded" />
+        <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({...f, active: e.target.checked}))} className="w-4 h-4 rounded" />
         <span className="text-sm font-medium">Active (show in roster)</span>
       </label>
       <div className="flex gap-2 pt-1">
@@ -457,139 +352,233 @@ function EmployeeForm({ initial, onSave, onClose }: EmployeeFormProps) {
   );
 }
 
-// ─── Shift form ────────────────────────────────────────────────────────────────
+// ─── Shift form (core of the new system) ─────────────────────────────────────
 
-interface ShiftFormProps {
+function ShiftForm({ initial, initialDate, employees, stations, templates, onSave, onClose }: {
   initial?: Shift;
   initialDate?: string;
   employees: Employee[];
+  stations: { id: string; name: string; color: string }[];
   templates?: ShiftTemplate[];
   onSave: (data: Omit<Shift, 'id' | 'createdAt'>) => void;
   onClose: () => void;
-}
-
-function ShiftForm({ initial, initialDate, employees, templates = [], onSave, onClose }: ShiftFormProps) {
+}) {
   const [form, setForm] = useState({
-    date:        initial?.date        ?? initialDate ?? today(),
-    startTime:   initial?.startTime   ?? '09:00',
-    endTime:     initial?.endTime     ?? '17:00',
-    role:        initial?.role        ?? '',
-    employeeIds: initial?.employeeIds ?? [] as string[],
-    minStaff:    initial?.minStaff    ?? 1,
-    notes:       initial?.notes       ?? '',
+    date:        initial?.date      ?? initialDate ?? today(),
+    name:        initial?.name      ?? '',
+    startTime:   initial?.startTime ?? '09:00',
+    endTime:     initial?.endTime   ?? '17:00',
+    color:       initial?.color     ?? PRESET_COLORS[0],
+    stationId:   initial?.stationId ?? '',
+    minStaff:    initial?.minStaff  ?? 1,
+    notes:       initial?.notes     ?? '',
   });
 
+  const [assignments, setAssignments] = useState<ShiftAssignment[]>(initial?.assignments ?? []);
+
+  // Row for adding a new assignment
+  const [newEmpId, setNewEmpId]   = useState('');
+  const [newRole, setNewRole]     = useState('');
+  const [newNote, setNewNote]     = useState('');
+
+  const activeEmployees = employees.filter(e => e.active);
+  const assignedIds     = new Set(assignments.map(a => a.employeeId));
+  const availableEmps   = activeEmployees.filter(e => !assignedIds.has(e.id));
+
+  function addAssignment() {
+    if (!newEmpId) { toast.error('Pick an employee'); return; }
+    const emp = employees.find(e => e.id === newEmpId);
+    setAssignments(prev => [...prev, {
+      employeeId: newEmpId,
+      role: newRole.trim() || emp?.role || 'Staff',
+      roleNote: newNote.trim() || undefined,
+    }]);
+    setNewEmpId('');
+    setNewRole('');
+    setNewNote('');
+  }
+
+  function removeAssignment(idx: number) {
+    setAssignments(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  function updateAssignment(idx: number, field: keyof ShiftAssignment, value: string) {
+    setAssignments(prev => prev.map((a, i) => i === idx ? { ...a, [field]: value || undefined } : a));
+  }
+
   function applyTemplate(t: ShiftTemplate) {
-    setForm(f => ({ ...f, startTime: t.startTime, endTime: t.endTime, role: t.name }));
-  }
-
-  function toggleEmployee(id: string) {
-    setForm(f => ({
-      ...f,
-      employeeIds: f.employeeIds.includes(id)
-        ? f.employeeIds.filter(e => e !== id)
-        : [...f.employeeIds, id],
-    }));
-  }
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    onSave({
-      date:        form.date,
-      startTime:   form.startTime,
-      endTime:     form.endTime,
-      role:        form.role.trim(),
-      employeeIds: form.employeeIds,
-      minStaff:    form.minStaff,
-      notes:       form.notes.trim(),
-    });
+    setForm(f => ({ ...f, name: t.name, startTime: t.startTime, endTime: t.endTime, color: t.color }));
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Template quick-apply */}
-      {templates.length > 0 && (
+    <form onSubmit={e => {
+      e.preventDefault();
+      if (!form.name.trim()) { toast.error('Shift name required'); return; }
+      onSave({ ...form, stationId: form.stationId || undefined, name: form.name.trim(), notes: form.notes.trim(), assignments });
+    }} className="space-y-5">
+
+      {/* Templates */}
+      {(templates?.length ?? 0) > 0 && (
         <div>
-          <label className="text-xs font-medium text-muted-foreground mb-2 block flex items-center gap-1">
-            <Zap className="w-3 h-3" /> Quick templates
-          </label>
-          <div className="flex flex-wrap gap-1.5">
-            {templates.map(t => (
-              <button key={t.id} type="button"
-                onClick={() => applyTemplate(t)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-white transition-all hover:opacity-80 hover:scale-105"
+          <label className="form-label">Quick templates</label>
+          <div className="flex flex-wrap gap-1.5 mt-1">
+            {templates!.map(t => (
+              <button key={t.id} type="button" onClick={() => applyTemplate(t)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-white hover:opacity-80"
                 style={{ backgroundColor: t.color }}>
-                {t.name}
-                <span className="opacity-75">{t.startTime}–{t.endTime}</span>
+                {t.name} <span className="opacity-75">{t.startTime}–{t.endTime}</span>
               </button>
             ))}
           </div>
         </div>
       )}
 
-      <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Date *</label>
-        <input type="date" required value={form.date}
-          onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-          className="input-field w-full" />
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Start</label>
-          <input type="time" value={form.startTime}
-            onChange={e => setForm(f => ({ ...f, startTime: e.target.value }))}
-            className="input-field w-full" />
+      {/* Name + color */}
+      <div className="flex gap-3 items-end">
+        <div className="flex-1">
+          <label className="form-label">Shift name *</label>
+          <input type="text" required value={form.name}
+            onChange={e => setForm(f => ({...f, name: e.target.value}))}
+            className="input-field w-full" placeholder="Morning, Evening, Bar PM…" />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">End</label>
-          <input type="time" value={form.endTime}
-            onChange={e => setForm(f => ({ ...f, endTime: e.target.value }))}
-            className="input-field w-full" />
+          <label className="form-label">Color</label>
+          <div className="flex gap-1.5 flex-wrap max-w-[168px]">
+            {PRESET_COLORS.map(c => (
+              <button key={c} type="button" onClick={() => setForm(f => ({...f, color: c}))}
+                className={`w-7 h-7 rounded-lg border-2 transition-all ${form.color === c ? 'border-foreground scale-110 shadow' : 'border-transparent'}`}
+                style={{ backgroundColor: c }} />
+            ))}
+          </div>
         </div>
       </div>
-      <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Shift label</label>
-        <input type="text" value={form.role}
-          onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
-          className="input-field w-full" placeholder="Kitchen, Bar, Floor…" />
+
+      {/* Date + times */}
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <label className="form-label">Date</label>
+          <input type="date" required value={form.date} onChange={e => setForm(f => ({...f, date: e.target.value}))} className="input-field w-full" />
+        </div>
+        <div>
+          <label className="form-label">Start</label>
+          <input type="time" value={form.startTime} onChange={e => setForm(f => ({...f, startTime: e.target.value}))} className="input-field w-full" />
+        </div>
+        <div>
+          <label className="form-label">End</label>
+          <input type="time" value={form.endTime} onChange={e => setForm(f => ({...f, endTime: e.target.value}))} className="input-field w-full" />
+        </div>
       </div>
+
+      {/* Station */}
+      {stations.length > 0 && (
+        <div>
+          <label className="form-label">Station (optional)</label>
+          <select value={form.stationId} onChange={e => setForm(f => ({...f, stationId: e.target.value}))} className="input-field w-full">
+            <option value="">No station</option>
+            {stations.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+      )}
+
+      {/* ── Staff assignments ── */}
       <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Assign staff</label>
-        {employees.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Add employees first.</p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {employees.filter(e => e.active).map(emp => {
-              const selected = form.employeeIds.includes(emp.id);
+        <div className="flex items-center justify-between mb-2">
+          <label className="form-label mb-0">Staff assignments</label>
+          <span className="text-xs text-muted-foreground">{assignments.length} assigned · min {form.minStaff}</span>
+        </div>
+
+        {/* Existing assignments */}
+        {assignments.length > 0 && (
+          <div className="space-y-1.5 mb-3">
+            {assignments.map((a, idx) => {
+              const emp = employees.find(e => e.id === a.employeeId);
               return (
-                <button key={emp.id} type="button" onClick={() => toggleEmployee(emp.id)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-medium border-2 transition-all ${
-                    selected ? 'text-white border-transparent shadow-sm' : 'border-border text-muted-foreground hover:border-primary/50'
-                  }`}
-                  style={selected ? { backgroundColor: emp.color, borderColor: emp.color } : {}}>
-                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
-                    style={{ backgroundColor: selected ? 'rgba(255,255,255,0.3)' : emp.color, color: 'white' }}>
-                    {initials(emp.name)}
-                  </span>
-                  {emp.name.split(' ')[0]}
-                </button>
+                <div key={idx} className="flex items-center gap-2 p-2 rounded-xl bg-muted/30 border border-border">
+                  {/* Avatar */}
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
+                    style={{ backgroundColor: emp?.color ?? '#64748b' }}>
+                    {emp ? initials(emp.name) : '?'}
+                  </div>
+                  {/* Name */}
+                  <span className="text-sm font-medium w-24 shrink-0 truncate">{emp?.name ?? 'Unknown'}</span>
+                  {/* Role input */}
+                  <input
+                    type="text"
+                    value={a.role}
+                    onChange={e => updateAssignment(idx, 'role', e.target.value)}
+                    className="input-field py-1 text-xs flex-1 min-w-0"
+                    placeholder="Role…"
+                  />
+                  {/* Note input */}
+                  <input
+                    type="text"
+                    value={a.roleNote ?? ''}
+                    onChange={e => updateAssignment(idx, 'roleNote', e.target.value)}
+                    className="input-field py-1 text-xs flex-1 min-w-0 hidden sm:block"
+                    placeholder="Split note… e.g. 9-12 prep"
+                  />
+                  <button type="button" onClick={() => removeAssignment(idx)}
+                    className="p-1 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               );
             })}
           </div>
         )}
+
+        {/* Add new assignment row */}
+        {availableEmps.length > 0 ? (
+          <div className="flex items-center gap-2 p-2 rounded-xl border border-dashed border-border bg-muted/10">
+            <select value={newEmpId} onChange={e => {
+              setNewEmpId(e.target.value);
+              const emp = employees.find(x => x.id === e.target.value);
+              if (emp?.role && !newRole) setNewRole(emp.role);
+            }} className="input-field py-1 text-xs flex-1 min-w-0">
+              <option value="">Pick employee…</option>
+              {availableEmps.map(e => (
+                <option key={e.id} value={e.id}>{e.name}{e.role ? ` (${e.role})` : ''}</option>
+              ))}
+            </select>
+            <input type="text" value={newRole} onChange={e => setNewRole(e.target.value)}
+              className="input-field py-1 text-xs flex-1 min-w-0" placeholder="Role…" />
+            <input type="text" value={newNote} onChange={e => setNewNote(e.target.value)}
+              className="input-field py-1 text-xs flex-1 min-w-0 hidden sm:block" placeholder="Split note…" />
+            <button type="button" onClick={addAssignment}
+              className="p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors shrink-0">
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : activeEmployees.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">Add employees first.</p>
+        ) : (
+          <p className="text-xs text-muted-foreground italic">All active employees assigned.</p>
+        )}
+
+        <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
+          <Info className="w-3 h-3 shrink-0" />
+          Split note: e.g. "07–10 prep cook, rest line cook" for partial role changes within the shift.
+        </p>
+      </div>
+
+      {/* Min staff + notes */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="form-label">Min. staff required</label>
+          <input type="number" min={0} max={50} value={form.minStaff} onChange={e => setForm(f => ({...f, minStaff: Number(e.target.value)}))} className="input-field w-full" />
+        </div>
+        <div>
+          <label className="form-label">Shift hours</label>
+          <div className="input-field bg-muted text-muted-foreground cursor-default">
+            {shiftHours(form.startTime, form.endTime)}h per person
+          </div>
+        </div>
       </div>
       <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Min. staff required</label>
-        <input type="number" min={0} max={50} value={form.minStaff}
-          onChange={e => setForm(f => ({ ...f, minStaff: Number(e.target.value) }))}
-          className="input-field w-28" />
+        <label className="form-label">Shift notes</label>
+        <textarea rows={2} value={form.notes} onChange={e => setForm(f => ({...f, notes: e.target.value}))} className="input-field w-full resize-none" placeholder="Optional notes for the team…" />
       </div>
-      <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Notes</label>
-        <textarea rows={2} value={form.notes}
-          onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-          className="input-field w-full resize-none" placeholder="Optional notes…" />
-      </div>
+
       <div className="flex gap-2 pt-1">
         <button type="button" onClick={onClose} className="btn-ghost px-4">Cancel</button>
         <button type="submit" className="btn-primary flex-1">Save shift</button>
@@ -600,73 +589,50 @@ function ShiftForm({ initial, initialDate, employees, templates = [], onSave, on
 
 // ─── Shift template form ───────────────────────────────────────────────────────
 
-interface ShiftTemplateFormProps {
+function ShiftTemplateForm({ initial, onSave, onClose }: {
   initial?: ShiftTemplate;
   onSave: (data: Omit<ShiftTemplate, 'id'>) => void;
   onClose: () => void;
-}
-
-function ShiftTemplateForm({ initial, onSave, onClose }: ShiftTemplateFormProps) {
+}) {
   const [form, setForm] = useState({
-    name:      initial?.name      ?? '',
-    startTime: initial?.startTime ?? '09:00',
-    endTime:   initial?.endTime   ?? '17:00',
-    role:      initial?.role      ?? '',
-    color:     initial?.color     ?? PRESET_COLORS[0],
+    name: initial?.name ?? '', startTime: initial?.startTime ?? '09:00',
+    endTime: initial?.endTime ?? '17:00', role: initial?.role ?? '', color: initial?.color ?? PRESET_COLORS[0],
   });
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!form.name.trim()) return;
-    onSave(form);
-  }
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={e => {
+      e.preventDefault();
+      if (!form.name.trim()) return;
+      onSave(form);
+    }} className="space-y-4">
       <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Template name *</label>
-        <input type="text" required value={form.name}
-          onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-          className="input-field w-full" placeholder="Morning, Kitchen AM, Bar PM…" />
+        <label className="form-label">Template name *</label>
+        <input type="text" required value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} className="input-field w-full" placeholder="Morning, Kitchen AM, Bar PM…" />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Start</label>
-          <input type="time" value={form.startTime}
-            onChange={e => setForm(f => ({ ...f, startTime: e.target.value }))}
-            className="input-field w-full" />
+          <label className="form-label">Start</label>
+          <input type="time" value={form.startTime} onChange={e => setForm(f => ({...f, startTime: e.target.value}))} className="input-field w-full" />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">End</label>
-          <input type="time" value={form.endTime}
-            onChange={e => setForm(f => ({ ...f, endTime: e.target.value }))}
-            className="input-field w-full" />
+          <label className="form-label">End</label>
+          <input type="time" value={form.endTime} onChange={e => setForm(f => ({...f, endTime: e.target.value}))} className="input-field w-full" />
         </div>
       </div>
       <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Default role label</label>
-        <input type="text" value={form.role}
-          onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
-          className="input-field w-full" placeholder="Kitchen, Bar, Floor…" />
-      </div>
-      <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Color</label>
+        <label className="form-label">Color</label>
         <div className="flex gap-2 flex-wrap">
           {PRESET_COLORS.map(c => (
-            <button key={c} type="button"
-              onClick={() => setForm(f => ({ ...f, color: c }))}
-              className={`w-8 h-8 rounded-xl border-2 transition-all ${form.color === c ? 'border-foreground scale-110 shadow-md' : 'border-transparent hover:scale-105'}`}
+            <button key={c} type="button" onClick={() => setForm(f => ({...f, color: c}))}
+              className={`w-8 h-8 rounded-xl border-2 transition-all ${form.color === c ? 'border-foreground scale-110 shadow-md' : 'border-transparent'}`}
               style={{ backgroundColor: c }} />
           ))}
         </div>
       </div>
-      {/* Preview */}
       <div className="p-3 rounded-xl bg-muted/30 border border-border">
         <p className="text-[10px] text-muted-foreground mb-1">Preview</p>
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-white"
-          style={{ backgroundColor: form.color }}>
-          {form.name || 'Template'}
-          <span className="opacity-75">{form.startTime}–{form.endTime}</span>
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-white" style={{ backgroundColor: form.color }}>
+          {form.name || 'Template'} <span className="opacity-75">{form.startTime}–{form.endTime}</span>
         </span>
       </div>
       <div className="flex gap-2 pt-1">
@@ -677,15 +643,161 @@ function ShiftTemplateForm({ initial, onSave, onClose }: ShiftTemplateFormProps)
   );
 }
 
+// ─── Work Log view ─────────────────────────────────────────────────────────────
+
+function WorkLog({ shifts, employees }: { shifts: Shift[]; employees: Employee[] }) {
+  const [filterEmpId, setFilterEmpId] = useState('');
+  const [filterDays, setFilterDays]   = useState(30);
+
+  const empMap = useMemo(() => new Map(employees.map(e => [e.id, e])), [employees]);
+
+  const cutoff = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - filterDays);
+    return isoDate(d);
+  }, [filterDays]);
+
+  // Flatten: one row per assignment in a past/today shift
+  const rows = useMemo(() => {
+    const result: { shift: Shift; assignment: ShiftAssignment; emp: Employee; hours: number }[] = [];
+    for (const shift of shifts) {
+      if (shift.date > today()) continue;
+      if (shift.date < cutoff) continue;
+      for (const a of shift.assignments) {
+        if (filterEmpId && a.employeeId !== filterEmpId) continue;
+        const emp = empMap.get(a.employeeId);
+        if (!emp) continue;
+        result.push({ shift, assignment: a, emp, hours: shiftHours(shift.startTime, shift.endTime) });
+      }
+    }
+    return result.sort((a, b) => b.shift.date.localeCompare(a.shift.date));
+  }, [shifts, empMap, filterEmpId, cutoff]);
+
+  // Per-employee totals
+  const totals = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of rows) {
+      map.set(r.emp.id, (map.get(r.emp.id) ?? 0) + r.hours);
+    }
+    return Array.from(map.entries())
+      .map(([id, hours]) => ({ emp: empMap.get(id)!, hours }))
+      .filter(t => t.emp)
+      .sort((a, b) => b.hours - a.hours);
+  }, [rows, empMap]);
+
+  return (
+    <div className="space-y-4">
+      {/* Filters */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <select value={filterEmpId} onChange={e => setFilterEmpId(e.target.value)} className="input-field text-sm py-1.5">
+          <option value="">All employees</option>
+          {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+        </select>
+        <select value={filterDays} onChange={e => setFilterDays(Number(e.target.value))} className="input-field text-sm py-1.5">
+          <option value={7}>Last 7 days</option>
+          <option value={14}>Last 14 days</option>
+          <option value={30}>Last 30 days</option>
+          <option value={90}>Last 90 days</option>
+        </select>
+        <span className="text-xs text-muted-foreground ml-auto">{rows.length} records</span>
+      </div>
+
+      {/* Totals bar */}
+      {totals.length > 0 && (
+        <div className="glass-card p-4">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Hours summary</p>
+          <div className="flex flex-wrap gap-3">
+            {totals.map(t => (
+              <div key={t.emp.id} className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
+                  style={{ backgroundColor: t.emp.color }}>
+                  {initials(t.emp.name)}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold leading-none">{t.emp.name}</p>
+                  <p className="text-[11px] text-muted-foreground">{t.hours}h</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Log table */}
+      {rows.length === 0 ? (
+        <div className="glass-card p-10 text-center">
+          <History className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
+          <p className="text-muted-foreground font-semibold">No work log entries</p>
+          <p className="text-sm text-muted-foreground mt-1">Shifts from the past will appear here once staff are assigned.</p>
+        </div>
+      ) : (
+        <div className="glass-card overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/30">
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Date</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Shift</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Employee</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Role</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground hidden sm:table-cell">Note</th>
+                <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Hours</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {rows.map((r, idx) => (
+                <tr key={idx} className="hover:bg-muted/20 transition-colors">
+                  <td className="px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
+                    {new Date(r.shift.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: r.shift.color }} />
+                      <div>
+                        <p className="text-xs font-medium">{r.shift.name}</p>
+                        <p className="text-[10px] text-muted-foreground font-mono">{r.shift.startTime}–{r.shift.endTime}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0"
+                        style={{ backgroundColor: r.emp.color }}>
+                        {initials(r.emp.name)}
+                      </div>
+                      <span className="text-xs font-medium">{r.emp.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-muted font-medium">{r.assignment.role}</span>
+                  </td>
+                  <td className="px-4 py-2.5 hidden sm:table-cell">
+                    {r.assignment.roleNote && (
+                      <span className="text-[11px] text-muted-foreground italic">{r.assignment.roleNote}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <span className="text-xs font-semibold text-foreground">{r.hours}h</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main page ─────────────────────────────────────────────────────────────────
 
 type Tab = 'calendar' | 'packages' | 'roster' | 'settings';
+type RosterView = 'grid' | 'log';
 
 export default function CalendarPage() {
   const {
     calendarEvents, eventPackages, calendarSettings, settings, user,
     employees, shifts,
-    addCalendarEvent, updateCalendarEvent: _updateCalendarEvent, deleteCalendarEvent,
+    addCalendarEvent, deleteCalendarEvent,
     approveCalendarEvent, rejectCalendarEvent,
     addEventPackage, updateEventPackage, deleteEventPackage,
     updateCalendarSettings,
@@ -700,7 +812,6 @@ export default function CalendarPage() {
     employees:            s.employees,
     shifts:               s.shifts,
     addCalendarEvent:     s.addCalendarEvent,
-    updateCalendarEvent:  s.updateCalendarEvent,
     deleteCalendarEvent:  s.deleteCalendarEvent,
     approveCalendarEvent: s.approveCalendarEvent,
     rejectCalendarEvent:  s.rejectCalendarEvent,
@@ -718,17 +829,18 @@ export default function CalendarPage() {
 
   const sym = settings.currencySymbol;
   const shiftTemplates = calendarSettings.shiftTemplates ?? [];
+  const stations = settings.stations ?? [];
 
-  const [tab, setTab]           = useState<Tab>('calendar');
+  const [tab, setTab]             = useState<Tab>('calendar');
+  const [rosterView, setRosterView] = useState<RosterView>('grid');
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState<string>(today());
+  const [selectedDate, setSelectedDate] = useState(today());
   const [showEventForm, setShowEventForm]     = useState(false);
   const [showPackageForm, setShowPackageForm] = useState(false);
   const [editingPackage, setEditingPackage]   = useState<EventPackage | null>(null);
-  const [rejectId, setRejectId] = useState<string | null>(null);
+  const [rejectId, setRejectId]   = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
-  // Roster state
   const [rosterWeekOffset, setRosterWeekOffset] = useState(0);
   const [showEmployeeForm, setShowEmployeeForm]   = useState(false);
   const [editingEmployee, setEditingEmployee]     = useState<Employee | null>(null);
@@ -738,7 +850,7 @@ export default function CalendarPage() {
   const [showTemplateForm, setShowTemplateForm]   = useState(false);
   const [editingTemplate, setEditingTemplate]     = useState<ShiftTemplate | null>(null);
 
-  // ── Calendar grid helpers ────────────────────────────────────────────────────
+  // ── Calendar helpers ─────────────────────────────────────────────────────────
 
   const year  = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -747,10 +859,7 @@ export default function CalendarPage() {
 
   const eventsByDate = useMemo(() => {
     const map: Record<string, CalendarEvent[]> = {};
-    calendarEvents.forEach(e => {
-      if (!map[e.date]) map[e.date] = [];
-      map[e.date].push(e);
-    });
+    calendarEvents.forEach(e => { if (!map[e.date]) map[e.date] = []; map[e.date].push(e); });
     return map;
   }, [calendarEvents]);
 
@@ -759,11 +868,11 @@ export default function CalendarPage() {
     [calendarEvents],
   );
 
-  function isWorkingDay(dateStr: string): boolean {
+  function isWorkingDay(dateStr: string) {
     const d = new Date(dateStr);
     const dow = d.getDay() as WorkingDay['dayOfWeek'];
-    const exception = calendarSettings.workingExceptions.find(ex => ex.date === dateStr);
-    if (exception) return !exception.isClosed;
+    const exc = calendarSettings.workingExceptions.find(ex => ex.date === dateStr);
+    if (exc) return !exc.isClosed;
     return calendarSettings.workingDays.find(wd => wd.dayOfWeek === dow)?.isOpen ?? false;
   }
 
@@ -791,78 +900,47 @@ export default function CalendarPage() {
     return map;
   }, [shifts]);
 
-  const employeeMap = useMemo(() => {
-    const map = new Map<string, Employee>();
-    for (const emp of employees) map.set(emp.id, emp);
-    return map;
-  }, [employees]);
+  const employeeMap = useMemo(() => new Map(employees.map(e => [e.id, e])), [employees]);
 
   const rosterLink = `${window.location.origin}/roster/${settings.restaurantToken}`;
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
-  function prevMonth() { setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() - 1, 1)); }
-  function nextMonth() { setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() + 1, 1)); }
-
   function handleApprove(id: string) {
     approveCalendarEvent(id, user?.name ?? 'Manager');
-    toast.success('Request approved');
+    toast.success('Approved');
   }
   function handleReject() {
     if (!rejectId) return;
     rejectCalendarEvent(rejectId, rejectReason);
-    setRejectId(null);
-    setRejectReason('');
-    toast.success('Request rejected');
-  }
-  function handleDeleteEvent(id: string) {
-    if (confirm('Delete this event?')) deleteCalendarEvent(id);
+    setRejectId(null); setRejectReason('');
+    toast.success('Rejected');
   }
 
   function updateWorkingDay(dow: number, updates: Partial<WorkingDay>) {
     updateCalendarSettings({
-      workingDays: calendarSettings.workingDays.map(d =>
-        d.dayOfWeek === dow ? { ...d, ...updates } : d,
-      ),
+      workingDays: calendarSettings.workingDays.map(d => d.dayOfWeek === dow ? { ...d, ...updates } : d),
     });
   }
 
   function addException() {
     const date = prompt('Enter date (YYYY-MM-DD):');
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
-    if (calendarSettings.workingExceptions.find(e => e.date === date)) {
-      toast.error('Exception already exists for that date'); return;
-    }
-    const note = prompt('Note (e.g. Christmas, Private party):') ?? '';
-    const isClosed = confirm('Mark as CLOSED? (Cancel = custom hours)');
+    if (calendarSettings.workingExceptions.find(e => e.date === date)) { toast.error('Already exists'); return; }
+    const note = prompt('Note:') ?? '';
+    const isClosed = confirm('Mark as CLOSED?');
     updateCalendarSettings({
-      workingExceptions: [
-        ...calendarSettings.workingExceptions,
-        { id: crypto.randomUUID(), date, isClosed, note, openTime: '09:00', closeTime: '22:00' },
-      ],
+      workingExceptions: [...calendarSettings.workingExceptions, { id: crypto.randomUUID(), date, isClosed, note, openTime: '09:00', closeTime: '22:00' }],
     });
   }
 
-  function removeException(id: string) {
-    updateCalendarSettings({
-      workingExceptions: calendarSettings.workingExceptions.filter(e => e.id !== id),
-    });
-  }
-
-  // Template CRUD
   function saveTemplate(data: Omit<ShiftTemplate, 'id'>) {
     const next = editingTemplate
       ? shiftTemplates.map(t => t.id === editingTemplate.id ? { ...data, id: t.id } : t)
       : [...shiftTemplates, { ...data, id: crypto.randomUUID() }];
     updateCalendarSettings({ shiftTemplates: next });
-    setShowTemplateForm(false);
-    setEditingTemplate(null);
+    setShowTemplateForm(false); setEditingTemplate(null);
     toast.success(editingTemplate ? 'Template updated' : 'Template created');
-  }
-
-  function deleteTemplate(id: string) {
-    updateCalendarSettings({ shiftTemplates: shiftTemplates.filter(t => t.id !== id) });
-    toast.success('Template removed');
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -871,20 +949,20 @@ export default function CalendarPage() {
 
   return (
     <DashboardLayout>
+      <style>{`.form-label { display: block; font-size: 0.75rem; font-weight: 500; color: hsl(var(--muted-foreground)); margin-bottom: 0.25rem; }`}</style>
       <div className="space-y-5">
 
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <h1 className="font-display text-2xl font-bold">Calendar</h1>
-            <p className="text-muted-foreground text-sm mt-0.5">Reservations, events & working hours</p>
+            <p className="text-muted-foreground text-sm mt-0.5">Reservations, events & staff roster</p>
           </div>
           <div className="flex items-center gap-2">
             {pendingEvents.length > 0 && (
               <button onClick={() => setTab('calendar')}
                 className="flex items-center gap-1.5 text-xs font-semibold text-warning px-2.5 py-1.5 bg-warning/10 rounded-lg border border-warning/20 hover:bg-warning/15 transition-colors">
-                <AlertCircle className="w-3.5 h-3.5" />
-                {pendingEvents.length} pending
+                <AlertCircle className="w-3.5 h-3.5" /> {pendingEvents.length} pending
               </button>
             )}
             {tab === 'calendar' && (
@@ -897,15 +975,19 @@ export default function CalendarPage() {
                 <Plus className="w-4 h-4" /> New package
               </button>
             )}
-            {tab === 'roster' && (
+            {tab === 'roster' && rosterView === 'grid' && (
               <div className="flex gap-2">
-                <button onClick={() => { navigator.clipboard.writeText(rosterLink); toast.success('Roster link copied!'); }}
+                <button onClick={() => { navigator.clipboard.writeText(rosterLink); toast.success('Link copied!'); }}
                   className="btn-ghost flex items-center gap-1.5 text-sm">
                   <Link className="w-3.5 h-3.5" /> Staff link
                 </button>
                 <button onClick={() => { setEditingEmployee(null); setShowEmployeeForm(true); }}
+                  className="btn-ghost flex items-center gap-1.5 text-sm">
+                  <UserPlus className="w-4 h-4" /> Employee
+                </button>
+                <button onClick={() => { setEditingShift(null); setShiftInitDate(today()); setShowShiftForm(true); }}
                   className="btn-primary flex items-center gap-1.5">
-                  <UserPlus className="w-4 h-4" /> Add employee
+                  <Plus className="w-4 h-4" /> Shift
                 </button>
               </div>
             )}
@@ -914,22 +996,16 @@ export default function CalendarPage() {
 
         {/* Tabs */}
         <div className="flex gap-0 border-b border-border overflow-x-auto">
-          {(['calendar', 'packages', 'roster', 'settings'] as Tab[]).map(t => (
+          {(['calendar','packages','roster','settings'] as Tab[]).map(t => (
             <button key={t} onClick={() => setTab(t)}
-              className={`px-4 py-2.5 text-sm font-semibold capitalize transition-colors border-b-2 -mb-px whitespace-nowrap ${
-                tab === t
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}>
-              {t === 'calendar' && <CalendarDays className="w-3.5 h-3.5 inline mr-1.5" />}
-              {t === 'packages' && <Package className="w-3.5 h-3.5 inline mr-1.5" />}
-              {t === 'roster'   && <Users className="w-3.5 h-3.5 inline mr-1.5" />}
-              {t === 'settings' && <Settings2 className="w-3.5 h-3.5 inline mr-1.5" />}
+              className={`px-4 py-2.5 text-sm font-semibold capitalize transition-colors border-b-2 -mb-px whitespace-nowrap flex items-center gap-1.5 ${tab === t ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+              {t === 'calendar' && <CalendarDays className="w-3.5 h-3.5" />}
+              {t === 'packages' && <Package className="w-3.5 h-3.5" />}
+              {t === 'roster'   && <Users className="w-3.5 h-3.5" />}
+              {t === 'settings' && <Settings2 className="w-3.5 h-3.5" />}
               {t}
               {t === 'calendar' && pendingEvents.length > 0 && (
-                <span className="ml-1.5 text-[10px] bg-warning text-white px-1.5 py-0.5 rounded-full font-bold">
-                  {pendingEvents.length}
-                </span>
+                <span className="text-[10px] bg-warning text-white px-1.5 py-0.5 rounded-full font-bold">{pendingEvents.length}</span>
               )}
             </button>
           ))}
@@ -938,177 +1014,111 @@ export default function CalendarPage() {
         {/* ── CALENDAR TAB ── */}
         {tab === 'calendar' && (
           <div className="grid lg:grid-cols-3 gap-5">
-
-            {/* Month view */}
             <div className="lg:col-span-2 glass-card p-5">
               <div className="flex items-center justify-between mb-4">
-                <button onClick={prevMonth} className="p-2 rounded-xl hover:bg-muted transition-colors">
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <h2 className="font-display font-bold text-lg">
-                  {MONTH_NAMES[month]} {year}
-                </h2>
-                <button onClick={nextMonth} className="p-2 rounded-xl hover:bg-muted transition-colors">
-                  <ChevronRight className="w-4 h-4" />
-                </button>
+                <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()-1, 1))} className="p-2 rounded-xl hover:bg-muted transition-colors"><ChevronLeft className="w-4 h-4" /></button>
+                <h2 className="font-display font-bold text-lg">{MONTH_NAMES[month]} {year}</h2>
+                <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()+1, 1))} className="p-2 rounded-xl hover:bg-muted transition-colors"><ChevronRight className="w-4 h-4" /></button>
               </div>
-
               <div className="grid grid-cols-7 mb-1">
-                {DAY_NAMES.map(d => (
-                  <div key={d} className="text-center text-[11px] font-semibold text-muted-foreground py-1">{d}</div>
-                ))}
+                {DAY_NAMES.map(d => <div key={d} className="text-center text-[11px] font-semibold text-muted-foreground py-1">{d}</div>)}
               </div>
-
               <div className="grid grid-cols-7 gap-px bg-border rounded-xl overflow-hidden">
-                {Array.from({ length: firstDay }).map((_, i) => (
-                  <div key={`blank-${i}`} className="bg-card h-14 sm:h-16" />
-                ))}
-                {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
-                  const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                  const dayEvents  = eventsByDate[dateStr] ?? [];
-                  const isToday    = dateStr === today();
-                  const isSelected = dateStr === selectedDate;
-                  const working    = isWorkingDay(dateStr);
-                  const hasPending = dayEvents.some(e => e.status === 'pending');
-
+                {Array.from({length: firstDay}).map((_, i) => <div key={`b${i}`} className="bg-card h-14 sm:h-16" />)}
+                {Array.from({length: daysInMonth}, (_, i) => i+1).map(day => {
+                  const ds = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                  const evs = eventsByDate[ds] ?? [];
+                  const isToday = ds === today();
                   return (
-                    <button key={day} onClick={() => setSelectedDate(dateStr)}
-                      className={`bg-card h-14 sm:h-16 p-1.5 flex flex-col items-start transition-colors hover:bg-muted/50 ${
-                        isSelected ? 'ring-2 ring-inset ring-primary' : ''
-                      } ${!working ? 'opacity-40' : ''}`}>
-                      <span className={`text-xs font-semibold w-5 h-5 flex items-center justify-center rounded-full ${
-                        isToday ? 'bg-primary text-primary-foreground' : 'text-foreground'
-                      }`}>
-                        {day}
-                      </span>
+                    <button key={day} onClick={() => setSelectedDate(ds)}
+                      className={`bg-card h-14 sm:h-16 p-1.5 flex flex-col items-start transition-colors hover:bg-muted/50 ${ds === selectedDate ? 'ring-2 ring-inset ring-primary' : ''} ${!isWorkingDay(ds) ? 'opacity-40' : ''}`}>
+                      <span className={`text-xs font-semibold w-5 h-5 flex items-center justify-center rounded-full ${isToday ? 'bg-primary text-primary-foreground' : ''}`}>{day}</span>
                       <div className="flex flex-wrap gap-0.5 mt-0.5">
-                        {hasPending && <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" />}
-                        {dayEvents.filter(e => e.status === 'approved').length > 0 && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-success shrink-0" />
-                        )}
-                        {dayEvents.some(e => e.type === 'closure') && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-destructive shrink-0" />
-                        )}
+                        {evs.some(e => e.status==='pending') && <span className="w-1.5 h-1.5 rounded-full bg-warning" />}
+                        {evs.some(e => e.status==='approved') && <span className="w-1.5 h-1.5 rounded-full bg-success" />}
+                        {evs.some(e => e.type==='closure') && <span className="w-1.5 h-1.5 rounded-full bg-destructive" />}
                       </div>
-                      {dayEvents.length > 0 && (
-                        <span className="text-[9px] text-muted-foreground mt-auto">
-                          {dayEvents.length} event{dayEvents.length !== 1 ? 's' : ''}
-                        </span>
-                      )}
+                      {evs.length > 0 && <span className="text-[9px] text-muted-foreground mt-auto">{evs.length}ev</span>}
                     </button>
                   );
                 })}
               </div>
-
               <div className="flex gap-4 mt-3 text-[11px] text-muted-foreground flex-wrap">
                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-success" /> Approved</span>
                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-warning" /> Pending</span>
                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-destructive" /> Blocked</span>
-                <span className="flex items-center gap-1 ml-auto opacity-50">Greyed = closed day</span>
               </div>
             </div>
 
-            {/* Right panel */}
             <div className="space-y-4">
-
-              {/* Selected day */}
               <div className="glass-card p-4">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="font-display font-semibold text-sm">
-                    {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                    {new Date(selectedDate+'T12:00:00').toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'})}
                   </h3>
-                  <button onClick={() => setShowEventForm(true)}
-                    className="text-primary hover:underline text-xs font-semibold flex items-center gap-0.5">
+                  <button onClick={() => setShowEventForm(true)} className="text-primary text-xs font-semibold flex items-center gap-0.5 hover:underline">
                     <Plus className="w-3 h-3" /> Add
                   </button>
                 </div>
-
                 {selectedDayEvents.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No events on this day.</p>
+                  <p className="text-sm text-muted-foreground">No events.</p>
                 ) : (
                   <div className="space-y-2">
-                    {selectedDayEvents
-                      .sort((a, b) => a.timeSlot.localeCompare(b.timeSlot))
-                      .map(ev => (
-                        <div key={ev.id} className="p-3 rounded-xl border border-border bg-muted/20">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-                                <span className="text-sm">{TYPE_EMOJI[ev.type]}</span>
-                                <span className="text-xs font-semibold truncate">
-                                  {ev.type === 'closure' ? (ev.closureReason || 'Closed') : ev.customerName}
-                                </span>
-                                <StatusBadge status={ev.status} />
-                              </div>
-                              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                                <span><Clock className="w-3 h-3 inline" /> {ev.timeSlot}{ev.endTime ? `–${ev.endTime}` : ''}</span>
-                                {ev.guestCount > 0 && <span><Users className="w-3 h-3 inline" /> {ev.guestCount}</span>}
-                              </div>
-                              {ev.packageName && (
-                                <span className="text-[10px] text-primary font-medium">{ev.packageName}</span>
-                              )}
+                    {selectedDayEvents.sort((a,b) => a.timeSlot.localeCompare(b.timeSlot)).map(ev => (
+                      <div key={ev.id} className="p-3 rounded-xl border border-border bg-muted/20">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                              <span className="text-sm">{TYPE_EMOJI[ev.type]}</span>
+                              <span className="text-xs font-semibold truncate">{ev.type==='closure' ? ev.closureReason||'Closed' : ev.customerName}</span>
+                              <StatusBadge status={ev.status} />
                             </div>
-                            <div className="flex gap-1 shrink-0">
-                              {ev.status === 'pending' && (
-                                <>
-                                  <button onClick={() => handleApprove(ev.id)}
-                                    className="p-1.5 rounded-lg bg-success/10 text-success hover:bg-success/20 transition-colors">
-                                    <Check className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button onClick={() => setRejectId(ev.id)}
-                                    className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors">
-                                    <X className="w-3.5 h-3.5" />
-                                  </button>
-                                </>
-                              )}
-                              <button onClick={() => handleDeleteEvent(ev.id)}
-                                className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                              <span><Clock className="w-3 h-3 inline" /> {ev.timeSlot}{ev.endTime ? `–${ev.endTime}` : ''}</span>
+                              {ev.guestCount > 0 && <span><Users className="w-3 h-3 inline" /> {ev.guestCount}</span>}
                             </div>
+                            {ev.packageName && <span className="text-[10px] text-primary font-medium">{ev.packageName}</span>}
                           </div>
-                          {ev.notes && <p className="text-[11px] text-muted-foreground mt-1 truncate">{ev.notes}</p>}
+                          <div className="flex gap-1 shrink-0">
+                            {ev.status === 'pending' && (
+                              <>
+                                <button onClick={() => handleApprove(ev.id)} className="p-1.5 rounded-lg bg-success/10 text-success hover:bg-success/20"><Check className="w-3.5 h-3.5" /></button>
+                                <button onClick={() => setRejectId(ev.id)} className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20"><X className="w-3.5 h-3.5" /></button>
+                              </>
+                            )}
+                            <button onClick={() => { if(confirm('Delete event?')) deleteCalendarEvent(ev.id); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><Trash2 className="w-3.5 h-3.5" /></button>
+                          </div>
                         </div>
-                      ))}
+                        {ev.notes && <p className="text-[11px] text-muted-foreground mt-1 truncate">{ev.notes}</p>}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
 
-              {/* Pending queue */}
               {pendingEvents.length > 0 && (
                 <div className="glass-card p-4">
                   <h3 className="font-display font-semibold text-sm mb-3 flex items-center gap-1.5">
-                    <AlertCircle className="w-3.5 h-3.5 text-warning" />
-                    Pending ({pendingEvents.length})
+                    <AlertCircle className="w-3.5 h-3.5 text-warning" /> Pending ({pendingEvents.length})
                   </h3>
                   <div className="space-y-2">
-                    {pendingEvents.slice(0, 5).map(ev => (
+                    {pendingEvents.slice(0,5).map(ev => (
                       <div key={ev.id} className="p-2.5 rounded-xl bg-warning/5 border border-warning/20">
                         <div className="flex items-center justify-between gap-2">
                           <div className="min-w-0">
                             <p className="text-xs font-semibold truncate">{ev.customerName}</p>
                             <p className="text-[11px] text-muted-foreground">
-                              {new Date(ev.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · {ev.timeSlot} · {ev.guestCount} guests
+                              {new Date(ev.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})} · {ev.timeSlot} · {ev.guestCount} guests
                             </p>
                           </div>
                           <div className="flex gap-1 shrink-0">
-                            <button onClick={() => handleApprove(ev.id)}
-                              className="p-1.5 rounded-lg bg-success/10 text-success hover:bg-success/20 transition-colors">
-                              <Check className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => setRejectId(ev.id)}
-                              className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors">
-                              <X className="w-3.5 h-3.5" />
-                            </button>
+                            <button onClick={() => handleApprove(ev.id)} className="p-1.5 rounded-lg bg-success/10 text-success hover:bg-success/20"><Check className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setRejectId(ev.id)} className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20"><X className="w-3.5 h-3.5" /></button>
                           </div>
                         </div>
-                        {ev.packageName && <p className="text-[10px] text-primary mt-0.5">{ev.packageName}</p>}
-                        {ev.notes && <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{ev.notes}</p>}
                       </div>
                     ))}
-                    {pendingEvents.length > 5 && (
-                      <p className="text-[11px] text-muted-foreground text-center">+{pendingEvents.length - 5} more</p>
-                    )}
+                    {pendingEvents.length > 5 && <p className="text-[11px] text-muted-foreground text-center">+{pendingEvents.length-5} more</p>}
                   </div>
                 </div>
               )}
@@ -1119,18 +1129,12 @@ export default function CalendarPage() {
         {/* ── PACKAGES TAB ── */}
         {tab === 'packages' && (
           <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Create event packages customers can select when booking (birthday, wedding, etc.)
-            </p>
-
+            <p className="text-sm text-muted-foreground">Create event packages customers can select when booking.</p>
             {eventPackages.length === 0 ? (
               <div className="glass-card p-12 text-center">
                 <Star className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
                 <p className="font-semibold text-muted-foreground">No packages yet</p>
-                <p className="text-sm text-muted-foreground mt-1 mb-4">Create your first event package — birthday parties, weddings, corporate events…</p>
-                <button onClick={() => { setEditingPackage(null); setShowPackageForm(true); }} className="btn-primary">
-                  <Plus className="w-4 h-4 inline mr-1.5" /> New package
-                </button>
+                <button onClick={() => { setEditingPackage(null); setShowPackageForm(true); }} className="btn-primary mt-4"><Plus className="w-4 h-4 inline mr-1.5" />New package</button>
               </div>
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1145,26 +1149,17 @@ export default function CalendarPage() {
                         </div>
                       </div>
                       <div className="flex gap-1 shrink-0">
-                        <button onClick={() => { setEditingPackage(pkg); setShowPackageForm(true); }}
-                          className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={() => { if (confirm('Delete package?')) deleteEventPackage(pkg.id); }}
-                          className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <button onClick={() => { setEditingPackage(pkg); setShowPackageForm(true); }} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"><Edit2 className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => { if(confirm('Delete?')) deleteEventPackage(pkg.id); }} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
                     </div>
                     {pkg.description && <p className="text-xs text-muted-foreground mb-2">{pkg.description}</p>}
                     <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {pkg.minGuests}–{pkg.maxGuests}</span>
-                      <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {pkg.duration}h</span>
+                      <span><Users className="w-3 h-3 inline" /> {pkg.minGuests}–{pkg.maxGuests}</span>
+                      <span><Clock className="w-3 h-3 inline" /> {pkg.duration}h</span>
                       {pkg.fixedPrice != null && <span className="font-semibold text-foreground">{sym}{pkg.fixedPrice}</span>}
                       {pkg.pricePerPerson != null && <span className="font-semibold text-foreground">{sym}{pkg.pricePerPerson}/person</span>}
                     </div>
-                    {pkg.details && (
-                      <p className="text-[11px] text-muted-foreground mt-2 line-clamp-2">{pkg.details}</p>
-                    )}
                   </div>
                 ))}
               </div>
@@ -1174,261 +1169,197 @@ export default function CalendarPage() {
 
         {/* ── ROSTER TAB ── */}
         {tab === 'roster' && (
-          <div className="space-y-5">
-
-            {/* Template quick-add bar */}
-            {shiftTemplates.length > 0 && (
-              <div className="glass-card p-3">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1 shrink-0">
-                    <Zap className="w-3 h-3" /> Templates:
-                  </span>
-                  {shiftTemplates.map(t => (
-                    <button key={t.id}
-                      onClick={() => { setEditingShift(null); setShiftInitDate(undefined); setShowShiftForm(true); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all hover:opacity-80 hover:scale-105 active:scale-95"
-                      style={{ backgroundColor: t.color }}
-                      title={`${t.name}: ${t.startTime}–${t.endTime}`}>
-                      {t.name}
-                      <span className="opacity-80 font-normal">{t.startTime}–{t.endTime}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Employee cards */}
-            {employees.length === 0 ? (
-              <div className="glass-card p-10 text-center">
-                <Users className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
-                <p className="font-semibold text-muted-foreground">No employees yet</p>
-                <p className="text-sm text-muted-foreground mt-1 mb-4">Add your staff to start building the roster.</p>
-                <button onClick={() => { setEditingEmployee(null); setShowEmployeeForm(true); }} className="btn-primary">
-                  <UserPlus className="w-4 h-4 inline mr-1.5" /> Add first employee
+          <div className="space-y-4">
+            {/* Sub-tab switcher */}
+            <div className="flex items-center gap-1 bg-muted/50 p-1 rounded-xl w-fit">
+              {([['grid','Schedule',LayoutGrid],['log','Work Log',History]] as const).map(([v, label, Icon]) => (
+                <button key={v} onClick={() => setRosterView(v as RosterView)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${rosterView === v ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                  <Icon className="w-3.5 h-3.5" /> {label}
                 </button>
-              </div>
-            ) : (
-              <div>
-                <h3 className="font-semibold text-sm text-muted-foreground mb-3 flex items-center gap-1.5">
-                  <Users className="w-4 h-4" /> Team ({employees.filter(e => e.active).length} active)
-                </h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                  {employees.map(emp => {
-                    const weekShifts = rosterWeekDays.filter(d =>
-                      (shiftsByDate.get(d) ?? []).some(s => s.employeeIds.includes(emp.id))
-                    ).length;
+              ))}
+            </div>
 
-                    return (
-                      <div key={emp.id}
-                        className={`group relative rounded-2xl overflow-hidden border-2 transition-all hover:shadow-md ${
-                          !emp.active ? 'opacity-50' : 'border-transparent hover:border-border'
-                        }`}
-                        style={{ borderColor: emp.active ? `${emp.color}30` : undefined }}>
-                        {/* Color header */}
-                        <div className="h-12 flex items-center justify-center relative"
-                          style={{ backgroundColor: `${emp.color}20` }}>
-                          <div className="w-12 h-12 rounded-full border-4 border-card flex items-center justify-center text-base font-bold text-white absolute -bottom-6 shadow-sm"
-                            style={{ backgroundColor: emp.color }}>
+            {/* ── SCHEDULE GRID ── */}
+            {rosterView === 'grid' && (
+              <>
+                {/* Employee legend / team bar */}
+                {employees.length > 0 && (
+                  <div className="glass-card p-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-semibold text-muted-foreground shrink-0">Team:</span>
+                      {employees.filter(e => e.active).map(emp => (
+                        <button key={emp.id}
+                          onClick={() => { setEditingEmployee(emp); setShowEmployeeForm(true); }}
+                          className="group flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border hover:border-current transition-colors text-xs font-medium"
+                          style={{ color: emp.color }}>
+                          <span className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white" style={{ backgroundColor: emp.color }}>
                             {initials(emp.name)}
-                          </div>
-                        </div>
-                        {/* Card body */}
-                        <div className="pt-8 pb-3 px-3 text-center bg-card">
-                          <p className="font-semibold text-sm truncate">{emp.name}</p>
-                          {emp.role && <p className="text-[11px] text-muted-foreground truncate">{emp.role}</p>}
-                          {weekShifts > 0 && (
-                            <p className="text-[10px] text-primary font-medium mt-1">{weekShifts}d this week</p>
-                          )}
-                          {!emp.active && (
-                            <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded-full mt-1 inline-block">inactive</span>
-                          )}
-                          {(emp.phone || emp.email) && (
-                            <div className="flex items-center justify-center gap-2 mt-2 text-muted-foreground">
-                              {emp.phone && <a href={`tel:${emp.phone}`} className="hover:text-foreground transition-colors"><Phone className="w-3 h-3" /></a>}
-                              {emp.email && <a href={`mailto:${emp.email}`} className="hover:text-foreground transition-colors"><Mail className="w-3 h-3" /></a>}
-                            </div>
-                          )}
-                        </div>
-                        {/* Hover actions */}
-                        <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => { setEditingEmployee(emp); setShowEmployeeForm(true); }}
-                            className="p-1 rounded-lg bg-card/90 backdrop-blur-sm shadow-sm hover:bg-muted transition-colors text-muted-foreground">
-                            <Edit2 className="w-3 h-3" />
-                          </button>
-                          <button onClick={() => { if (confirm(`Remove ${emp.name}?`)) deleteEmployee(emp.id); }}
-                            className="p-1 rounded-lg bg-card/90 backdrop-blur-sm shadow-sm hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive">
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Weekly shift grid */}
-            <div className="glass-card p-4">
-              {/* Week navigation */}
-              <div className="flex items-center justify-between mb-4">
-                <button onClick={() => setRosterWeekOffset(w => w - 1)}
-                  className="p-2 rounded-xl hover:bg-muted transition-colors">
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <div className="text-center">
-                  <p className="font-semibold text-sm">
-                    {new Date(rosterWeekDays[0] + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    {' – '}
-                    {new Date(rosterWeekDays[6] + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                  </p>
-                  {rosterWeekOffset !== 0 && (
-                    <button onClick={() => setRosterWeekOffset(0)}
-                      className="text-xs text-primary hover:underline">back to this week</button>
-                  )}
-                </div>
-                <button onClick={() => setRosterWeekOffset(w => w + 1)}
-                  className="p-2 rounded-xl hover:bg-muted transition-colors">
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Day columns */}
-              <div className="grid grid-cols-7 gap-1.5">
-                {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((label, i) => {
-                  const dateStr   = rosterWeekDays[i];
-                  const dayShifts = shiftsByDate.get(dateStr) ?? [];
-                  const isToday   = dateStr === today();
-                  const isPast    = dateStr < today();
-
-                  return (
-                    <div key={dateStr} className={`flex flex-col gap-1.5 ${isPast && !isToday ? 'opacity-60' : ''}`}>
-                      {/* Day header */}
-                      <div className={`text-center py-1.5 rounded-xl text-xs font-semibold ${
-                        isToday ? 'bg-primary/10 text-primary ring-1 ring-primary/30' : 'text-muted-foreground'
-                      }`}>
-                        <div className="text-[10px] uppercase tracking-wide">{label}</div>
-                        <div className={`text-sm font-bold mt-0.5 ${isToday ? 'text-primary' : 'text-foreground'}`}>
-                          {new Date(dateStr + 'T12:00:00').getDate()}
-                        </div>
-                      </div>
-
-                      {/* Shift blocks */}
-                      {dayShifts.map(shift => {
-                        const assigned = shift.employeeIds
-                          .map(id => employeeMap.get(id))
-                          .filter(Boolean) as Employee[];
-                        const understaffed = assigned.length < shift.minStaff;
-                        // use primary color from first assigned employee
-                        const accentColor = assigned[0]?.color;
-
-                        return (
-                          <div key={shift.id}
-                            className={`group rounded-xl border text-xs overflow-hidden transition-all hover:shadow-sm ${
-                              understaffed
-                                ? 'border-warning/50 bg-warning/5'
-                                : 'border-border bg-card'
-                            }`}>
-                            {/* Color top stripe */}
-                            {accentColor && (
-                              <div className="h-1" style={{ backgroundColor: accentColor }} />
-                            )}
-                            <div className="p-1.5">
-                              <div className="flex items-start justify-between gap-1">
-                                <div className="min-w-0">
-                                  <p className="font-semibold truncate text-[11px]">{shift.role || 'Shift'}</p>
-                                  <p className="font-mono text-[10px] text-muted-foreground">{shift.startTime}–{shift.endTime}</p>
-                                </div>
-                                <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <button onClick={() => { setEditingShift(shift); setShowShiftForm(true); }}
-                                    className="p-0.5 rounded hover:bg-muted transition-colors text-muted-foreground">
-                                    <Edit2 className="w-2.5 h-2.5" />
-                                  </button>
-                                  <button onClick={() => { if (confirm('Delete shift?')) deleteShift(shift.id); }}
-                                    className="p-0.5 rounded hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive">
-                                    <Trash2 className="w-2.5 h-2.5" />
-                                  </button>
-                                </div>
-                              </div>
-                              {/* Employee avatar stack */}
-                              {assigned.length > 0 ? (
-                                <div className="flex -space-x-1.5 mt-1.5 flex-wrap gap-y-1">
-                                  {assigned.slice(0, 4).map(emp => (
-                                    <span key={emp.id} title={emp.name}
-                                      className="w-5 h-5 rounded-full border-2 border-card flex items-center justify-center text-[8px] font-bold text-white shrink-0"
-                                      style={{ backgroundColor: emp.color }}>
-                                      {initials(emp.name)}
-                                    </span>
-                                  ))}
-                                  {assigned.length > 4 && (
-                                    <span className="w-5 h-5 rounded-full border-2 border-card bg-muted flex items-center justify-center text-[8px] font-bold text-muted-foreground shrink-0">
-                                      +{assigned.length - 4}
-                                    </span>
-                                  )}
-                                </div>
-                              ) : (
-                                <p className="text-[10px] text-muted-foreground/60 italic mt-1">Unassigned</p>
-                              )}
-                              {understaffed && (
-                                <p className="text-[10px] text-warning font-semibold mt-1">
-                                  Need {shift.minStaff - assigned.length} more
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      {/* Add shift button */}
-                      <button
-                        onClick={() => { setEditingShift(null); setShiftInitDate(dateStr); setShowShiftForm(true); }}
-                        className="text-[10px] text-muted-foreground hover:text-primary border border-dashed border-border hover:border-primary/50 rounded-xl py-2 transition-colors text-center hover:bg-primary/5">
-                        + shift
+                          </span>
+                          {emp.name}
+                          {emp.role && <span className="text-muted-foreground font-normal group-hover:text-current transition-colors">· {emp.role}</span>}
+                        </button>
+                      ))}
+                      {employees.filter(e => !e.active).length > 0 && (
+                        <span className="text-xs text-muted-foreground/50">{employees.filter(e => !e.active).length} inactive</span>
+                      )}
+                      <button onClick={() => { setEditingEmployee(null); setShowEmployeeForm(true); }}
+                        className="ml-auto text-xs text-primary hover:underline flex items-center gap-0.5">
+                        <UserPlus className="w-3 h-3" /> Add
                       </button>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
+                  </div>
+                )}
+
+                {employees.length === 0 && (
+                  <div className="glass-card p-8 text-center">
+                    <Users className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
+                    <p className="font-semibold text-muted-foreground">No employees yet</p>
+                    <button onClick={() => { setEditingEmployee(null); setShowEmployeeForm(true); }} className="btn-primary mt-4"><UserPlus className="w-4 h-4 inline mr-1.5" />Add first employee</button>
+                  </div>
+                )}
+
+                {/* Week grid */}
+                <div className="glass-card p-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <button onClick={() => setRosterWeekOffset(w => w-1)} className="p-2 rounded-xl hover:bg-muted"><ChevronLeft className="w-4 h-4" /></button>
+                    <div className="text-center">
+                      <p className="font-semibold text-sm">
+                        {new Date(rosterWeekDays[0]+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}
+                        {' – '}
+                        {new Date(rosterWeekDays[6]+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}
+                      </p>
+                      {rosterWeekOffset !== 0 && <button onClick={() => setRosterWeekOffset(0)} className="text-xs text-primary hover:underline">This week</button>}
+                    </div>
+                    <button onClick={() => setRosterWeekOffset(w => w+1)} className="p-2 rounded-xl hover:bg-muted"><ChevronRight className="w-4 h-4" /></button>
+                  </div>
+
+                  <div className="grid grid-cols-7 gap-2">
+                    {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((label, i) => {
+                      const dateStr   = rosterWeekDays[i];
+                      const dayShifts = shiftsByDate.get(dateStr) ?? [];
+                      const isToday   = dateStr === today();
+                      const isPast    = dateStr < today();
+
+                      return (
+                        <div key={dateStr} className={`flex flex-col gap-1.5 ${isPast && !isToday ? 'opacity-60' : ''}`}>
+                          {/* Day header */}
+                          <div className={`text-center py-1.5 rounded-xl ${isToday ? 'bg-primary/10 ring-1 ring-primary/30' : ''}`}>
+                            <p className={`text-[10px] uppercase tracking-wide font-semibold ${isToday ? 'text-primary' : 'text-muted-foreground'}`}>{label}</p>
+                            <p className={`text-sm font-bold leading-none mt-0.5 ${isToday ? 'text-primary' : 'text-foreground'}`}>
+                              {new Date(dateStr+'T12:00:00').getDate()}
+                            </p>
+                          </div>
+
+                          {/* Shift blocks */}
+                          {dayShifts.map(shift => {
+                            const understaffed = shift.assignments.length < shift.minStaff;
+                            const station = stations.find(s => s.id === shift.stationId);
+
+                            return (
+                              <div key={shift.id}
+                                className={`group rounded-xl border overflow-hidden text-xs transition-all hover:shadow-sm cursor-pointer ${understaffed ? 'border-warning/50 bg-warning/5' : 'border-border bg-card'}`}
+                                onClick={() => { setEditingShift(shift); setShiftInitDate(undefined); setShowShiftForm(true); }}>
+                                {/* Color stripe */}
+                                <div className="h-1.5" style={{ backgroundColor: shift.color }} />
+                                <div className="p-2">
+                                  {/* Shift name + time */}
+                                  <p className="font-semibold text-[11px] truncate">{shift.name}</p>
+                                  <p className="font-mono text-[10px] text-muted-foreground">{shift.startTime}–{shift.endTime}</p>
+                                  {station && (
+                                    <span className="inline-block text-[9px] px-1.5 py-0.5 rounded-full font-medium text-white mt-0.5"
+                                      style={{ backgroundColor: station.color }}>
+                                      {station.name}
+                                    </span>
+                                  )}
+
+                                  {/* Assignments */}
+                                  <div className="mt-1.5 space-y-1">
+                                    {shift.assignments.length === 0 ? (
+                                      <p className="text-[10px] text-muted-foreground/60 italic">No staff</p>
+                                    ) : (
+                                      shift.assignments.map((a, idx) => {
+                                        const emp = employeeMap.get(a.employeeId);
+                                        if (!emp) return null;
+                                        return (
+                                          <div key={idx} className="flex items-center gap-1.5">
+                                            <span className="w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0"
+                                              style={{ backgroundColor: emp.color }}>
+                                              {initials(emp.name)}
+                                            </span>
+                                            <div className="min-w-0">
+                                              <span className="text-[10px] font-medium truncate block">{emp.name.split(' ')[0]}</span>
+                                              <span className="text-[9px] text-muted-foreground">{a.role}</span>
+                                            </div>
+                                          </div>
+                                        );
+                                      })
+                                    )}
+                                  </div>
+
+                                  {understaffed && (
+                                    <p className="text-[10px] text-warning font-semibold mt-1">
+                                      Need {shift.minStaff - shift.assignments.length} more
+                                    </p>
+                                  )}
+
+                                  {/* Hover actions */}
+                                  <div className="flex gap-1 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button onClick={e => { e.stopPropagation(); if(confirm('Delete shift?')) deleteShift(shift.id); }}
+                                      className="text-[9px] text-muted-foreground hover:text-destructive flex items-center gap-0.5 ml-auto">
+                                      <Trash2 className="w-2.5 h-2.5" /> delete
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {/* Add shift */}
+                          <button
+                            onClick={() => { setEditingShift(null); setShiftInitDate(dateStr); setShowShiftForm(true); }}
+                            className="text-[10px] text-muted-foreground hover:text-primary border border-dashed border-border hover:border-primary/50 rounded-xl py-2 transition-colors text-center hover:bg-primary/5">
+                            + shift
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* ── WORK LOG ── */}
+            {rosterView === 'log' && <WorkLog shifts={shifts} employees={employees} />}
           </div>
         )}
 
         {/* ── SETTINGS TAB ── */}
         {tab === 'settings' && (
           <div className="space-y-5 max-w-2xl">
-
             {/* Booking rules */}
             <div className="glass-card p-5 space-y-4">
               <h3 className="font-display font-semibold">Booking Rules</h3>
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs text-muted-foreground font-medium mb-1 block">Max events per day (0 = unlimited)</label>
-                  <input type="number" min={0}
-                    value={calendarSettings.maxEventsPerDay}
-                    onChange={e => updateCalendarSettings({ maxEventsPerDay: Number(e.target.value) })}
-                    className="input-field w-full" />
+                  <label className="form-label">Max events per day (0 = unlimited)</label>
+                  <input type="number" min={0} value={calendarSettings.maxEventsPerDay} onChange={e => updateCalendarSettings({maxEventsPerDay: Number(e.target.value)})} className="input-field w-full" />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground font-medium mb-1 block">Advance booking days (0 = unlimited)</label>
-                  <input type="number" min={0}
-                    value={calendarSettings.advanceBookingDays}
-                    onChange={e => updateCalendarSettings({ advanceBookingDays: Number(e.target.value) })}
-                    className="input-field w-full" />
+                  <label className="form-label">Advance booking days (0 = unlimited)</label>
+                  <input type="number" min={0} value={calendarSettings.advanceBookingDays} onChange={e => updateCalendarSettings({advanceBookingDays: Number(e.target.value)})} className="input-field w-full" />
                 </div>
               </div>
               <label className="flex items-center gap-3 cursor-pointer">
-                <input type="checkbox" checked={calendarSettings.requireApproval}
-                  onChange={e => updateCalendarSettings({ requireApproval: e.target.checked })}
-                  className="w-4 h-4 rounded" />
+                <input type="checkbox" checked={calendarSettings.requireApproval} onChange={e => updateCalendarSettings({requireApproval: e.target.checked})} className="w-4 h-4 rounded" />
                 <div>
                   <p className="text-sm font-medium">Require manager approval</p>
                   <p className="text-xs text-muted-foreground">All customer requests land as "pending" until approved</p>
                 </div>
               </label>
               <div>
-                <label className="text-xs text-muted-foreground font-medium mb-1 block">Message shown to customers on booking page</label>
-                <textarea value={calendarSettings.bookingMessage}
-                  onChange={e => updateCalendarSettings({ bookingMessage: e.target.value })}
-                  rows={2} className="input-field w-full resize-none" />
+                <label className="form-label">Booking page message</label>
+                <textarea value={calendarSettings.bookingMessage} onChange={e => updateCalendarSettings({bookingMessage: e.target.value})} rows={2} className="input-field w-full resize-none" />
               </div>
             </div>
 
@@ -1436,41 +1367,29 @@ export default function CalendarPage() {
             <div className="glass-card p-5">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="font-display font-semibold flex items-center gap-1.5">
-                    <Layers className="w-4 h-4" /> Shift Templates
-                  </h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">Quick-add presets shown in the roster toolbar</p>
+                  <h3 className="font-display font-semibold flex items-center gap-1.5"><Layers className="w-4 h-4" /> Shift Templates</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">Presets that pre-fill the shift form — name, times, color</p>
                 </div>
-                <button onClick={() => { setEditingTemplate(null); setShowTemplateForm(true); }}
-                  className="btn-ghost text-sm flex items-center gap-1.5">
+                <button onClick={() => { setEditingTemplate(null); setShowTemplateForm(true); }} className="btn-ghost text-sm flex items-center gap-1.5">
                   <Plus className="w-3.5 h-3.5" /> Add
                 </button>
               </div>
               {shiftTemplates.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No templates yet. Create presets like "Kitchen AM 9–17" to add shifts quickly.</p>
+                <p className="text-sm text-muted-foreground">No templates. Create presets like "Kitchen AM 9–17" to add shifts faster.</p>
               ) : (
                 <div className="space-y-2">
                   {shiftTemplates.map(t => (
                     <div key={t.id} className="flex items-center justify-between gap-3 p-2.5 rounded-xl border border-border">
                       <div className="flex items-center gap-3 min-w-0">
-                        <span className="w-4 h-8 rounded-lg shrink-0" style={{ backgroundColor: t.color }} />
+                        <span className="w-3 h-8 rounded-lg shrink-0" style={{ backgroundColor: t.color }} />
                         <div className="min-w-0">
                           <p className="text-sm font-semibold">{t.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {t.startTime}–{t.endTime}
-                            {t.role ? ` · ${t.role}` : ''}
-                          </p>
+                          <p className="text-xs text-muted-foreground">{t.startTime}–{t.endTime}</p>
                         </div>
                       </div>
                       <div className="flex gap-1 shrink-0">
-                        <button onClick={() => { setEditingTemplate(t); setShowTemplateForm(true); }}
-                          className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={() => { if (confirm('Delete template?')) deleteTemplate(t.id); }}
-                          className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <button onClick={() => { setEditingTemplate(t); setShowTemplateForm(true); }} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"><Edit2 className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => { if(confirm('Delete template?')) updateCalendarSettings({shiftTemplates: shiftTemplates.filter(x => x.id !== t.id)}); toast.success('Removed'); }} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
                     </div>
                   ))}
@@ -1485,20 +1404,14 @@ export default function CalendarPage() {
                 {calendarSettings.workingDays.map(wd => (
                   <div key={wd.dayOfWeek} className="flex items-center gap-3">
                     <label className="flex items-center gap-2 w-20 cursor-pointer shrink-0">
-                      <input type="checkbox" checked={wd.isOpen}
-                        onChange={e => updateWorkingDay(wd.dayOfWeek, { isOpen: e.target.checked })}
-                        className="w-4 h-4 rounded" />
+                      <input type="checkbox" checked={wd.isOpen} onChange={e => updateWorkingDay(wd.dayOfWeek, {isOpen: e.target.checked})} className="w-4 h-4 rounded" />
                       <span className="text-sm font-medium">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][wd.dayOfWeek]}</span>
                     </label>
                     {wd.isOpen ? (
-                      <div className="flex items-center gap-2 flex-1">
-                        <input type="time" value={wd.openTime}
-                          onChange={e => updateWorkingDay(wd.dayOfWeek, { openTime: e.target.value })}
-                          className="input-field text-sm py-1.5" />
-                        <span className="text-muted-foreground text-sm">–</span>
-                        <input type="time" value={wd.closeTime}
-                          onChange={e => updateWorkingDay(wd.dayOfWeek, { closeTime: e.target.value })}
-                          className="input-field text-sm py-1.5" />
+                      <div className="flex items-center gap-2">
+                        <input type="time" value={wd.openTime} onChange={e => updateWorkingDay(wd.dayOfWeek, {openTime: e.target.value})} className="input-field text-sm py-1.5" />
+                        <span className="text-muted-foreground">–</span>
+                        <input type="time" value={wd.closeTime} onChange={e => updateWorkingDay(wd.dayOfWeek, {closeTime: e.target.value})} className="input-field text-sm py-1.5" />
                       </div>
                     ) : (
                       <span className="text-sm text-muted-foreground">Closed</span>
@@ -1508,40 +1421,28 @@ export default function CalendarPage() {
               </div>
             </div>
 
-            {/* Date exceptions */}
+            {/* Exceptions */}
             <div className="glass-card p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-display font-semibold">Date Exceptions</h3>
-                <button onClick={addException} className="btn-ghost text-sm flex items-center gap-1.5">
-                  <Plus className="w-3.5 h-3.5" /> Add exception
-                </button>
+                <button onClick={addException} className="btn-ghost text-sm flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" /> Add</button>
               </div>
               {calendarSettings.workingExceptions.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No exceptions. Add specific dates that differ from the weekly schedule (holidays, private events, etc.)</p>
+                <p className="text-sm text-muted-foreground">No exceptions. Add holidays or special-hour dates here.</p>
               ) : (
                 <div className="space-y-2">
-                  {[...calendarSettings.workingExceptions]
-                    .sort((a, b) => a.date.localeCompare(b.date))
-                    .map(ex => (
-                      <div key={ex.id} className="flex items-center justify-between gap-3 p-2.5 rounded-xl border border-border">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span className={`w-2 h-2 rounded-full shrink-0 ${ex.isClosed ? 'bg-destructive' : 'bg-success'}`} />
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium">
-                              {new Date(ex.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
-                            </p>
-                            <p className="text-xs text-muted-foreground truncate">
-                              {ex.isClosed ? 'Closed' : `${ex.openTime}–${ex.closeTime}`}
-                              {ex.note ? ` · ${ex.note}` : ''}
-                            </p>
-                          </div>
+                  {[...calendarSettings.workingExceptions].sort((a,b) => a.date.localeCompare(b.date)).map(ex => (
+                    <div key={ex.id} className="flex items-center justify-between gap-3 p-2.5 rounded-xl border border-border">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${ex.isClosed ? 'bg-destructive' : 'bg-success'}`} />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">{new Date(ex.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'})}</p>
+                          <p className="text-xs text-muted-foreground">{ex.isClosed ? 'Closed' : `${ex.openTime}–${ex.closeTime}`}{ex.note ? ` · ${ex.note}` : ''}</p>
                         </div>
-                        <button onClick={() => removeException(ex.id)}
-                          className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
                       </div>
-                    ))}
+                      <button onClick={() => updateCalendarSettings({workingExceptions: calendarSettings.workingExceptions.filter(e => e.id !== ex.id)})} className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -1549,133 +1450,88 @@ export default function CalendarPage() {
             {/* Booking link */}
             <div className="glass-card p-5">
               <h3 className="font-display font-semibold mb-2">Customer Booking Link</h3>
-              <p className="text-sm text-muted-foreground mb-3">
-                Share this link so customers can submit booking requests.
-              </p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 text-xs bg-muted px-3 py-2 rounded-lg font-mono break-all">
                   {window.location.origin}/book/{settings.restaurantToken}
                 </code>
-                <button
-                  onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/book/${settings.restaurantToken}`); toast.success('Link copied!'); }}
-                  className="btn-ghost text-sm shrink-0">
-                  Copy
-                </button>
+                <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/book/${settings.restaurantToken}`); toast.success('Copied!'); }} className="btn-ghost text-sm shrink-0">Copy</button>
               </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* ── New event modal ── */}
+      {/* ── Modals ── */}
+
       {showEventForm && (
         <Modal title="New Event" onClose={() => setShowEventForm(false)}>
-          <EventForm
-            initialDate={selectedDate}
-            packages={eventPackages}
-            onSave={data => {
-              addCalendarEvent(data);
-              setShowEventForm(false);
-              toast.success('Event added');
-            }}
-            onClose={() => setShowEventForm(false)}
-          />
+          <EventForm initialDate={selectedDate} packages={eventPackages}
+            onSave={data => { addCalendarEvent(data); setShowEventForm(false); toast.success('Event added'); }}
+            onClose={() => setShowEventForm(false)} />
         </Modal>
       )}
 
-      {/* ── Package modal ── */}
       {showPackageForm && (
         <Modal title={editingPackage ? 'Edit Package' : 'New Package'} onClose={() => { setShowPackageForm(false); setEditingPackage(null); }}>
-          <PackageForm
-            initial={editingPackage ?? undefined}
+          <PackageForm initial={editingPackage ?? undefined}
             onSave={data => {
-              if (editingPackage) {
-                updateEventPackage(editingPackage.id, data);
-                toast.success('Package updated');
-              } else {
-                addEventPackage(data);
-                toast.success('Package created');
-              }
-              setShowPackageForm(false);
-              setEditingPackage(null);
+              if (editingPackage) { updateEventPackage(editingPackage.id, data); toast.success('Updated'); }
+              else { addEventPackage(data); toast.success('Created'); }
+              setShowPackageForm(false); setEditingPackage(null);
             }}
-            onClose={() => { setShowPackageForm(false); setEditingPackage(null); }}
-          />
+            onClose={() => { setShowPackageForm(false); setEditingPackage(null); }} />
         </Modal>
       )}
 
-      {/* ── Employee modal ── */}
       {showEmployeeForm && (
         <Modal title={editingEmployee ? 'Edit Employee' : 'Add Employee'} onClose={() => { setShowEmployeeForm(false); setEditingEmployee(null); }}>
-          <EmployeeForm
-            initial={editingEmployee ?? undefined}
+          <EmployeeForm initial={editingEmployee ?? undefined}
             onSave={data => {
-              if (editingEmployee) {
-                updateEmployee(editingEmployee.id, data);
-                toast.success('Employee updated');
-              } else {
-                addEmployee(data);
-                toast.success('Employee added');
-              }
-              setShowEmployeeForm(false);
-              setEditingEmployee(null);
+              if (editingEmployee) { updateEmployee(editingEmployee.id, data); toast.success('Updated'); }
+              else { addEmployee(data); toast.success('Added'); }
+              setShowEmployeeForm(false); setEditingEmployee(null);
             }}
-            onClose={() => { setShowEmployeeForm(false); setEditingEmployee(null); }}
-          />
+            onClose={() => { setShowEmployeeForm(false); setEditingEmployee(null); }} />
         </Modal>
       )}
 
-      {/* ── Shift modal ── */}
       {showShiftForm && (
-        <Modal title={editingShift ? 'Edit Shift' : 'Add Shift'} onClose={() => { setShowShiftForm(false); setEditingShift(null); setShiftInitDate(undefined); }}>
+        <Modal
+          title={editingShift ? `Edit: ${editingShift.name}` : 'New Shift'}
+          subtitle={editingShift ? `${editingShift.date} · ${editingShift.startTime}–${editingShift.endTime}` : 'Set up the time block then assign staff with their roles'}
+          wide
+          onClose={() => { setShowShiftForm(false); setEditingShift(null); setShiftInitDate(undefined); }}>
           <ShiftForm
             initial={editingShift ?? undefined}
             initialDate={shiftInitDate}
             employees={employees}
+            stations={stations}
             templates={shiftTemplates}
             onSave={data => {
-              if (editingShift) {
-                updateShift(editingShift.id, data);
-                toast.success('Shift updated');
-              } else {
-                addShift(data);
-                toast.success('Shift added');
-              }
-              setShowShiftForm(false);
-              setEditingShift(null);
-              setShiftInitDate(undefined);
+              if (editingShift) { updateShift(editingShift.id, data); toast.success('Shift updated'); }
+              else { addShift(data); toast.success('Shift added'); }
+              setShowShiftForm(false); setEditingShift(null); setShiftInitDate(undefined);
             }}
-            onClose={() => { setShowShiftForm(false); setEditingShift(null); setShiftInitDate(undefined); }}
-          />
+            onClose={() => { setShowShiftForm(false); setEditingShift(null); setShiftInitDate(undefined); }} />
         </Modal>
       )}
 
-      {/* ── Shift template modal ── */}
       {showTemplateForm && (
         <Modal title={editingTemplate ? 'Edit Template' : 'New Shift Template'} onClose={() => { setShowTemplateForm(false); setEditingTemplate(null); }}>
-          <ShiftTemplateForm
-            initial={editingTemplate ?? undefined}
-            onSave={saveTemplate}
-            onClose={() => { setShowTemplateForm(false); setEditingTemplate(null); }}
-          />
+          <ShiftTemplateForm initial={editingTemplate ?? undefined} onSave={saveTemplate}
+            onClose={() => { setShowTemplateForm(false); setEditingTemplate(null); }} />
         </Modal>
       )}
 
-      {/* ── Reject reason modal ── */}
       {rejectId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground/30 backdrop-blur-sm">
           <div className="bg-card rounded-2xl shadow-xl w-full max-w-sm p-5">
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-display font-bold text-lg">Reject request</h2>
-              <button onClick={() => setRejectId(null)} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
-                <X className="w-4 h-4" />
-              </button>
+              <button onClick={() => setRejectId(null)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X className="w-4 h-4" /></button>
             </div>
             <p className="text-sm text-muted-foreground mb-3">Optionally provide a reason for the customer.</p>
-            <textarea value={rejectReason}
-              onChange={e => setRejectReason(e.target.value)}
-              rows={2} className="input-field w-full resize-none mb-3"
-              placeholder="e.g. Fully booked on that date" />
+            <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={2} className="input-field w-full resize-none mb-3" placeholder="e.g. Fully booked" />
             <div className="flex gap-2">
               <button onClick={() => setRejectId(null)} className="btn-ghost px-4">Cancel</button>
               <button onClick={handleReject} className="btn-primary flex-1">Reject</button>

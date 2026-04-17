@@ -392,13 +392,32 @@ export function employeeToRow(emp: Employee, userId: string): Record<string, unk
 // ─── Shifts ───────────────────────────────────────────────────────────────────
 
 export function mapShiftRow(row: Record<string, unknown>): Shift {
+  // Try new assignments column first; fall back to legacy employee_ids + role
+  const rawAssignments = row.assignments as Array<Record<string, unknown>> | null | undefined;
+  let assignments: import('@/domain/types').ShiftAssignment[];
+
+  if (rawAssignments && rawAssignments.length > 0) {
+    assignments = rawAssignments.map(a => ({
+      employeeId: (a.employeeId ?? a.employee_id ?? '') as string,
+      role:       (a.role ?? 'Staff') as string,
+      roleNote:   (a.roleNote ?? a.role_note) as string | undefined,
+    }));
+  } else {
+    // Legacy: employee_ids array + single role label
+    const empIds = (row.employee_ids as string[] | null) ?? [];
+    const legacyRole = (row.role as string) ?? 'Staff';
+    assignments = empIds.map(id => ({ employeeId: id, role: legacyRole }));
+  }
+
   return {
     id:          row.id as string,
     date:        row.date as string,
+    name:        ((row.name ?? row.role) as string) ?? 'Shift',
     startTime:   row.start_time as string,
     endTime:     row.end_time as string,
-    role:        (row.role as string) ?? '',
-    employeeIds: (row.employee_ids as string[]) ?? [],
+    color:       (row.color as string) ?? '#6366f1',
+    stationId:   row.station_id as string | undefined,
+    assignments,
     minStaff:    Number(row.min_staff ?? 1),
     notes:       (row.notes as string) ?? '',
     createdAt:   row.created_at as string,
@@ -410,10 +429,14 @@ export function shiftToRow(shift: Shift, userId: string): Record<string, unknown
     id:           shift.id,
     user_id:      userId,
     date:         shift.date,
+    name:         shift.name,
+    role:         shift.name,        // keep role col in sync for legacy compat
     start_time:   shift.startTime,
     end_time:     shift.endTime,
-    role:         shift.role,
-    employee_ids: shift.employeeIds,
+    color:        shift.color,
+    station_id:   shift.stationId ?? null,
+    assignments:  shift.assignments,
+    employee_ids: shift.assignments.map(a => a.employeeId),  // keep legacy col
     min_staff:    shift.minStaff,
     notes:        shift.notes,
     created_at:   shift.createdAt,

@@ -1168,7 +1168,7 @@ export const useStore = create<AppState>()((set, get) => ({
       employees: s.employees.filter(e => e.id !== id),
       shifts: s.shifts.map(sh => ({
         ...sh,
-        employeeIds: sh.employeeIds.filter(eid => eid !== id),
+        assignments: sh.assignments.filter(a => a.employeeId !== id),
       })),
     }));
     _persistLocal(get);
