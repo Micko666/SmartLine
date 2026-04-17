@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Save, ChefHat, Globe, Clock, CreditCard, Package, ImagePlus, Wifi, WifiOff } from 'lucide-react';
+import { Save, ChefHat, Globe, CreditCard, Package, ImagePlus, Wifi, WifiOff, Link2, UtensilsCrossed, CalendarDays, Users } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -169,6 +169,58 @@ export default function Settings() {
             <input value={form.appUrl} onChange={e => up('appUrl', e.target.value)} placeholder="https://yourapp.com" className={input} />
             <p className="text-xs text-muted-foreground mt-1">QR codes for tables will link to <span className="font-mono text-primary">{form.appUrl}/menu?t=&#123;tableId&#125;</span></p>
           </div>
+        </section>
+
+        {/* Public Links */}
+        <section className="glass-card p-6 space-y-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Link2 className="w-4 h-4 text-primary" />
+            <h2 className="font-display font-semibold">Public Links</h2>
+          </div>
+          <p className="text-xs text-muted-foreground -mt-1">Share these with customers and staff. Links are tied to your restaurant token and work without a login.</p>
+
+          {[
+            {
+              icon: UtensilsCrossed,
+              label: 'Food Order Portal',
+              description: 'Dine-in guide, takeaway & delivery orders',
+              href: `${window.location.origin}/order/${settings.restaurantToken}`,
+            },
+            {
+              icon: CalendarDays,
+              label: 'Event Booking',
+              description: 'Private events, group reservations, packages',
+              href: `${window.location.origin}/book/${settings.restaurantToken}`,
+            },
+            {
+              icon: Users,
+              label: 'Staff Roster',
+              description: 'Read-only weekly schedule for your team',
+              href: `${window.location.origin}/roster/${settings.restaurantToken}`,
+            },
+          ].map(({ icon: Icon, label, description, href }) => (
+            <div key={label} className="flex items-center gap-3 p-3 rounded-xl border border-border bg-muted/20">
+              <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                <Icon className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold leading-tight">{label}</p>
+                <p className="text-xs text-muted-foreground">{description}</p>
+                <code className="text-[11px] text-muted-foreground font-mono truncate block mt-0.5">{href}</code>
+              </div>
+              <div className="flex gap-1 shrink-0">
+                <button
+                  onClick={() => { navigator.clipboard.writeText(href); toast.success(`${label} link copied`); }}
+                  className="text-xs font-medium text-primary hover:underline px-2 py-1 rounded-lg hover:bg-primary/5 transition-colors">
+                  Copy
+                </button>
+                <a href={href} target="_blank" rel="noopener noreferrer"
+                  className="text-xs font-medium text-muted-foreground hover:text-foreground px-2 py-1 rounded-lg hover:bg-muted transition-colors">
+                  Open
+                </a>
+              </div>
+            </div>
+          ))}
         </section>
 
         <button

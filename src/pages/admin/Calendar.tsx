@@ -799,7 +799,7 @@ function ShiftAssignPanel({ shift, employees, stations, onClose, onEditFull, onD
           <button onClick={onEditFull} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground" title="Edit full details">
             <Edit2 className="w-3.5 h-3.5" />
           </button>
-          <button onClick={() => { if (confirm('Delete this shift?')) onDelete(); }} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive" title="Delete shift">
+          <button onClick={onDelete} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive" title="Delete shift">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
@@ -1055,6 +1055,8 @@ export default function CalendarPage() {
   const [editingTemplate, setEditingTemplate]       = useState<ShiftTemplate | null>(null);
   const [activeShiftId, setActiveShiftId]           = useState<string | null>(null);
   const [showWeekTemplateEditor, setShowWeekTemplateEditor] = useState(false);
+  const [addingException, setAddingException]       = useState(false);
+  const [exceptionForm, setExceptionForm]           = useState({ date: today(), isClosed: true, note: '', openTime: '09:00', closeTime: '22:00' });
 
   // ── Calendar helpers ───────────────────────────────────────────────────────
 
@@ -1120,15 +1122,24 @@ export default function CalendarPage() {
     updateCalendarSettings({ workingDays: calendarSettings.workingDays.map(d => d.dayOfWeek === dow ? { ...d, ...updates } : d) });
   }
 
-  function addException() {
-    const date = prompt('Enter date (YYYY-MM-DD):');
-    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
-    if (calendarSettings.workingExceptions.find(e => e.date === date)) { toast.error('Already exists'); return; }
-    const note     = prompt('Note:') ?? '';
-    const isClosed = confirm('Mark as CLOSED?');
+  function saveException() {
+    if (!exceptionForm.date) return;
+    if (calendarSettings.workingExceptions.find(e => e.date === exceptionForm.date)) {
+      toast.error('An exception for this date already exists'); return;
+    }
     updateCalendarSettings({
-      workingExceptions: [...calendarSettings.workingExceptions, { id: crypto.randomUUID(), date, isClosed, note, openTime: '09:00', closeTime: '22:00' }],
+      workingExceptions: [...calendarSettings.workingExceptions, {
+        id: crypto.randomUUID(),
+        date: exceptionForm.date,
+        isClosed: exceptionForm.isClosed,
+        note: exceptionForm.note.trim(),
+        openTime: exceptionForm.openTime,
+        closeTime: exceptionForm.closeTime,
+      }],
     });
+    setAddingException(false);
+    setExceptionForm({ date: today(), isClosed: true, note: '', openTime: '09:00', closeTime: '22:00' });
+    toast.success('Exception added');
   }
 
   function quickUpdateAssignments(shiftId: string, assignments: ShiftAssignment[]) {
@@ -1287,7 +1298,7 @@ export default function CalendarPage() {
                                   <button onClick={() => setRejectId(ev.id)} className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20"><X className="w-3.5 h-3.5" /></button>
                                 </>
                               )}
-                              <button onClick={() => { if(confirm('Delete event?')) deleteCalendarEvent(ev.id); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><Trash2 className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => { deleteCalendarEvent(ev.id); toast.success('Event deleted'); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><Trash2 className="w-3.5 h-3.5" /></button>
                             </div>
                           </div>
                         </div>
@@ -1366,7 +1377,7 @@ export default function CalendarPage() {
                             </div>
                             <div className="flex gap-1 shrink-0">
                               <button onClick={() => { setEditingPackage(pkg); setShowPackageForm(true); }} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"><Edit2 className="w-3.5 h-3.5" /></button>
-                              <button onClick={() => { if(confirm('Delete package?')) deleteEventPackage(pkg.id); }} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => { deleteEventPackage(pkg.id); toast.success('Package deleted'); }} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
                             </div>
                           </div>
                           {pkg.description && <p className="text-xs text-muted-foreground mb-2 line-clamp-2">{pkg.description}</p>}
@@ -1657,12 +1668,55 @@ export default function CalendarPage() {
 
             {/* Date exceptions */}
             <div>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-display font-semibold">Date Exceptions</h3>
-                <button onClick={addException} className="btn-ghost text-sm flex items-center gap-1.5"><Plus className="w-3.5 h-3.5" /> Add</button>
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h3 className="font-display font-semibold">Date Exceptions</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">Holidays, special hours, or one-off closures</p>
+                </div>
+                {!addingException && (
+                  <button onClick={() => setAddingException(true)} className="btn-ghost text-sm flex items-center gap-1.5">
+                    <Plus className="w-3.5 h-3.5" /> Add
+                  </button>
+                )}
               </div>
-              {calendarSettings.workingExceptions.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No exceptions. Add holidays or special-hour dates here.</p>
+
+              {addingException && (
+                <div className="mb-3 p-3 rounded-xl border border-primary/30 bg-primary/5 space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="form-label">Date *</label>
+                      <input type="date" value={exceptionForm.date} onChange={e => setExceptionForm(f => ({...f, date: e.target.value}))} className="input-field w-full" />
+                    </div>
+                    <div>
+                      <label className="form-label">Note (optional)</label>
+                      <input type="text" value={exceptionForm.note} onChange={e => setExceptionForm(f => ({...f, note: e.target.value}))} className="input-field w-full" placeholder="Public holiday, Renovation…" />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <input type="checkbox" checked={exceptionForm.isClosed} onChange={e => setExceptionForm(f => ({...f, isClosed: e.target.checked}))} className="w-4 h-4 rounded" />
+                    <span className="text-sm font-medium">Mark as closed (no bookings)</span>
+                  </label>
+                  {!exceptionForm.isClosed && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="form-label">Opens at</label>
+                        <input type="time" value={exceptionForm.openTime} onChange={e => setExceptionForm(f => ({...f, openTime: e.target.value}))} className="input-field w-full" />
+                      </div>
+                      <div>
+                        <label className="form-label">Closes at</label>
+                        <input type="time" value={exceptionForm.closeTime} onChange={e => setExceptionForm(f => ({...f, closeTime: e.target.value}))} className="input-field w-full" />
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <button onClick={() => setAddingException(false)} className="btn-ghost text-sm px-3">Cancel</button>
+                    <button onClick={saveException} className="btn-primary text-sm flex-1">Add exception</button>
+                  </div>
+                </div>
+              )}
+
+              {calendarSettings.workingExceptions.length === 0 && !addingException ? (
+                <p className="text-sm text-muted-foreground">No exceptions yet.</p>
               ) : (
                 <div className="space-y-2">
                   {[...calendarSettings.workingExceptions].sort((a,b) => a.date.localeCompare(b.date)).map(ex => (
@@ -1709,7 +1763,7 @@ export default function CalendarPage() {
                       </div>
                       <div className="flex gap-1 shrink-0">
                         <button onClick={() => { setEditingTemplate(t); setShowTemplateForm(true); }} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground"><Edit2 className="w-3.5 h-3.5" /></button>
-                        <button onClick={() => { if(confirm('Delete template?')) { updateCalendarSettings({shiftTemplates: shiftTemplates.filter(x => x.id !== t.id)}); toast.success('Removed'); } }} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => { updateCalendarSettings({shiftTemplates: shiftTemplates.filter(x => x.id !== t.id)}); toast.success('Template removed'); }} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
                     </div>
                   ))}
@@ -1717,31 +1771,6 @@ export default function CalendarPage() {
               )}
             </div>
 
-            <div className="border-t border-border" />
-
-            {/* Booking link */}
-            <div>
-              <h3 className="font-display font-semibold mb-2">Customer Booking Link</h3>
-              <p className="text-xs text-muted-foreground mb-2">For reservations & private events.</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 text-xs bg-muted px-3 py-2 rounded-lg font-mono break-all">
-                  {window.location.origin}/book/{settings.restaurantToken}
-                </code>
-                <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/book/${settings.restaurantToken}`); toast.success('Copied!'); }} className="btn-ghost text-sm shrink-0">Copy</button>
-              </div>
-            </div>
-
-            {/* Order portal link */}
-            <div>
-              <h3 className="font-display font-semibold mb-2">Order Portal Link</h3>
-              <p className="text-xs text-muted-foreground mb-2">For takeaway & delivery orders — customers can also choose Dine In and scan their table QR.</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 text-xs bg-muted px-3 py-2 rounded-lg font-mono break-all">
-                  {window.location.origin}/order/{settings.restaurantToken}
-                </code>
-                <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/order/${settings.restaurantToken}`); toast.success('Copied!'); }} className="btn-ghost text-sm shrink-0">Copy</button>
-              </div>
-            </div>
           </div>
         </Modal>
       )}
