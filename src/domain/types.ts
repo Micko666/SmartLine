@@ -408,6 +408,31 @@ export interface ShiftTemplate {
   color: string;     // hex accent color for the block
 }
 
+// ─── Weekly roster template ───────────────────────────────────────────────────
+
+/**
+ * A single shift slot in the default weekly template.
+ * Defines a recurring time block (e.g. "Morning 07–15") for a given weekday.
+ */
+export interface WeeklyShiftSlot {
+  id: string;
+  name: string;       // "Morning", "Evening", "Bar PM"
+  startTime: string;  // "07:00"
+  endTime: string;    // "15:00"
+  color: string;      // hex accent
+  minStaff: number;
+  stationId?: string;
+}
+
+/**
+ * All shift slots for one weekday in the default week template.
+ * dayOfWeek follows JS convention: 0=Sunday, 1=Monday … 6=Saturday.
+ */
+export interface WeeklyDayTemplate {
+  dayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  slots: WeeklyShiftSlot[];
+}
+
 export interface CalendarSettings {
   /** Max bookings/events allowed per day (0 = unlimited) */
   maxEventsPerDay: number;
@@ -421,6 +446,11 @@ export interface CalendarSettings {
   workingExceptions: WorkingException[];
   /** Quick-add shift presets shown in the roster toolbar */
   shiftTemplates: ShiftTemplate[];
+  /**
+   * Default weekly roster structure.
+   * Managers define once; "apply to week" stamps out Shift records non-destructively.
+   */
+  weekTemplate: WeeklyDayTemplate[];
 }
 
 // ─── Employees & Shifts ───────────────────────────────────────────────────────

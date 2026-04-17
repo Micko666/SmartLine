@@ -1,30 +1,30 @@
 /**
- * BookingPage — public customer-facing booking page.
+ * BookingPage — public event booking page.
  * Accessed via /book/:restaurantToken
  *
+ * This page is exclusively for event / private-booking requests
+ * (birthdays, corporate events, group dinners, etc.)
+ *
+ * Food ordering (dine-in / takeaway / delivery) has a separate public entry
+ * point at /order/:restaurantToken.
+ *
  * Flow:
- *   1. Mode selector: Dine In / Takeaway / Delivery / Plan an Event
- *   2. (Event only) Package picker
- *   3. Date picker (calendar)
- *   4. Time slot picker
- *   5. Contact & details form
- *   6. Confirmation screen
+ *   1. Event packages (if any configured)  → pick or skip
+ *   2. Calendar — pick available date
+ *   3. Time slot
+ *   4. Contact & details form
+ *   5. Confirmation
  */
 import { useState, useMemo, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, Clock, Users, CheckCircle, ChefHat,
-  UtensilsCrossed, ShoppingBag, Bike, Star, ArrowLeft,
+  Phone, Mail, MessageSquare,
 } from 'lucide-react';
 import { fetchRestaurantByToken, fetchBookingDataByToken, submitBookingToSupabase } from '@/lib/supabase/queries/public';
 import { useStore } from '@/store';
 import { isSupabaseEnabled } from '@/store/flags';
-import type { CalendarSettings, CalendarEventType, EventPackage, WorkingDay, CalendarEvent } from '@/domain/types';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type ServiceMode = 'dine-in' | 'takeaway' | 'delivery' | 'event';
-type Step = 'mode' | 'packages' | 'date' | 'time' | 'form';
+import type { CalendarSettings, EventPackage, WorkingDay, CalendarEvent } from '@/domain/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ const DAY_NAMES   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 function isoDate(d: Date) { return d.toISOString().slice(0, 10); }
-function today() { return isoDate(new Date()); }
+function today()           { return isoDate(new Date()); }
 
 function buildTimeSlots(openTime: string, closeTime: string, slotMinutes = 60): string[] {
   const [oh, om] = openTime.split(':').map(Number);
@@ -47,50 +47,37 @@ function buildTimeSlots(openTime: string, closeTime: string, slotMinutes = 60): 
   return slots;
 }
 
-const MODE_CONFIG: Record<ServiceMode, {
-  label: string;
-  subtitle: string;
-  icon: React.FC<{ className?: string }>;
-  color: string;
-  eventType: CalendarEventType;
-}> = {
-  'dine-in':  { label: 'Dine In',        subtitle: 'Reserve a table',           icon: UtensilsCrossed, color: 'text-primary',     eventType: 'reservation'    },
-  'takeaway': { label: 'Takeaway',        subtitle: 'Pick up your order',         icon: ShoppingBag,     color: 'text-orange-500',   eventType: 'takeaway'       },
-  'delivery': { label: 'Delivery',        subtitle: 'We bring it to you',         icon: Bike,            color: 'text-blue-500',     eventType: 'delivery'       },
-  'event':    { label: 'Plan an Event',   subtitle: 'Birthdays, parties & more',  icon: Star,            color: 'text-purple-500',   eventType: 'private_event'  },
-};
+// ─── Data interface ────────────────────────────────────────────────────────────
 
-// ─── Shared data interface ────────────────────────────────────────────────────
-
-interface RestaurantData {
+interface BookingData {
   restaurantName: string;
+  businessPhone?: string;
+  businessEmail?: string;
   calendarSettings: CalendarSettings;
   eventPackages: EventPackage[];
   calendarEvents: Pick<CalendarEvent, 'id' | 'date' | 'timeSlot' | 'type' | 'status'>[];
   submitBooking: (data: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'>) => Promise<boolean>;
 }
 
+type Step = 'packages' | 'date' | 'time' | 'form';
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function BookingPage() {
   const { restaurantToken } = useParams<{ restaurantToken: string }>();
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState('');
-  const [data, setData]       = useState<RestaurantData | null>(null);
-  const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState('');
+  const [data, setData]               = useState<BookingData | null>(null);
+  const [submitted, setSubmitted]     = useState(false);
 
-  // Flow state
-  const [mode, setMode]                 = useState<ServiceMode | null>(null);
-  const [step, setStep]                 = useState<Step>('mode');
-  const [currentDate, setCurrentDate]   = useState(new Date());
+  const [step, setStep]               = useState<Step>('packages');
+  const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
 
-  // Form state
   const [form, setForm] = useState({
-    name: '', phone: '', email: '', guests: 2,
-    packageId: '', notes: '', address: '',
+    name: '', phone: '', email: '', guests: 2, packageId: '', notes: '',
   });
 
   // ── Load ───────────────────────────────────────────────────────────────────
@@ -120,18 +107,19 @@ export default function BookingPage() {
           evtPackages = storeState.eventPackages.filter(p => p.active);
           calEvents   = storeState.calendarEvents.map(e => ({ id: e.id, date: e.date, timeSlot: e.timeSlot, type: e.type, status: e.status }));
         } else {
-          const bookingData = await fetchBookingDataByToken(restaurantToken);
-          const defaultSettings: CalendarSettings = {
+          const bd = await fetchBookingDataByToken(restaurantToken);
+          const def: CalendarSettings = {
             maxEventsPerDay: 10, requireApproval: true, advanceBookingDays: 90,
             bookingMessage: '', workingDays: [], workingExceptions: [],
+            shiftTemplates: [], weekTemplate: [],
           };
-          calSettings = bookingData?.calendarSettings ?? defaultSettings;
-          evtPackages = bookingData?.eventPackages ?? [];
-          calEvents   = bookingData?.calendarEvents ?? [];
+          calSettings = bd?.calendarSettings ?? def;
+          evtPackages = bd?.eventPackages ?? [];
+          calEvents   = bd?.calendarEvents ?? [];
         }
 
         setData({
-          restaurantName:   res.settings?.businessName ?? 'SmartLine',
+          restaurantName:  res.settings?.businessName ?? 'SmartLine',
           calendarSettings: calSettings,
           eventPackages:    evtPackages,
           calendarEvents:   calEvents,
@@ -140,6 +128,9 @@ export default function BookingPage() {
             return (await submitBookingToSupabase(restaurantToken, eventData)).ok;
           },
         });
+
+        // Skip package step if no packages configured
+        if (evtPackages.length === 0) setStep('date');
       } catch {
         setError('Failed to load booking page.');
       } finally {
@@ -148,23 +139,22 @@ export default function BookingPage() {
     })();
   }, [restaurantToken]);
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── Calendar helpers ───────────────────────────────────────────────────────
 
-  const year  = currentDate.getFullYear();
-  const month = currentDate.getMonth();
+  const year        = currentDate.getFullYear();
+  const month       = currentDate.getMonth();
   const firstDay    = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const todayStr    = today();
 
   function isAvailableDay(dateStr: string): boolean {
     if (!data || dateStr < todayStr) return false;
-    const { calendarSettings: cs } = data;
+    const cs = data.calendarSettings;
     if (cs.advanceBookingDays > 0) {
       const max = new Date(); max.setDate(max.getDate() + cs.advanceBookingDays);
       if (dateStr > isoDate(max)) return false;
     }
-    const d   = new Date(dateStr);
-    const dow = d.getDay() as WorkingDay['dayOfWeek'];
+    const dow = new Date(dateStr).getDay() as WorkingDay['dayOfWeek'];
     const exc = cs.workingExceptions.find(ex => ex.date === dateStr);
     if (exc) return !exc.isClosed;
     if (!cs.workingDays.find(w => w.dayOfWeek === dow)?.isOpen) return false;
@@ -177,78 +167,41 @@ export default function BookingPage() {
 
   const timeSlots = useMemo(() => {
     if (!selectedDate || !data) return [];
-    const { calendarSettings: cs } = data;
-    const d   = new Date(selectedDate);
-    const dow = d.getDay() as WorkingDay['dayOfWeek'];
+    const cs  = data.calendarSettings;
+    const dow = new Date(selectedDate).getDay() as WorkingDay['dayOfWeek'];
     const exc = cs.workingExceptions.find(ex => ex.date === selectedDate);
     const open  = exc?.openTime  ?? cs.workingDays.find(w => w.dayOfWeek === dow)?.openTime  ?? '09:00';
     const close = exc?.closeTime ?? cs.workingDays.find(w => w.dayOfWeek === dow)?.closeTime ?? '22:00';
     return buildTimeSlots(open, close);
   }, [selectedDate, data]);
 
-  // ── Navigation ─────────────────────────────────────────────────────────────
-
-  function selectMode(m: ServiceMode) {
-    setMode(m);
-    // Events go to package selection first (if packages exist), then date
-    if (m === 'event' && data && data.eventPackages.length > 0) {
-      setStep('packages');
-    } else {
-      setStep('date');
-    }
-  }
-
-  function goBack() {
-    if (step === 'packages') { setMode(null); setStep('mode'); }
-    else if (step === 'date') {
-      if (mode === 'event' && data && data.eventPackages.length > 0) setStep('packages');
-      else { setMode(null); setStep('mode'); }
-    }
-    else if (step === 'time') { setSelectedDate(null); setStep('date'); }
-    else if (step === 'form') { setSelectedSlot(null); setStep('time'); }
-  }
-
   // ── Submit ─────────────────────────────────────────────────────────────────
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!data || !selectedDate || !selectedSlot || !mode) return;
-    if (!form.name.trim()) return;
-
-    const cfg    = MODE_CONFIG[mode];
+    if (!data || !selectedDate || !selectedSlot || !form.name.trim()) return;
     const pkg    = data.eventPackages.find(p => p.id === form.packageId);
     const status = data.calendarSettings.requireApproval ? 'pending' : 'approved';
-
-    const deliveryNote = mode === 'delivery' && form.address.trim()
-      ? `Delivery to: ${form.address.trim()}${form.notes ? ' — ' + form.notes : ''}`
-      : form.notes;
-
     const ok = await data.submitBooking({
-      date:          selectedDate,
-      timeSlot:      selectedSlot,
-      type:          cfg.eventType,
+      date: selectedDate, timeSlot: selectedSlot,
+      type: form.packageId ? 'private_event' : 'reservation',
       status,
-      customerName:  form.name.trim(),
-      customerPhone: form.phone.trim(),
-      customerEmail: form.email.trim(),
-      guestCount:    form.guests,
-      packageId:     form.packageId || undefined,
-      packageName:   pkg?.name,
-      notes:         deliveryNote,
-      createdBy:     'customer',
+      customerName: form.name.trim(), customerPhone: form.phone.trim(),
+      customerEmail: form.email.trim(), guestCount: form.guests,
+      packageId: form.packageId || undefined, packageName: pkg?.name,
+      notes: form.notes, createdBy: 'customer',
     });
-
     if (ok) setSubmitted(true);
   }
 
-  function resetFlow() {
-    setMode(null); setStep('mode');
+  function reset() {
+    setStep(data?.eventPackages.length ? 'packages' : 'date');
     setSelectedDate(null); setSelectedSlot(null);
-    setForm({ name: '', phone: '', email: '', guests: 2, packageId: '', notes: '', address: '' });
+    setForm({ name: '', phone: '', email: '', guests: 2, packageId: '', notes: '' });
     setSubmitted(false);
   }
 
-  // ── Loading / error screens ────────────────────────────────────────────────
+  // ── Screens ────────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -269,206 +222,187 @@ export default function BookingPage() {
     );
   }
 
-  // ── Success screen ─────────────────────────────────────────────────────────
-
-  if (submitted && mode) {
-    const cfg    = MODE_CONFIG[mode];
-    const needs  = data.calendarSettings.requireApproval;
+  if (submitted) {
+    const needs = data.calendarSettings.requireApproval;
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-5 text-center px-4 bg-background">
         <div className="w-16 h-16 rounded-2xl bg-success/10 flex items-center justify-center">
           <CheckCircle className="w-8 h-8 text-success" />
         </div>
         <div>
-          <h1 className="font-display text-2xl font-bold">
-            {mode === 'delivery' ? 'Order placed!' : mode === 'takeaway' ? 'Order received!' : 'Request received!'}
-          </h1>
+          <h1 className="font-display text-2xl font-bold">Request received!</h1>
           {needs ? (
             <p className="text-muted-foreground mt-2 max-w-sm text-sm">
-              Your {cfg.label.toLowerCase()} request has been sent.
-              {' '}The restaurant will confirm shortly.
+              Your event request has been sent. The team will get back to you to confirm the details.
             </p>
           ) : (
             <p className="text-muted-foreground mt-2 max-w-sm text-sm">
-              Your {cfg.label.toLowerCase()} for{' '}
+              Your event on{' '}
               {new Date(selectedDate! + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}{' '}
-              at {selectedSlot} is confirmed.
+              at {selectedSlot} is confirmed!
             </p>
           )}
         </div>
-        <button onClick={resetFlow} className="btn-ghost text-sm">
-          Make another request
-        </button>
+        <button onClick={reset} className="btn-ghost text-sm">Make another request</button>
       </div>
     );
   }
 
-  // ── Shared header ──────────────────────────────────────────────────────────
-
-  const showBack = step !== 'mode';
+  const selectedPkg = data.eventPackages.find(p => p.id === form.packageId);
 
   return (
     <div className="min-h-screen bg-background">
+
+      {/* Header */}
       <header className="border-b border-border bg-card/80 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-lg mx-auto px-4 py-3 flex items-center gap-3">
-          {showBack ? (
-            <button onClick={goBack} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground shrink-0">
-              <ArrowLeft className="w-4 h-4" />
-            </button>
-          ) : (
-            <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center shrink-0">
-              <ChefHat className="w-4 h-4 text-primary-foreground" />
-            </div>
-          )}
+          <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center shrink-0">
+            <ChefHat className="w-4 h-4 text-primary-foreground" />
+          </div>
           <div className="flex-1 min-w-0">
             <p className="font-display font-bold text-sm leading-tight truncate">{data.restaurantName}</p>
-            <p className="text-[11px] text-muted-foreground">
-              {step === 'mode'     && 'How can we help?'}
-              {step === 'packages' && 'Choose your event type'}
-              {step === 'date'     && (mode ? MODE_CONFIG[mode].label : 'Choose a date')}
-              {step === 'time'     && 'Choose a time'}
-              {step === 'form'     && 'Your details'}
-            </p>
+            <p className="text-[11px] text-muted-foreground">Private event booking</p>
           </div>
-          {mode && step !== 'mode' && (
-            <div className={`text-xs font-semibold px-2.5 py-1 rounded-full bg-muted ${MODE_CONFIG[mode].color}`}>
-              {MODE_CONFIG[mode].label}
-            </div>
-          )}
         </div>
       </header>
 
       <div className="max-w-lg mx-auto px-4 py-6 space-y-5">
 
-        {data.calendarSettings.bookingMessage && step === 'mode' && (
-          <p className="text-sm text-muted-foreground text-center px-2">{data.calendarSettings.bookingMessage}</p>
+        {/* Booking message */}
+        {data.calendarSettings.bookingMessage && (
+          <p className="text-sm text-muted-foreground text-center">{data.calendarSettings.bookingMessage}</p>
         )}
 
-        {/* ── STEP: Mode selector ── */}
-        {step === 'mode' && (
-          <div className="grid grid-cols-2 gap-3">
-            {(Object.entries(MODE_CONFIG) as [ServiceMode, typeof MODE_CONFIG[ServiceMode]][]).map(([key, cfg]) => {
-              const Icon = cfg.icon;
-              // Hide event mode if no packages configured
-              if (key === 'event' && data.eventPackages.length === 0) return null;
-              return (
-                <button
-                  key={key}
-                  onClick={() => selectMode(key)}
-                  className="glass-card p-5 text-left hover:shadow-md transition-all hover:scale-[1.02] active:scale-[0.99] group"
-                >
-                  <div className={`w-10 h-10 rounded-xl bg-muted flex items-center justify-center mb-3 ${cfg.color} group-hover:scale-110 transition-transform`}>
-                    <Icon className="w-5 h-5" />
-                  </div>
-                  <p className="font-semibold text-sm text-foreground">{cfg.label}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{cfg.subtitle}</p>
-                </button>
-              );
-            })}
-          </div>
-        )}
+        {/* Step indicators */}
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          {data.eventPackages.length > 0 && (
+            <>
+              <span className={step === 'packages' ? 'text-primary font-semibold' : selectedPkg ? 'line-through' : ''}>Package</span>
+              <span>›</span>
+            </>
+          )}
+          <span className={step === 'date' ? 'text-primary font-semibold' : selectedDate ? 'line-through' : ''}>Date</span>
+          <span>›</span>
+          <span className={step === 'time' ? 'text-primary font-semibold' : selectedSlot ? 'line-through' : ''}>Time</span>
+          <span>›</span>
+          <span className={step === 'form' ? 'text-primary font-semibold' : ''}>Details</span>
+        </div>
 
-        {/* ── STEP: Package selector (event mode) ── */}
+        {/* ── STEP: Packages ── */}
         {step === 'packages' && (
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">Choose an event type, or continue without a package.</p>
-            <div className="space-y-3">
+          <div className="space-y-3">
+            <p className="text-sm font-semibold">What are you celebrating?</p>
+            {/* No package / regular */}
+            <button
+              onClick={() => { setForm(f => ({ ...f, packageId: '' })); setStep('date'); }}
+              className={`w-full p-4 rounded-2xl border text-left transition-all ${!form.packageId ? 'border-primary bg-primary/5' : 'border-border bg-card hover:border-primary/50'}`}
+            >
+              <p className="font-semibold text-sm">Just a group booking</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Standard table reservation for a larger group</p>
+            </button>
+            {data.eventPackages.map(pkg => (
               <button
-                onClick={() => { setForm(f => ({ ...f, packageId: '' })); setStep('date'); }}
-                className={`w-full p-4 rounded-2xl border text-left transition-all ${!form.packageId ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border bg-card hover:border-primary/50'}`}
+                key={pkg.id}
+                onClick={() => { setForm(f => ({ ...f, packageId: pkg.id })); setStep('date'); }}
+                className={`w-full p-4 rounded-2xl border text-left transition-all ${form.packageId === pkg.id ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border bg-card hover:border-primary/50'}`}
               >
-                <p className="font-semibold text-sm">Custom / no package</p>
-                <p className="text-xs text-muted-foreground mt-0.5">I'll describe what I need in the notes</p>
-              </button>
-              {data.eventPackages.map(pkg => (
-                <button
-                  key={pkg.id}
-                  onClick={() => { setForm(f => ({ ...f, packageId: pkg.id })); setStep('date'); }}
-                  className={`w-full p-4 rounded-2xl border text-left transition-all ${form.packageId === pkg.id ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border bg-card hover:border-primary/50'}`}
-                >
-                  <div className="flex items-start gap-3">
-                    <span className="text-2xl shrink-0">{pkg.emoji}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm">{pkg.name}</p>
-                      {pkg.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{pkg.description}</p>}
-                      <div className="flex flex-wrap gap-3 mt-2 text-xs text-muted-foreground">
-                        <span><Users className="w-3 h-3 inline mr-0.5" />{pkg.minGuests}–{pkg.maxGuests} guests</span>
-                        <span><Clock className="w-3 h-3 inline mr-0.5" />{pkg.duration}h</span>
-                        {pkg.pricePerPerson != null && <span className="font-semibold text-foreground">From ${pkg.pricePerPerson}/person</span>}
-                        {pkg.fixedPrice     != null && <span className="font-semibold text-foreground">${pkg.fixedPrice}</span>}
-                      </div>
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl shrink-0">{pkg.emoji}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm">{pkg.name}</p>
+                    {pkg.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{pkg.description}</p>}
+                    <div className="flex flex-wrap gap-3 mt-2 text-xs text-muted-foreground">
+                      <span><Users className="w-3 h-3 inline mr-0.5" />{pkg.minGuests}–{pkg.maxGuests} guests</span>
+                      <span><Clock className="w-3 h-3 inline mr-0.5" />{pkg.duration}h</span>
+                      {pkg.pricePerPerson != null && <span className="font-semibold text-foreground">From ${pkg.pricePerPerson}/person</span>}
+                      {pkg.fixedPrice     != null && <span className="font-semibold text-foreground">${pkg.fixedPrice}</span>}
                     </div>
+                    {pkg.details && <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{pkg.details}</p>}
                   </div>
-                </button>
-              ))}
-            </div>
+                </div>
+              </button>
+            ))}
           </div>
         )}
 
-        {/* ── STEP: Date picker ── */}
+        {/* ── STEP: Date ── */}
         {step === 'date' && (
-          <div className="glass-card p-5">
-            <div className="flex items-center justify-between mb-4">
-              <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() - 1, 1))} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="font-semibold text-sm">{MONTH_NAMES[month]} {year}</span>
-              <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() + 1, 1))} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
-                <ChevronRight className="w-4 h-4" />
-              </button>
+          <>
+            {selectedPkg && (
+              <div className="flex items-center gap-2 p-3 rounded-xl bg-muted/50 text-sm">
+                <span className="text-xl">{selectedPkg.emoji}</span>
+                <div>
+                  <span className="font-semibold">{selectedPkg.name}</span>
+                  {data.eventPackages.length > 0 && (
+                    <button onClick={() => setStep('packages')} className="ml-2 text-xs text-primary hover:underline">change</button>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="glass-card p-5">
+              <div className="flex items-center justify-between mb-4">
+                <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()-1, 1))} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="font-semibold text-sm">{MONTH_NAMES[month]} {year}</span>
+                <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()+1, 1))} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="grid grid-cols-7 mb-1">
+                {DAY_NAMES.map(d => <div key={d} className="text-center text-[10px] font-semibold text-muted-foreground py-1">{d}</div>)}
+              </div>
+              <div className="grid grid-cols-7 gap-1">
+                {Array.from({ length: firstDay }).map((_, i) => <div key={`b${i}`} />)}
+                {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
+                  const ds        = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                  const available = isAvailableDay(ds);
+                  const isToday   = ds === todayStr;
+                  const selected  = ds === selectedDate;
+                  return (
+                    <button key={day} disabled={!available}
+                      onClick={() => { setSelectedDate(ds); setStep('time'); }}
+                      className={`
+                        h-10 rounded-xl text-sm font-medium transition-all
+                        ${selected    ? 'bg-primary text-primary-foreground' : ''}
+                        ${!selected && available ? 'hover:bg-muted text-foreground' : ''}
+                        ${!available  ? 'text-muted-foreground/30 cursor-not-allowed' : ''}
+                        ${isToday && !selected ? 'ring-1 ring-primary' : ''}
+                      `}
+                    >{day}</button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="grid grid-cols-7 mb-1">
-              {DAY_NAMES.map(d => (
-                <div key={d} className="text-center text-[10px] font-semibold text-muted-foreground py-1">{d}</div>
-              ))}
-            </div>
-            <div className="grid grid-cols-7 gap-1">
-              {Array.from({ length: firstDay }).map((_, i) => <div key={`b${i}`} />)}
-              {Array.from({ length: daysInMonth }, (_, i) => i + 1).map(day => {
-                const ds        = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                const available = isAvailableDay(ds);
-                const isToday   = ds === todayStr;
-                const selected  = ds === selectedDate;
-                return (
-                  <button
-                    key={day}
-                    disabled={!available}
-                    onClick={() => { setSelectedDate(ds); setStep('time'); }}
-                    className={`
-                      h-10 rounded-xl text-sm font-medium transition-all
-                      ${selected  ? 'bg-primary text-primary-foreground' : ''}
-                      ${!selected && available ? 'hover:bg-muted text-foreground' : ''}
-                      ${!available ? 'text-muted-foreground/30 cursor-not-allowed' : ''}
-                      ${isToday && !selected ? 'ring-1 ring-primary' : ''}
-                    `}
-                  >
-                    {day}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+            {/* Prefer direct contact note */}
+            <p className="text-xs text-muted-foreground text-center">
+              Prefer to call?{' '}
+              <span className="font-medium text-foreground">{data.restaurantName}</span>
+              {' '}— reach out directly to arrange your event.
+            </p>
+          </>
         )}
 
-        {/* ── STEP: Time slot ── */}
+        {/* ── STEP: Time ── */}
         {step === 'time' && selectedDate && (
           <div className="glass-card p-5">
-            <p className="text-sm font-medium mb-4">
-              {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-            </p>
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-sm font-medium">
+                {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+              </p>
+              <button onClick={() => { setSelectedDate(null); setStep('date'); }} className="text-xs text-primary hover:underline">change</button>
+            </div>
             {timeSlots.length === 0 ? (
-              <div className="text-center py-6">
+              <div className="text-center py-4">
                 <p className="text-sm text-muted-foreground">No time slots available for this date.</p>
-                <button onClick={goBack} className="btn-ghost text-sm mt-3">Choose another date</button>
+                <button onClick={() => { setSelectedDate(null); setStep('date'); }} className="btn-ghost text-sm mt-3">Choose another date</button>
               </div>
             ) : (
               <div className="grid grid-cols-4 gap-2">
                 {timeSlots.map(slot => (
-                  <button
-                    key={slot}
+                  <button key={slot}
                     onClick={() => { setSelectedSlot(slot); setStep('form'); }}
-                    className="py-2.5 rounded-xl text-sm font-medium border border-border hover:border-primary hover:text-primary hover:bg-primary/5 transition-all"
-                  >
+                    className="py-2.5 rounded-xl text-sm font-medium border border-border hover:border-primary hover:text-primary hover:bg-primary/5 transition-all">
                     {slot}
                   </button>
                 ))}
@@ -477,91 +411,70 @@ export default function BookingPage() {
           </div>
         )}
 
-        {/* ── STEP: Details form ── */}
-        {step === 'form' && selectedDate && selectedSlot && mode && (
+        {/* ── STEP: Form ── */}
+        {step === 'form' && selectedDate && selectedSlot && (
           <div className="glass-card p-5">
-            {/* Summary bar */}
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-muted/50 mb-5 text-xs">
+            {/* Summary */}
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-muted/50 mb-5 text-xs flex-wrap">
               <span className="font-medium text-foreground">
                 {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
               </span>
               <span className="text-muted-foreground">at</span>
               <span className="font-medium text-foreground">{selectedSlot}</span>
-              {form.packageId && data.eventPackages.find(p => p.id === form.packageId) && (
+              {selectedPkg && (
                 <>
                   <span className="text-muted-foreground">·</span>
-                  <span className="font-medium text-foreground">{data.eventPackages.find(p => p.id === form.packageId)!.emoji} {data.eventPackages.find(p => p.id === form.packageId)!.name}</span>
+                  <span className="font-medium text-foreground">{selectedPkg.emoji} {selectedPkg.name}</span>
                 </>
               )}
+              <button onClick={() => { setSelectedSlot(null); setStep('time'); }} className="ml-auto text-primary hover:underline">change</button>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
-
               <div>
                 <label className="text-xs text-muted-foreground font-medium mb-1 block">Full name *</label>
                 <input type="text" required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                   className="input-field w-full" placeholder="Your name" />
               </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-muted-foreground font-medium mb-1 block">Phone</label>
+                  <label className="text-xs text-muted-foreground font-medium mb-1 block"><Phone className="w-3 h-3 inline mr-0.5" />Phone</label>
                   <input type="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
                     className="input-field w-full" placeholder="+1 234 567 890" />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground font-medium mb-1 block">Email</label>
+                  <label className="text-xs text-muted-foreground font-medium mb-1 block"><Mail className="w-3 h-3 inline mr-0.5" />Email</label>
                   <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                     className="input-field w-full" placeholder="you@example.com" />
                 </div>
               </div>
-
-              {/* Guest count — shown for dine-in and events */}
-              {(mode === 'dine-in' || mode === 'event') && (
-                <div>
-                  <label className="text-xs text-muted-foreground font-medium mb-1 block">Number of guests</label>
-                  <div className="flex items-center gap-3">
-                    <button type="button" onClick={() => setForm(f => ({ ...f, guests: Math.max(1, f.guests - 1) }))}
-                      className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center font-bold hover:bg-muted/80 transition-colors">−</button>
-                    <span className="text-lg font-bold w-8 text-center">{form.guests}</span>
-                    <button type="button" onClick={() => setForm(f => ({ ...f, guests: f.guests + 1 }))}
-                      className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center font-bold hover:bg-muted/80 transition-colors">+</button>
-                    <span className="text-sm text-muted-foreground ml-1"><Users className="w-3.5 h-3.5 inline" /> guests</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Delivery address */}
-              {mode === 'delivery' && (
-                <div>
-                  <label className="text-xs text-muted-foreground font-medium mb-1 block">Delivery address *</label>
-                  <input type="text" required value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
-                    className="input-field w-full" placeholder="Street, city, postcode" />
-                </div>
-              )}
-
               <div>
-                <label className="text-xs text-muted-foreground font-medium mb-1 block">
-                  {mode === 'takeaway' || mode === 'delivery' ? 'Order notes (optional)' : 'Special requests (optional)'}
-                </label>
-                <textarea
-                  value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                  rows={2} className="input-field w-full resize-none"
-                  placeholder={mode === 'takeaway' ? 'Dietary requirements, preferred pickup…' : mode === 'delivery' ? 'Dietary requirements, gate code…' : 'Dietary requirements, occasion, setup requests…'}
-                />
+                <label className="text-xs text-muted-foreground font-medium mb-1 block">Number of guests</label>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={() => setForm(f => ({ ...f, guests: Math.max(1, f.guests - 1) }))}
+                    className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center font-bold hover:bg-muted/80 transition-colors">−</button>
+                  <span className="text-lg font-bold w-8 text-center">{form.guests}</span>
+                  <button type="button" onClick={() => setForm(f => ({ ...f, guests: f.guests + 1 }))}
+                    className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center font-bold hover:bg-muted/80 transition-colors">+</button>
+                  <span className="text-sm text-muted-foreground"><Users className="w-3.5 h-3.5 inline" /> guests</span>
+                </div>
               </div>
-
+              <div>
+                <label className="text-xs text-muted-foreground font-medium mb-1 block"><MessageSquare className="w-3 h-3 inline mr-0.5" />Special requests</label>
+                <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                  rows={3} className="input-field w-full resize-none"
+                  placeholder="Dietary needs, decorations, special setup, occasion details…" />
+              </div>
               <div className="pt-1">
                 <p className="text-xs text-muted-foreground mb-3">
                   {data.calendarSettings.requireApproval
-                    ? 'Your request will be reviewed and confirmed by the restaurant.'
-                    : 'Your booking will be confirmed immediately.'}
+                    ? 'Your request will be reviewed and confirmed by our team. We\'ll be in touch shortly.'
+                    : 'Your event booking will be confirmed immediately.'}
                 </p>
                 <button type="submit" className="btn-primary w-full text-base py-3">
-                  {mode === 'delivery' ? 'Place delivery order' : mode === 'takeaway' ? 'Place takeaway order' : 'Send booking request'}
+                  Send event request
                 </button>
               </div>
-
             </form>
           </div>
         )}

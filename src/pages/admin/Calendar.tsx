@@ -1386,11 +1386,24 @@ export default function CalendarPage() {
             {/* Booking link */}
             <div>
               <h3 className="font-display font-semibold mb-2">Customer Booking Link</h3>
+              <p className="text-xs text-muted-foreground mb-2">For reservations & private events.</p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 text-xs bg-muted px-3 py-2 rounded-lg font-mono break-all">
                   {window.location.origin}/book/{settings.restaurantToken}
                 </code>
                 <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/book/${settings.restaurantToken}`); toast.success('Copied!'); }} className="btn-ghost text-sm shrink-0">Copy</button>
+              </div>
+            </div>
+
+            {/* Order portal link */}
+            <div>
+              <h3 className="font-display font-semibold mb-2">Order Portal Link</h3>
+              <p className="text-xs text-muted-foreground mb-2">For takeaway & delivery orders — customers can also choose Dine In and scan their table QR.</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-xs bg-muted px-3 py-2 rounded-lg font-mono break-all">
+                  {window.location.origin}/order/{settings.restaurantToken}
+                </code>
+                <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/order/${settings.restaurantToken}`); toast.success('Copied!'); }} className="btn-ghost text-sm shrink-0">Copy</button>
               </div>
             </div>
           </div>

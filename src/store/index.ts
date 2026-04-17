@@ -7,7 +7,7 @@ import type {
   CheckoutPayload, CheckoutResult, CartValidationResult, CartValidationIssue,
   PaymentMethod, Ingredient, KitchenEvent, Station, MapDecoration, DecorationType,
   CalendarEvent, CalendarEventStatus, EventPackage, CalendarSettings, WorkingDay, WorkingException,
-  Employee, Shift,
+  Employee, Shift, WeeklyDayTemplate,
 } from '../domain/types';
 import {
   SEED_MENU_ITEMS, SEED_TABLES, DEFAULT_SETTINGS, DEMO_USER, SEED_CATEGORIES,
@@ -44,6 +44,7 @@ const DEFAULT_CALENDAR_SETTINGS: CalendarSettings = {
   workingDays:        DEFAULT_WORKING_DAYS,
   workingExceptions:  [],
   shiftTemplates:     [],
+  weekTemplate:       [],
 };
 
 type WorkspaceSnapshot = {
@@ -246,9 +247,12 @@ export interface AppState {
   deleteEmployee: (id: string) => void;
 
   // ── Shifts ──────────────────────────────────────────────────────────────────
-  addShift:    (data: Omit<Shift, 'id' | 'createdAt'>) => Shift;
-  updateShift: (id: string, updates: Partial<Omit<Shift, 'id' | 'createdAt'>>) => void;
-  deleteShift: (id: string) => void;
+  addShift:             (data: Omit<Shift, 'id' | 'createdAt'>) => Shift;
+  updateShift:          (id: string, updates: Partial<Omit<Shift, 'id' | 'createdAt'>>) => void;
+  deleteShift:          (id: string) => void;
+  /** Stamp out Shift records for the given ISO week (Monday date) from weekTemplate. Non-destructive. */
+  applyWeekTemplate:    (mondayIsoDate: string) => void;
+  updateWeekTemplate:   (template: WeeklyDayTemplate[]) => void;
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -1207,6 +1211,62 @@ export const useStore = create<AppState>()((set, get) => ({
     if (isSupabaseEnabled()) {
       bridge.persistDeleteShift(id).catch(() =>
         toast.error('Failed to delete shift.'));
+    }
+  },
+
+  applyWeekTemplate(mondayIsoDate) {
+    const { calendarSettings, shifts } = get();
+    const template = calendarSettings.weekTemplate ?? [];
+    if (!template.length) { toast.info('Define a default week template first.'); return; }
+
+    // Build target date for each day-of-week in the week starting on mondayIsoDate
+    const monday = new Date(mondayIsoDate + 'T12:00:00');
+    const toCreate: Omit<Shift, 'id' | 'createdAt'>[] = [];
+
+    for (const dayTpl of template) {
+      // JS dayOfWeek: 1=Mon…6=Sat, 0=Sun. Map to offset from Monday (0–6).
+      const offset = dayTpl.dayOfWeek === 0 ? 6 : dayTpl.dayOfWeek - 1;
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + offset);
+      const dateStr = d.toISOString().slice(0, 10);
+
+      for (const slot of dayTpl.slots) {
+        const exists = shifts.some(s => s.date === dateStr && s.name === slot.name);
+        if (!exists) {
+          toCreate.push({
+            date: dateStr, name: slot.name,
+            startTime: slot.startTime, endTime: slot.endTime,
+            color: slot.color, minStaff: slot.minStaff,
+            stationId: slot.stationId, assignments: [], notes: '',
+          });
+        }
+      }
+    }
+
+    if (!toCreate.length) { toast.info('All template shifts already exist for this week.'); return; }
+
+    const newShifts: Shift[] = toCreate.map(s => ({ ...s, id: genId(), createdAt: now() }));
+    set(s => ({ shifts: [...s.shifts, ...newShifts] }));
+    _persistLocal(get);
+
+    const { user } = get();
+    if (isSupabaseEnabled() && user?.id) {
+      for (const shift of newShifts) {
+        bridge.persistNewShift(shift, user.id).catch(() =>
+          toast.error('Failed to save shift.'));
+      }
+    }
+    toast.success(`${newShifts.length} shift${newShifts.length !== 1 ? 's' : ''} created from template`);
+  },
+
+  updateWeekTemplate(template) {
+    const updates = { weekTemplate: template };
+    set(s => ({ calendarSettings: { ...s.calendarSettings, ...updates } }));
+    _persistLocal(get);
+    const { calendarSettings, user } = get();
+    if (isSupabaseEnabled() && user?.id) {
+      bridge.persistCalendarSettings(calendarSettings, user.id).catch(() =>
+        toast.error('Failed to save week template.'));
     }
   },
 }));
