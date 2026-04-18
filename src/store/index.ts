@@ -932,8 +932,10 @@ export const useStore = create<AppState>()((set, get) => ({
       const { supabase } = await import('@/lib/supabase/client');
       if (!supabase) return { success: false, error: 'Supabase not configured.', unavailableItems: [] };
 
-      const userId = payload.restaurantUserId ?? get().user?.id;
-      if (!userId) return { success: false, error: 'Restaurant not found.', unavailableItems: [] };
+      // atomic_checkout resolves user_id server-side from the restaurant_token
+      // (enforced by RLS + RPC scope — no cross-tenant writes possible).
+      const token = payload.restaurantToken ?? get().settings?.restaurantToken;
+      if (!token) return { success: false, error: 'Restaurant not found.', unavailableItems: [] };
 
       // Resolve modifiers client-side before sending to RPC
       const { menuItems } = get();
@@ -950,12 +952,12 @@ export const useStore = create<AppState>()((set, get) => ({
       });
 
       const { data, error } = await supabase.rpc('atomic_checkout', {
-        p_user_id:        userId,
-        p_session_id:     sessionId,
-        p_table_id:       tableId,
-        p_payment_method: paymentMethod,
-        p_cart:           resolvedCart,
-        p_notes:          notes ?? '',
+        p_restaurant_token: token,
+        p_session_id:       sessionId,
+        p_table_id:         tableId,
+        p_payment_method:   paymentMethod,
+        p_cart:             resolvedCart,
+        p_notes:            notes ?? '',
       });
 
       if (error) return { success: false, error: error.message, unavailableItems: [] };

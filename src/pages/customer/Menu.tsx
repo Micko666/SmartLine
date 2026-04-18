@@ -329,7 +329,7 @@ export default function CustomerMenu() {
       paymentMethod,
       cart,
       notes:              notes.trim() || undefined,
-      restaurantUserId:   sbUserId ?? undefined,
+      restaurantToken:    restaurantToken || undefined,
     });
 
     setCheckoutLoading(false);

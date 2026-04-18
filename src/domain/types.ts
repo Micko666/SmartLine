@@ -310,7 +310,12 @@ export interface CheckoutPayload {
   paymentMethod: PaymentMethod;
   cart: CartItem[];
   notes?: string;
-  restaurantUserId?: string; // set by customer menu (unauthenticated checkout)
+  /**
+   * restaurantToken is required for Supabase-mode checkout. Customer pages pass
+   * the token from the URL; admin/authenticated checkout falls back to the
+   * logged-in user's own restaurant_token.
+   */
+  restaurantToken?: string;
 }
 
 export type CheckoutResult =
