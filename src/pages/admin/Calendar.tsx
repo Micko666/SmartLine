@@ -652,18 +652,22 @@ function WeekTemplateEditor({ template, onSave, onClose }: {
     setAddingDow(null);
   }
 
-  function copyToWeekdays(dow: number) {
-    const day = tpl.find(d => d.dayOfWeek === dow);
-    if (!day) return;
-    // Copy Mon-Fri slots from this day (clone with new ids)
-    setTpl(prev => prev.map(d => {
-      if ([1,2,3,4,5,6,7].includes(d.dayOfWeek)) {
-        return { ...d, slots: day.slots.map(s => ({ ...s, id: crypto.randomUUID() })) };
-      }
-      return d;
-    }));
-    toast.success('Copied to weekdays');
-  }
+  function copyToWholeWeek(dow: number) {
+  const sourceDay = tpl.find(d => d.dayOfWeek === dow);
+  if (!sourceDay) return;
+
+  setTpl(prev =>
+    prev.map(d => ({
+      ...d,
+      slots: sourceDay.slots.map(s => ({
+        ...s,
+        id: crypto.randomUUID(),
+      })),
+    }))
+  );
+
+  toast.success('Copied to whole week');
+}
 
   return (
     <div className="space-y-4">
@@ -691,12 +695,16 @@ function WeekTemplateEditor({ template, onSave, onClose }: {
                   ))}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  {day.slots.length > 0 && idx < 5 && (
-                    <button type="button" onClick={() => copyToWeekdays(dow)} title="Copy to all weekdays"
-                      className="text-[10px] text-muted-foreground hover:text-primary px-1.5 py-0.5 rounded hover:bg-primary/10 transition-colors">
-                      Copy M–F
-                    </button>
-                  )}
+                  {day.slots.length > 0 && (
+  <button
+    type="button"
+    onClick={() => copyToWholeWeek(dow)}
+    title="Copy to whole week"
+    className="text-[10px] text-muted-foreground hover:text-primary px-1.5 py-0.5 rounded hover:bg-primary/10 transition-colors"
+  >
+    Copy week
+  </button>
+)}
                   <button type="button" onClick={() => setAddingDow(isOpen ? null : dow)}
                     className={`p-1.5 rounded-lg transition-colors ${isOpen ? 'bg-primary text-primary-foreground' : 'hover:bg-muted text-muted-foreground'}`}>
                     <Plus className="w-3 h-3" />
