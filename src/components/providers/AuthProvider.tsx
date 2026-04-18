@@ -53,6 +53,15 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         if (!mounted) return;
 
         useStore.setState({ user, isAuthenticated: true, _hasHydrated: true, ...workspace });
+
+        // Silent background tasks: local→cloud backfill (if cloud empty) + base64
+        // image/logo migration. Idempotent, fail-soft, non-blocking — the user
+        // never sees these. See store/autoMigrations.ts for details.
+        const { runBackgroundMigrations, hasRunMigrationsThisSession } = await import('@/store/autoMigrations');
+        if (!mounted) return;
+        if (!hasRunMigrationsThisSession(user.id)) {
+          void runBackgroundMigrations(user.id, user);
+        }
       } else {
         useStore.setState({ _hasHydrated: true });
       }

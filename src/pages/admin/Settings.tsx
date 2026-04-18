@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Save, ChefHat, Globe, CreditCard, Package, ImagePlus, Wifi, WifiOff, Link2, UtensilsCrossed, CalendarDays, Users, ShoppingBag, PauseCircle, CloudUpload, RefreshCw, Image as ImageIcon } from 'lucide-react';
+import { Save, ChefHat, Globe, CreditCard, Package, ImagePlus, Wifi, WifiOff, Link2, UtensilsCrossed, CalendarDays, Users, ShoppingBag, PauseCircle } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -12,75 +12,9 @@ const SERVICE_MODES = ['dine-in', 'takeaway', 'pickup', 'quick-service', 'bakery
 const LANGUAGES = ['English', 'French', 'German', 'Spanish', 'Italian', 'Arabic'];
 
 export default function Settings() {
-  const { settings, updateSettings, menuItems } = useStore(useShallow(s => ({ settings: s.settings, updateSettings: s.updateSettings, menuItems: s.menuItems })));
-  const base64ImageCount = menuItems.filter(
-    m => m.imageUrl?.startsWith('data:') || m.thumbnailUrl?.startsWith('data:'),
-  ).length;
+  const { settings, updateSettings } = useStore(useShallow(s => ({ settings: s.settings, updateSettings: s.updateSettings })));
   const [form, setForm] = useState({ ...settings });
   const [dirty, setDirty] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [migrating, setMigrating] = useState(false);
-  const [migrateProgress, setMigrateProgress] = useState<{ processed: number; total: number; name?: string } | null>(null);
-
-  async function handleMigrateImages() {
-    const state = useStore.getState();
-    const userId = state.user?.id;
-    if (!userId) return;
-
-    const base64Count = state.menuItems.filter(
-      m => m.imageUrl?.startsWith('data:') || m.thumbnailUrl?.startsWith('data:'),
-    ).length;
-    if (base64Count === 0) {
-      toast.success('No images need migration — you\'re already on cloud storage.');
-      return;
-    }
-
-    setMigrating(true);
-    setMigrateProgress({ processed: 0, total: base64Count });
-    try {
-      const { migrateBase64ToStorage } = await import('@/lib/supabase/storage');
-      const result = await migrateBase64ToStorage(
-        state.menuItems,
-        userId,
-        async (itemId, imageUrl, thumbnailUrl) => {
-          useStore.getState().updateMenuItem(itemId, { imageUrl, thumbnailUrl });
-        },
-        p => setMigrateProgress({ processed: p.processed, total: p.total, name: p.currentName }),
-      );
-      if (result.failed > 0) {
-        toast.warning(`Migrated ${result.succeeded} of ${result.total} images — ${result.failed} failed.`);
-      } else {
-        toast.success(`All ${result.succeeded} images moved to cloud storage.`);
-      }
-    } catch {
-      toast.error('Migration failed — check your connection and try again.');
-    } finally {
-      setMigrating(false);
-      setMigrateProgress(null);
-    }
-  }
-
-  async function handleSyncToCloud() {
-    setSyncing(true);
-    try {
-      const state = useStore.getState();
-      const { pushLocalToSupabase } = await import('@/store/hydration');
-      await pushLocalToSupabase({
-        menuItems:        state.menuItems,
-        tables:           state.tables,
-        employees:        state.employees,
-        shifts:           state.shifts,
-        settings:         state.settings,
-        calendarSettings: state.calendarSettings,
-        nextOrderNumber:  state.nextOrderNumber,
-      }, state.user!.id);
-      toast.success('All data synced to cloud successfully');
-    } catch {
-      toast.error('Sync failed — check your connection and try again');
-    } finally {
-      setSyncing(false);
-    }
-  }
 
   const up = <K extends keyof typeof form>(key: K, val: typeof form[K]) => {
     setForm(f => ({ ...f, [key]: val }));
@@ -123,55 +57,6 @@ export default function Settings() {
             </button>
           )}
         </div>
-
-        {/* Cloud Sync — only shown when Supabase is enabled */}
-        {isSupabaseEnabled() && (
-          <section className="glass-card p-5 flex items-center gap-4">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-              <CloudUpload className="w-5 h-5 text-primary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold">Sync local data to cloud</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Pushes all menu items, tables, employees, shifts, and settings from this device to Supabase.
-                Run this once if your public links show empty data or after restoring from backup.
-              </p>
-            </div>
-            <button
-              onClick={handleSyncToCloud}
-              disabled={syncing}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50 shrink-0"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
-              {syncing ? 'Syncing…' : 'Sync now'}
-            </button>
-          </section>
-        )}
-
-        {/* Migrate Images to Cloud Storage */}
-        {isSupabaseEnabled() && (base64ImageCount > 0 || migrating) && (
-          <section className="glass-card p-5 flex items-center gap-4">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-              <ImageIcon className="w-5 h-5 text-primary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold">Move menu photos to cloud storage</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {migrating && migrateProgress
-                  ? `Migrating ${migrateProgress.processed} / ${migrateProgress.total}${migrateProgress.name ? ` — ${migrateProgress.name}` : ''}…`
-                  : `${base64ImageCount} ${base64ImageCount === 1 ? 'photo is' : 'photos are'} stored inline in the database. Migrate to Supabase Storage to restore them on the public menu and make loads faster.`}
-              </p>
-            </div>
-            <button
-              onClick={handleMigrateImages}
-              disabled={migrating}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50 shrink-0"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${migrating ? 'animate-spin' : ''}`} />
-              {migrating ? 'Migrating…' : 'Migrate now'}
-            </button>
-          </section>
-        )}
 
         {/* Business Profile */}
         <section className="glass-card p-6 space-y-4">
