@@ -11,6 +11,8 @@ import { useShallow } from 'zustand/react/shallow';
 import type { MenuItem, MenuItemStatus, Modifier, ModifierOption, Ingredient, RecipeIngredient } from '@/domain/types';
 import { SEED_CATEGORIES } from '@/domain/initialData';
 import { toast } from 'sonner';
+import { uploadMenuImage } from '@/lib/supabase/storage';
+import { isSupabaseEnabled } from '@/store/flags';
 
 const SEED_CAT_SET = new Set(SEED_CATEGORIES);
 
@@ -425,20 +427,42 @@ function MenuItemForm({ item, categories, ingredients, sym, onSave, onClose, onA
   const [recipeKitchenUnit,setRecipeKitchenUnit] = useState('g');
 
   const imageRef = useRef<HTMLInputElement>(null);
+  // Stable id for Storage paths — reuse the real item id when editing, mint a new one for new items
+  const uploadIdRef = useRef<string>(item?.id ?? (globalThis.crypto?.randomUUID?.() ?? `tmp-${Date.now()}`));
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const up = <K extends keyof FormData>(key: K, val: FormData[K]) => {
     setForm(f => ({ ...f, [key]: val }));
     if (errors[key as string]) setErrors(e => ({ ...e, [key as string]: '' }));
   };
 
-  const handleImageFile = (file: File) => {
-    if (file.size > 500 * 1024) toast.warning('Image over 500KB — consider compressing it.');
-    const reader = new FileReader();
-    reader.onload = e => {
-      const url = e.target?.result as string ?? '';
-      setForm(f => ({ ...f, imageUrl: url, thumbnailUrl: url }));
-    };
-    reader.readAsDataURL(file);
+  const handleImageFile = async (file: File) => {
+    if (file.size > 8 * 1024 * 1024) {
+      toast.error('Image too large — max 8 MB');
+      return;
+    }
+    const userId = useStore.getState().user?.id;
+    // Fallback to base64 only when Supabase isn't available (offline/local mode)
+    if (!isSupabaseEnabled() || !userId) {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const url = e.target?.result as string ?? '';
+        setForm(f => ({ ...f, imageUrl: url, thumbnailUrl: url }));
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+    setUploadingImage(true);
+    try {
+      const { imageUrl, thumbnailUrl } = await uploadMenuImage(file, userId, uploadIdRef.current);
+      if (imageUrl && thumbnailUrl) {
+        setForm(f => ({ ...f, imageUrl, thumbnailUrl }));
+      } else {
+        toast.error('Image upload failed — please try again');
+      }
+    } finally {
+      setUploadingImage(false);
+    }
   };
 
   // ── Recipe helpers ──────────────────────────────────────────────────────────
@@ -646,6 +670,11 @@ function MenuItemForm({ item, categories, ingredients, sym, onSave, onClose, onA
                   <div className="flex flex-col items-center gap-1 px-2 text-center">
                     <span className="text-3xl leading-none">{form.icon || '🍽️'}</span>
                     <span className="text-[10px] text-muted-foreground mt-1">Add photo</span>
+                  </div>
+                )}
+                {uploadingImage && (
+                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                    <span className="text-[10px] text-white font-medium">Uploading…</span>
                   </div>
                 )}
               </div>
