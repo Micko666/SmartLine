@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { ChefHat, ArrowRight, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -9,6 +9,8 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const login = useStore(s => s.login);
+  const isAuthenticated = useStore(s => s.isAuthenticated);
+  const hasHydrated = useStore(s => s._hasHydrated);
 
   const [email, setEmail] = useState('demo@smartline.io');
   const [password, setPassword] = useState('demo1234');
@@ -17,6 +19,15 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/dashboard';
+
+  // Auth-redirect guard: if the user is already authenticated when this
+  // mounts (or becomes authenticated mid-render), send them to the dashboard
+  // instead of leaving them on the login form.
+  useEffect(() => {
+    if (hasHydrated && isAuthenticated) {
+      navigate(from, { replace: true });
+    }
+  }, [hasHydrated, isAuthenticated, from, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,11 +114,25 @@ export default function Login() {
             </button>
           </form>
 
-          <p className="text-center text-sm text-muted-foreground mt-6">
-            Don't have an account?{' '}
-            <Link to="/signup" className="text-primary font-medium hover:underline">Get started</Link>
-          </p>
-          <p className="text-center text-xs text-muted-foreground mt-3 opacity-60">Demo credentials are pre-filled.</p>
+          <div className="mt-6 space-y-3">
+            <Link
+              to="/signup"
+              className="w-full h-11 rounded-xl border border-border flex items-center justify-center gap-2 text-sm font-medium hover:bg-muted transition-colors"
+            >
+              Create a free account <ArrowRight className="w-4 h-4" />
+            </Link>
+            <p className="text-center text-xs text-muted-foreground opacity-60">
+              Already a user? Sign in above.{' '}
+              <button
+                type="button"
+                onClick={() => { /* fields are pre-filled, just a hint */ }}
+                className="underline underline-offset-2 cursor-default"
+                title="Use demo@smartline.io / demo1234 to explore"
+              >
+                Try the demo ↑
+              </button>
+            </p>
+          </div>
         </motion.div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ChefHat, ArrowRight, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -27,11 +27,22 @@ interface FormErrors {
 export default function Signup() {
   const navigate = useNavigate();
   const signup = useStore(s => s.signup);
+  const isAuthenticated = useStore(s => s.isAuthenticated);
+  const hasHydrated = useStore(s => s._hasHydrated);
 
   const [form, setForm] = useState<FormState>({ name: '', email: '', password: '', businessName: '', businessType: '' });
   const [showPw, setShowPw] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
   const [loading, setLoading] = useState(false);
+
+  // Belt-and-braces navigation: if state becomes authenticated while this
+  // page is still mounted (imperative navigate() didn't take, remount race,
+  // etc.), fall through to the dashboard.
+  useEffect(() => {
+    if (hasHydrated && isAuthenticated) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [hasHydrated, isAuthenticated, navigate]);
 
   const update = (key: keyof FormState, value: string) => {
     setForm(f => ({ ...f, [key]: value }));
@@ -65,7 +76,7 @@ export default function Signup() {
     setLoading(false);
     if (result.success) {
       toast.success('Account created! Welcome to SmartLine.');
-      navigate('/dashboard');
+      navigate('/dashboard', { replace: true });
     } else {
       setErrors({ general: result.error });
     }

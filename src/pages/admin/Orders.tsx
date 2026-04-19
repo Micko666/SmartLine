@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { CheckCircle2, Clock, ChefHat, CreditCard, ArrowRight, X, RotateCcw, AlertTriangle, Table2, Flame } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { CheckCircle2, Clock, ChefHat, CreditCard, ArrowRight, X, RotateCcw, AlertTriangle, Table2, Flame, ChevronDown, ChevronUp, History } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
@@ -35,6 +35,25 @@ function timeAgo(iso: string) {
   return m < 1 ? 'just now' : `${m}m ago`;
 }
 
+function formatTime(iso: string) {
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function dayKey(iso: string) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function formatDayLabel(key: string) {
+  const now = new Date();
+  const todayK = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const yest = new Date(); yest.setDate(yest.getDate() - 1);
+  const yestK = `${yest.getFullYear()}-${String(yest.getMonth() + 1).padStart(2, '0')}-${String(yest.getDate()).padStart(2, '0')}`;
+  if (key === todayK) return 'Today';
+  if (key === yestK) return 'Yesterday';
+  return new Date(key + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+}
+
 export default function Orders() {
   const { orders, advanceOrderStatus, cancelOrder, logKitchenEvent, settings, tables, setTableStatus } = useStore(useShallow(s => ({
     orders:             s.orders,
@@ -48,11 +67,33 @@ export default function Orders() {
 
   const [filter,      setFilter]      = useState<OrderStatus | 'all' | 'tables'>('all');
   const [eventOrder,  setEventOrder]  = useState<Order | null>(null);
+  const [openDays,    setOpenDays]    = useState<Record<string, boolean>>({});
   const sym = settings.currencySymbol;
 
   const filtered = filter === 'all' ? orders
     : filter === 'tables' ? orders.filter(o => ACTIVE_STATUSES.includes(o.status as OrderStatus))
     : orders.filter(o => o.status === filter);
+
+  // Split visible orders into today vs. previous days so the live board
+  // doesn't force an infinite scroll. Previous days live in a collapsible log.
+  const { todayOrders, olderByDay, olderDayKeys } = useMemo(() => {
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const todayOrders: Order[] = [];
+    const older: Record<string, Order[]> = {};
+    for (const o of filtered) {
+      const k = dayKey(o.createdAt);
+      if (k === today) todayOrders.push(o);
+      else (older[k] = older[k] ?? []).push(o);
+    }
+    return {
+      todayOrders,
+      olderByDay: older,
+      olderDayKeys: Object.keys(older).sort((a, b) => b.localeCompare(a)),
+    };
+  }, [filtered]);
+
+  const toggleDay = (k: string) => setOpenDays(prev => ({ ...prev, [k]: !prev[k] }));
 
   // Build table groups for the "Tables" view
   const tableGroups = (() => {
@@ -155,9 +196,17 @@ export default function Orders() {
             <p className="text-muted-foreground">No orders{filter !== 'all' ? ` in "${ORDER_STATUS_LABELS[filter as OrderStatus]}"` : ''} yet.</p>
           </div>
         ) : (
-          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
-            <AnimatePresence mode="popLayout">
-              {filtered.map(order => {
+          <div className="space-y-6">
+            {todayOrders.length > 0 && (
+              <div>
+                <div className="flex items-baseline justify-between mb-3">
+                  <h2 className="font-display font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                    Today <span className="text-foreground/70 normal-case">· {todayOrders.length} order{todayOrders.length === 1 ? '' : 's'}</span>
+                  </h2>
+                </div>
+                <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  <AnimatePresence mode="popLayout">
+                    {todayOrders.map(order => {
                 const StatusIcon = STATUS_ICONS[order.status];
                 const nextStatus = advance(order.status);
                 const canCancel = canTransition(order.status, 'cancelled');
@@ -174,7 +223,9 @@ export default function Orders() {
                         <span className="font-display text-lg font-bold shrink-0">#{order.orderNumber}</span>
                         <span className={ORDER_STATUS_CSS[order.status]}>{ORDER_STATUS_LABELS[order.status]}</span>
                       </div>
-                      <span className="text-xs text-muted-foreground shrink-0">{timeAgo(order.createdAt)}</span>
+                      <span className="text-xs text-muted-foreground shrink-0 tabular-nums" title={new Date(order.createdAt).toLocaleString()}>
+                        {formatTime(order.createdAt)} · {timeAgo(order.createdAt)}
+                      </span>
                     </div>
 
                     <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
@@ -234,7 +285,59 @@ export default function Orders() {
                   </motion.div>
                 );
               })}
-            </AnimatePresence>
+                  </AnimatePresence>
+                </div>
+              </div>
+            )}
+
+            {olderDayKeys.length > 0 && (
+              <div>
+                <div className="flex items-baseline gap-2 mb-3">
+                  <History className="w-3.5 h-3.5 text-muted-foreground" />
+                  <h2 className="font-display font-semibold text-sm text-muted-foreground uppercase tracking-wide">Previous days</h2>
+                  <span className="text-xs text-muted-foreground normal-case">· {olderDayKeys.length} day{olderDayKeys.length === 1 ? '' : 's'}</span>
+                </div>
+                <div className="glass-card overflow-hidden">
+                  {olderDayKeys.map(k => {
+                    const dayOrders = olderByDay[k];
+                    const dayTotal = dayOrders.reduce((sum, o) => sum + o.total, 0);
+                    const open = openDays[k] ?? false;
+                    return (
+                      <div key={k} className="border-b border-border last:border-b-0">
+                        <button
+                          onClick={() => toggleDay(k)}
+                          className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
+                        >
+                          <span className="font-semibold text-sm">{formatDayLabel(k)}</span>
+                          <span className="text-xs text-muted-foreground">{dayOrders.length} order{dayOrders.length === 1 ? '' : 's'}</span>
+                          <span className="text-xs font-semibold text-foreground ml-auto tabular-nums">{sym}{dayTotal.toFixed(2)}</span>
+                          {open ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                        </button>
+                        {open && (
+                          <div className="border-t border-border divide-y divide-border bg-muted/10">
+                            {dayOrders.map(o => {
+                              const itemCount = o.items.reduce((n, it) => n + it.quantity, 0);
+                              return (
+                                <div key={o.id} className="flex items-center gap-2.5 px-4 py-2 text-xs hover:bg-muted/30 transition-colors">
+                                  <span className="font-mono text-muted-foreground tabular-nums w-12 shrink-0" title={new Date(o.createdAt).toLocaleString()}>{formatTime(o.createdAt)}</span>
+                                  <span className="font-bold w-14 shrink-0">#{o.orderNumber}</span>
+                                  <span className={`${ORDER_STATUS_CSS[o.status]} text-[10px] shrink-0`}>{ORDER_STATUS_LABELS[o.status]}</span>
+                                  <span className="text-muted-foreground truncate flex-1 min-w-0">
+                                    {o.tableName} · {itemCount} item{itemCount === 1 ? '' : 's'}
+                                  </span>
+                                  <span className="font-semibold tabular-nums text-foreground shrink-0">{sym}{o.total.toFixed(2)}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
           </div>
         ))}
       </div>
@@ -348,8 +451,8 @@ function TableOrderGroup({
                   >
                     {ORDER_STATUS_LABELS[order.status as OrderStatus]}
                   </span>
-                  <span className="text-[10px] text-muted-foreground ml-auto tabular-nums flex items-center gap-0.5">
-                    <Clock className="w-2.5 h-2.5" />{mins}m
+                  <span className="text-[10px] text-muted-foreground ml-auto tabular-nums flex items-center gap-0.5" title={new Date(order.createdAt).toLocaleString()}>
+                    <Clock className="w-2.5 h-2.5" />{formatTime(order.createdAt)} · {mins}m
                   </span>
                 </div>
                 <p className="text-xs text-foreground/70 truncate">

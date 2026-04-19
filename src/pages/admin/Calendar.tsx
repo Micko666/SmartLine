@@ -699,10 +699,10 @@ function WeekTemplateEditor({ template, onSave, onClose }: {
   <button
     type="button"
     onClick={() => copyToWholeWeek(dow)}
-    title="Copy to whole week"
+    title="Use this day's shifts for every other day of the week"
     className="text-[10px] text-muted-foreground hover:text-primary px-1.5 py-0.5 rounded hover:bg-primary/10 transition-colors"
   >
-    Copy week
+    Copy to all days
   </button>
 )}
                   <button type="button" onClick={() => setAddingDow(isOpen ? null : dow)}
@@ -1044,8 +1044,9 @@ export default function CalendarPage() {
   const [rosterView, setRosterView]     = useState<RosterView>('grid');
   const [currentDate, setCurrentDate]   = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(today());
-  const [showPackagesPanel, setShowPackagesPanel] = useState(false);
+  const [showPackagesPanel, setShowPackagesPanel] = useState(true);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showAllPending, setShowAllPending]       = useState(false);
 
   // Modals
   const [showEventForm, setShowEventForm]           = useState(false);
@@ -1182,9 +1183,9 @@ export default function CalendarPage() {
           </div>
           <div className="flex items-center gap-2">
             {pendingEvents.length > 0 && (
-              <button onClick={() => setTab('bookings')}
-                className="flex items-center gap-1.5 text-xs font-semibold text-warning px-2.5 py-1.5 bg-warning/10 rounded-lg border border-warning/20 hover:bg-warning/15 transition-colors">
-                <AlertCircle className="w-3.5 h-3.5" /> {pendingEvents.length} pending
+              <button onClick={() => { setTab('bookings'); setShowAllPending(true); }}
+                className="flex items-center gap-1.5 text-xs font-bold text-warning px-3 py-1.5 bg-warning/15 rounded-lg border border-warning/40 hover:bg-warning/25 transition-colors animate-pulse">
+                <AlertCircle className="w-3.5 h-3.5" /> {pendingEvents.length} awaiting approval
               </button>
             )}
             {tab === 'bookings' && (
@@ -1204,10 +1205,12 @@ export default function CalendarPage() {
                 </button>
               </div>
             )}
-            {/* Settings gear */}
+            {/* Settings */}
             <button onClick={() => setShowSettingsModal(true)}
-              className="p-2 rounded-xl hover:bg-muted transition-colors text-muted-foreground" title="Settings">
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl hover:bg-muted transition-colors text-sm font-medium text-muted-foreground hover:text-foreground"
+              title="Hours, rules, templates">
               <Settings2 className="w-4 h-4" />
+              <span className="hidden sm:inline">Settings</span>
             </button>
           </div>
         </div>
@@ -1230,6 +1233,24 @@ export default function CalendarPage() {
         {/* ── BOOKINGS TAB ── */}
         {tab === 'bookings' && (
           <div className="space-y-5">
+            {/* Getting-started hint: shown only when the calendar is totally empty */}
+            {calendarEvents.length === 0 && eventPackages.length === 0 && (
+              <div className="glass-card p-4 border border-primary/20 bg-primary/5">
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-primary/15 flex items-center justify-center shrink-0">
+                    <Info className="w-4 h-4 text-primary" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-sm leading-tight">Getting started with Calendar</p>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                      Click <strong>New event</strong> above to add a reservation, or expand <strong>Event Packages</strong> below to create bookable presets (birthdays, private dinners, etc.).
+                      Use <strong>Settings</strong> to set your working hours and booking rules.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="grid lg:grid-cols-3 gap-5">
               {/* Calendar */}
               <div className="lg:col-span-2 glass-card p-5">
@@ -1288,8 +1309,9 @@ export default function CalendarPage() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-                                <span className="text-sm">{TYPE_EMOJI[ev.type]}</span>
-                                <span className="text-xs font-semibold truncate">{ev.type==='closure' ? ev.closureReason||'Closed' : ev.customerName}</span>
+                                <span className="text-sm" title={TYPE_LABEL[ev.type]}>{TYPE_EMOJI[ev.type]}</span>
+                                <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">{TYPE_LABEL[ev.type]}</span>
+                                <span className="text-xs font-semibold truncate">· {ev.type==='closure' ? ev.closureReason||'Closed' : ev.customerName}</span>
                                 <StatusBadge status={ev.status} />
                               </div>
                               <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
@@ -1316,28 +1338,36 @@ export default function CalendarPage() {
                 </div>
 
                 {pendingEvents.length > 0 && (
-                  <div className="glass-card p-4">
-                    <h3 className="font-display font-semibold text-sm mb-3 flex items-center gap-1.5">
-                      <AlertCircle className="w-3.5 h-3.5 text-warning" /> Pending ({pendingEvents.length})
+                  <div className="glass-card p-4 border border-warning/30 bg-warning/5 ring-1 ring-warning/20">
+                    <h3 className="font-display font-bold text-sm mb-1 flex items-center gap-1.5 text-warning">
+                      <AlertCircle className="w-4 h-4" /> {pendingEvents.length} booking{pendingEvents.length === 1 ? '' : 's'} waiting
                     </h3>
+                    <p className="text-[11px] text-muted-foreground mb-3">Approve or reject to notify the customer.</p>
                     <div className="space-y-2">
-                      {pendingEvents.slice(0,5).map(ev => (
-                        <div key={ev.id} className="p-2.5 rounded-xl bg-warning/5 border border-warning/20">
+                      {(showAllPending ? pendingEvents : pendingEvents.slice(0,5)).map(ev => (
+                        <div key={ev.id} className="p-2.5 rounded-xl bg-card border border-warning/30">
                           <div className="flex items-center justify-between gap-2">
                             <div className="min-w-0">
                               <p className="text-xs font-semibold truncate">{ev.customerName}</p>
                               <p className="text-[11px] text-muted-foreground">
-                                {new Date(ev.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})} · {ev.timeSlot} · {TYPE_EMOJI[ev.type]}
+                                {new Date(ev.date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})} · {ev.timeSlot} · <span title={TYPE_LABEL[ev.type]}>{TYPE_EMOJI[ev.type]} {TYPE_LABEL[ev.type]}</span>
                               </p>
                             </div>
                             <div className="flex gap-1 shrink-0">
-                              <button onClick={() => handleApprove(ev.id)} className="p-1.5 rounded-lg bg-success/10 text-success hover:bg-success/20"><Check className="w-3.5 h-3.5" /></button>
-                              <button onClick={() => setRejectId(ev.id)} className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20"><X className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => handleApprove(ev.id)} title="Approve" className="p-1.5 rounded-lg bg-success/10 text-success hover:bg-success/20"><Check className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => setRejectId(ev.id)} title="Reject" className="p-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20"><X className="w-3.5 h-3.5" /></button>
                             </div>
                           </div>
                         </div>
                       ))}
-                      {pendingEvents.length > 5 && <p className="text-[11px] text-muted-foreground text-center">+{pendingEvents.length-5} more</p>}
+                      {pendingEvents.length > 5 && (
+                        <button
+                          onClick={() => setShowAllPending(v => !v)}
+                          className="w-full text-[11px] text-primary hover:underline font-semibold py-1"
+                        >
+                          {showAllPending ? 'Show less' : `Show all ${pendingEvents.length}`}
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1352,10 +1382,15 @@ export default function CalendarPage() {
               >
                 <div className="flex items-center gap-2">
                   <Package className="w-4 h-4 text-muted-foreground" />
-                  <span className="font-semibold text-sm">Event Packages</span>
-                  {eventPackages.length > 0 && (
-                    <span className="text-xs text-muted-foreground">({eventPackages.filter(p => p.active).length} active)</span>
-                  )}
+                  <div>
+                    <span className="font-semibold text-sm">Event Packages</span>
+                    {eventPackages.length === 0 && (
+                      <p className="text-xs text-muted-foreground leading-none mt-0.5">Preset options for private bookings</p>
+                    )}
+                    {eventPackages.length > 0 && (
+                      <span className="ml-2 text-xs text-muted-foreground">({eventPackages.filter(p => p.active).length} active)</span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -1428,11 +1463,11 @@ export default function CalendarPage() {
                         <Layers className="w-4 h-4 text-primary" />
                       </div>
                       <div className="min-w-0">
-                        <p className="font-semibold text-sm leading-tight">Default week</p>
+                        <p className="font-semibold text-sm leading-tight">Default staff week</p>
                         <p className="text-xs text-muted-foreground truncate">
                           {hasWeekTemplate
                             ? weekTemplate.flatMap(d => d.slots).length + ' shift slots defined — apply to any week in one click'
-                            : 'Define your weekly structure once, reuse every week'
+                            : 'Your recurring shift pattern — define once, stamp onto any week'
                           }
                         </p>
                       </div>
@@ -1533,8 +1568,13 @@ export default function CalendarPage() {
                             const isActive     = activeShiftId === shift.id;
                             return (
                               <div key={shift.id}
-                                className={`rounded-xl border overflow-hidden text-xs transition-all cursor-pointer ${isActive ? 'ring-2 ring-primary shadow-md' : 'hover:shadow-sm'} ${understaffed ? 'border-warning/50 bg-warning/5' : 'border-border bg-card'}`}
+                                className={`rounded-xl border overflow-hidden text-xs transition-all cursor-pointer relative ${isActive ? 'ring-2 ring-primary shadow-md' : 'hover:shadow-sm'} ${understaffed ? 'border-warning ring-1 ring-warning/40 bg-warning/5' : 'border-border bg-card'}`}
                                 onClick={() => setActiveShiftId(isActive ? null : shift.id)}>
+                                {understaffed && (
+                                  <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-warning flex items-center justify-center shadow-sm" title={`Understaffed: need ${shift.minStaff - shift.assignments.length} more`}>
+                                    <AlertCircle className="w-3 h-3 text-white" />
+                                  </div>
+                                )}
                                 <div className="h-1.5" style={{ backgroundColor: shift.color }} />
                                 <div className="p-2">
                                   <p className="font-semibold text-[11px] truncate">{shift.name}</p>
@@ -1618,7 +1658,7 @@ export default function CalendarPage() {
 
       {/* ── Settings Modal ── */}
       {showSettingsModal && (
-        <Modal title="Calendar Settings" wide onClose={() => setShowSettingsModal(false)}>
+        <Modal title="Calendar configuration" subtitle="Hours, rules, exceptions, and shift templates" wide onClose={() => setShowSettingsModal(false)}>
           <div className="space-y-6">
             {/* Booking rules */}
             <div>
@@ -1648,9 +1688,10 @@ export default function CalendarPage() {
 
             <div className="border-t border-border" />
 
-            {/* Working hours */}
+            {/* Booking hours (when customers can reserve) */}
             <div>
-              <h3 className="font-display font-semibold mb-4">Working Hours</h3>
+              <h3 className="font-display font-semibold">Booking hours</h3>
+              <p className="text-xs text-muted-foreground mt-0.5 mb-4">When customers can book on your public booking page. Not staff shifts — those live in the Roster tab.</p>
               <div className="space-y-2">
                 {calendarSettings.workingDays.map(wd => (
                   <div key={wd.dayOfWeek} className="flex items-center gap-3">
@@ -1678,8 +1719,8 @@ export default function CalendarPage() {
             <div>
               <div className="flex items-center justify-between mb-3">
                 <div>
-                  <h3 className="font-display font-semibold">Date Exceptions</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">Holidays, special hours, or one-off closures</p>
+                  <h3 className="font-display font-semibold">Booking exceptions</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">One-off holidays, closures, or special booking hours (overrides the weekly booking hours above)</p>
                 </div>
                 {!addingException && (
                   <button onClick={() => setAddingException(true)} className="btn-ghost text-sm flex items-center gap-1.5">

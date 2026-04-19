@@ -992,7 +992,7 @@ function PropsPalette({ onAdd, onClose }: { onAdd: (type: DecorationType) => voi
       className="absolute right-0 top-12 z-50 bg-card border border-border rounded-2xl shadow-xl p-3 w-64"
     >
       <div className="flex items-center justify-between mb-2.5">
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Map Props</p>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Decor</p>
         <button onClick={onClose} className="w-5 h-5 rounded flex items-center justify-center hover:bg-muted text-muted-foreground">
           <X className="w-3 h-3" />
         </button>
@@ -1427,7 +1427,7 @@ export default function Tables() {
                   pageMode === 'operate' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <Eye className="w-3 h-3" /> Operate
+                <Eye className="w-3 h-3" /> Live
               </button>
             </div>
 
@@ -1461,9 +1461,9 @@ export default function Tables() {
                     className={`hidden sm:flex items-center gap-1.5 h-9 px-3 rounded-xl border text-sm font-medium transition-colors ${
                       propsOpen ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted text-muted-foreground'
                     }`}
-                    title="Add map props"
+                    title="Add decor (plants, walls, art)"
                   >
-                    <Flower2 className="w-3.5 h-3.5" /> Props
+                    <Flower2 className="w-3.5 h-3.5" /> Decor
                   </button>
                   <AnimatePresence>
                     {propsOpen && <PropsPalette onAdd={handleAddProp} onClose={() => setPropsOpen(false)} />}

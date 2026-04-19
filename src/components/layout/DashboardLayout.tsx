@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingBag, UtensilsCrossed, Package, BarChart3,
   Settings, LogOut, ChefHat, Menu, X, Bell, Clock, TableProperties, ExternalLink,
-  FlaskConical, Monitor, CalendarDays,
+  FlaskConical, Monitor, CalendarDays, ChevronDown,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store';
@@ -15,7 +15,7 @@ const navItems = [
   { path: '/orders',       label: 'Orders',        icon: ShoppingBag },
   { path: '/menu-manager', label: 'Menu',          icon: UtensilsCrossed },
   { path: '/ingredients',  label: 'Ingredients',  icon: FlaskConical },
-  { path: '/inventory',    label: 'Inventory',     icon: Package },
+  { path: '/inventory',    label: 'Stock',          icon: Package },
   { path: '/tables',       label: 'Tables & QR',   icon: TableProperties },
   { path: '/prep-times',   label: 'Prep Times',    icon: Clock },
   { path: '/analytics',    label: 'Analytics',     icon: BarChart3 },
@@ -149,9 +149,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-destructive rounded-full" />
             )}
           </Link>
-          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary select-none">
-            {initials}
-          </div>
+          <Link to="/settings" className="flex items-center gap-1 rounded-xl hover:bg-muted px-1 py-1 transition-colors" title="Account settings">
+            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary select-none">
+              {initials}
+            </div>
+            <ChevronDown className="w-3 h-3 text-muted-foreground" />
+          </Link>
         </header>
 
         <main className="flex-1 overflow-y-auto p-4 md:p-6">

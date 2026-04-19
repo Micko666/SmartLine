@@ -51,7 +51,7 @@ export default function Inventory() {
     <DashboardLayout>
       <div className="space-y-5">
         <div>
-          <h1 className="font-display text-2xl font-bold">Inventory</h1>
+          <h1 className="font-display text-2xl font-bold">Stock</h1>
           <p className="text-muted-foreground text-sm mt-0.5">Track stock and prevent overselling — changes reflect instantly in the customer menu</p>
         </div>
 
@@ -203,8 +203,24 @@ export default function Inventory() {
         </div>
 
         {visible.length === 0 && (
-          <div className="glass-card p-12 text-center">
-            <p className="text-muted-foreground">No items match your filter.</p>
+          <div className="glass-card p-10 text-center space-y-2">
+            {tracked.length === 0 && menuItems.some(i => i.status !== 'archived' && i.stock === null) ? (
+              <>
+                <Package className="w-8 h-8 mx-auto text-muted-foreground" />
+                <p className="font-medium">Nothing tracked yet</p>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                  Your menu items have unlimited stock. Open <span className="font-medium">Menu Manager</span>, edit an item, and set a stock number to start tracking it here.
+                </p>
+              </>
+            ) : tracked.length === 0 ? (
+              <>
+                <Package className="w-8 h-8 mx-auto text-muted-foreground" />
+                <p className="font-medium">No items yet</p>
+                <p className="text-sm text-muted-foreground">Add items in Menu Manager to start tracking stock.</p>
+              </>
+            ) : (
+              <p className="text-muted-foreground">No items match your filter.</p>
+            )}
           </div>
         )}
       </div>

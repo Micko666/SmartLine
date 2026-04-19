@@ -131,8 +131,15 @@ export default function Analytics() {
 
   const { topItems, slowItems } = useMemo(() => {
     const active = menuItems.filter(m => m.status !== 'archived');
-    const sorted = [...active].sort((a, b) => b.salesCount - a.salesCount);
-    return { topItems: sorted.slice(0, 5), slowItems: sorted.filter(i => i.salesCount === 0 || true).slice(-5).reverse() };
+    const withSales = active.filter(i => i.salesCount > 0);
+    const sorted = [...withSales].sort((a, b) => b.salesCount - a.salesCount);
+    return {
+      topItems: sorted.slice(0, 5),
+      // "Slow moving" = items that *have* sold, just less than others.
+      // Items with zero sales stay out so a fresh account doesn't see
+      // its entire menu branded as slow movers.
+      slowItems: sorted.length > 5 ? sorted.slice(-5).reverse() : [],
+    };
   }, [menuItems]);
 
   // ── Station performance ────────────────────────────────────────────────────

@@ -66,7 +66,7 @@ export default function Settings() {
           </div>
           <div className="grid sm:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs font-medium mb-1.5 block">Restaurant Name *</label>
+              <label className="text-xs font-medium mb-1.5 block">Business Name *</label>
               <input value={form.businessName} onChange={e => up('businessName', e.target.value)} className={input} />
             </div>
             <div>
@@ -201,10 +201,10 @@ export default function Settings() {
         <section className="glass-card p-6 space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <ImagePlus className="w-4 h-4 text-primary" />
-            <h2 className="font-display font-semibold">Deployment URL</h2>
+            <h2 className="font-display font-semibold">Public URL</h2>
           </div>
           <div>
-            <label className="text-xs font-medium mb-1.5 block">App URL (used in QR codes)</label>
+            <label className="text-xs font-medium mb-1.5 block">Domain used in QR codes</label>
             <input value={form.appUrl} onChange={e => up('appUrl', e.target.value)} placeholder="https://yourapp.com" className={input} />
             <p className="text-xs text-muted-foreground mt-1">QR codes for tables will link to <span className="font-mono text-primary">{form.appUrl}/menu?t=&#123;tableId&#125;</span></p>
           </div>

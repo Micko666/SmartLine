@@ -1,12 +1,83 @@
-import { useMemo } from 'react';
-import { TrendingUp, ShoppingBag, Clock, Flame, AlertTriangle, CheckCircle2, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { TrendingUp, ShoppingBag, Clock, Flame, AlertTriangle, CheckCircle2, ArrowUpRight, ArrowDownRight, X, ChefHat, QrCode, Settings2, Utensils } from 'lucide-react';
 import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Link } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import { isActiveOrder, isRevenueOrder, ORDER_STATUS_CSS, ORDER_STATUS_LABELS } from '@/domain/orderMachine';
 import type { Order } from '@/domain/types';
+
+// ── Getting Started card ──────────────────────────────────────────────────────
+// Shown to fresh accounts (no orders yet). Dismissed per-user in localStorage.
+
+const STARTER_ITEM_IDS = new Set(['starter-1','starter-2','starter-3','starter-4','starter-5','starter-6']);
+
+function GettingStartedCard({ userId, menuItems, tables }: {
+  userId: string;
+  menuItems: { id: string }[];
+  tables: { id: string }[];
+}) {
+  const key = `smartline-onboarding-dismissed-${userId}`;
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem(key) === '1');
+
+  if (dismissed) return null;
+
+  const hasCustomMenu  = menuItems.some(i => !STARTER_ITEM_IDS.has(i.id));
+  const hasCustomTable = tables.some(t => !t.id.startsWith('tbl-s'));
+  const hasLogo        = false; // checked elsewhere; just link to settings
+
+  const steps = [
+    { done: hasCustomMenu,  icon: Utensils,  label: 'Customise your menu',       to: '/menu-manager' },
+    { done: hasCustomTable, icon: ChefHat,   label: 'Set up your tables',        to: '/tables'       },
+    { done: hasCustomTable, icon: QrCode,    label: 'Print QR codes for tables', to: '/tables'       },
+    { done: hasLogo,        icon: Settings2, label: 'Add your logo & branding',  to: '/settings'     },
+  ];
+
+  const done = steps.filter(s => s.done).length;
+
+  function dismiss() {
+    localStorage.setItem(key, '1');
+    setDismissed(true);
+  }
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+        className="glass-card p-5 border-primary/20 bg-primary/5"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1">
+            <p className="font-display font-semibold">Get started with SmartLine</p>
+            <p className="text-sm text-muted-foreground mt-0.5">{done} of {steps.length} steps complete</p>
+            <div className="mt-3 grid sm:grid-cols-2 gap-2">
+              {steps.map(({ done: stepDone, icon: Icon, label, to }) => (
+                <Link key={label} to={to} className={`flex items-center gap-2.5 text-sm rounded-xl px-3 py-2 transition-colors ${stepDone ? 'text-muted-foreground line-through' : 'hover:bg-primary/10 text-foreground'}`}>
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${stepDone ? 'bg-success/20' : 'bg-muted'}`}>
+                    {stepDone
+                      ? <CheckCircle2 className="w-3 h-3 text-success" />
+                      : <Icon className="w-3 h-3 text-muted-foreground" />}
+                  </div>
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </div>
+          <button onClick={dismiss} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors shrink-0" title="Dismiss">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        {done === steps.length && (
+          <p className="text-sm text-success mt-3 font-medium">✓ All done — you're ready to take orders!</p>
+        )}
+      </motion.div>
+    </AnimatePresence>
+  );
+}
 
 function timeAgo(iso: string) {
   const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -16,10 +87,12 @@ function timeAgo(iso: string) {
 const CHART_COLORS = ['hsl(160,84%,29%)', 'hsl(38,92%,50%)', 'hsl(210,100%,52%)', 'hsl(220,14%,70%)'];
 
 export default function Dashboard() {
-  const { orders, menuItems, settings } = useStore(useShallow(s => ({
+  const { orders, menuItems, tables, settings, user } = useStore(useShallow(s => ({
     orders: s.orders,
     menuItems: s.menuItems,
+    tables: s.tables,
     settings: s.settings,
+    user: s.user,
   })));
 
   const sym = settings.currencySymbol;
@@ -86,8 +159,13 @@ export default function Dashboard() {
   }, [orders]);
 
   // ── Top selling items (from store salesCount) ──
+  // Only show items that have actually sold — a fresh account shouldn't see
+  // a "Top Selling" list populated by seed items with 0 sales.
   const topItems = useMemo(
-    () => [...menuItems].sort((a, b) => b.salesCount - a.salesCount).slice(0, 5),
+    () => menuItems
+      .filter(i => i.salesCount > 0)
+      .sort((a, b) => b.salesCount - a.salesCount)
+      .slice(0, 5),
     [menuItems],
   );
 
@@ -110,6 +188,11 @@ export default function Dashboard() {
           <h1 className="font-display text-2xl font-bold">Dashboard</h1>
           <p className="text-muted-foreground text-sm mt-0.5">Real-time overview of your operations</p>
         </div>
+
+        {/* Onboarding — only shown while account has no real orders */}
+        {orders.length === 0 && user && (
+          <GettingStartedCard userId={user.id} menuItems={menuItems} tables={tables} />
+        )}
 
         {/* KPI Cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
