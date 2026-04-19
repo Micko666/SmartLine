@@ -55,3 +55,25 @@ export async function upsertCalendarSettings(
     .eq('user_id', userId);
   if (error) throw new Error(error.message);
 }
+
+// ── Categories ────────────────────────────────────────────────────────────────
+// Stored as a JSONB column so user-created categories survive cross-device logins.
+
+export async function fetchCategories(userId: string): Promise<string[]> {
+  const { data } = await supabase!
+    .from('business_settings')
+    .select('categories')
+    .eq('user_id', userId)
+    .single();
+  const raw = (data as Record<string, unknown> | null)?.categories;
+  if (!Array.isArray(raw)) return [];
+  return raw as string[];
+}
+
+export async function saveCategories(userId: string, categories: string[]): Promise<void> {
+  const { error } = await supabase!
+    .from('business_settings')
+    .update({ categories })
+    .eq('user_id', userId);
+  if (error) throw new Error(error.message);
+}

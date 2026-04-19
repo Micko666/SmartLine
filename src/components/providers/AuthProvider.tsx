@@ -6,7 +6,6 @@ import {
   DEFAULT_SETTINGS,
   SEED_MENU_ITEMS,
   SEED_TABLES,
-  FRESH_MENU_ITEMS,
   FRESH_TABLES,
   SEED_CATEGORIES,
   DEMO_USER,
@@ -125,7 +124,7 @@ function _rehydrateLocal() {
         const parsed = JSON.parse(raw);
         if (parsed?.state) {
           workspace = {
-            menuItems:  parsed.state.menuItems  ?? (isDemo ? SEED_MENU_ITEMS  : FRESH_MENU_ITEMS),
+            menuItems:  parsed.state.menuItems  ?? (isDemo ? SEED_MENU_ITEMS  : []),
             categories: parsed.state.categories ?? SEED_CATEGORIES,
             tables:     parsed.state.tables     ?? (isDemo ? SEED_TABLES      : FRESH_TABLES),
             orders:     parsed.state.orders     ?? [],
@@ -147,7 +146,7 @@ function _rehydrateLocal() {
 
     if (!workspace) {
       workspace = {
-        menuItems:       isDemo ? SEED_MENU_ITEMS  : FRESH_MENU_ITEMS,
+        menuItems:       isDemo ? SEED_MENU_ITEMS  : [],
         categories:      SEED_CATEGORIES,
         tables:          isDemo ? SEED_TABLES       : FRESH_TABLES,
         orders:          [],

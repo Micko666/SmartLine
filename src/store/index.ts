@@ -11,7 +11,7 @@ import type {
 } from '../domain/types';
 import {
   SEED_MENU_ITEMS, SEED_TABLES, DEFAULT_SETTINGS, DEMO_USER, SEED_CATEGORIES,
-  FRESH_MENU_ITEMS, FRESH_TABLES, SEED_INGREDIENTS,
+  FRESH_TABLES, SEED_INGREDIENTS,
 } from '../domain/initialData';
 import { advance, isActiveOrder, isRevenueOrder } from '../domain/orderMachine';
 import { normalizeStation } from '../domain/stations';
@@ -69,7 +69,7 @@ type WorkspaceSnapshot = {
 function defaultWorkspace(user: User): WorkspaceSnapshot {
   const isDemo = user.id === DEMO_USER.id;
   return {
-    menuItems:      isDemo ? SEED_MENU_ITEMS : FRESH_MENU_ITEMS,
+    menuItems:      isDemo ? SEED_MENU_ITEMS : [],
     categories:     SEED_CATEGORIES,
     tables:         isDemo ? SEED_TABLES : FRESH_TABLES,
     orders:         [],
@@ -507,9 +507,10 @@ export const useStore = create<AppState>()((set, get) => ({
     });
     _persistLocal(get);
     if (isSupabaseEnabled() && get().user?.id) {
-      const { settings, user } = get();
-      bridge.persistSettings(settings, user!.id).catch(() =>
-        toast.error('Failed to save category.'));
+      const { categories, user } = get();
+      import('@/lib/supabase/queries/settings').then(({ saveCategories }) =>
+        saveCategories(user!.id, categories).catch(() =>
+          toast.error('Failed to save category.')));
     }
   },
 
@@ -517,9 +518,10 @@ export const useStore = create<AppState>()((set, get) => ({
     set(s => ({ categories: s.categories.filter(c => c !== name) }));
     _persistLocal(get);
     if (isSupabaseEnabled() && get().user?.id) {
-      const { settings, user } = get();
-      bridge.persistSettings(settings, user!.id).catch(() =>
-        toast.error('Failed to delete category.'));
+      const { categories, user } = get();
+      import('@/lib/supabase/queries/settings').then(({ saveCategories }) =>
+        saveCategories(user!.id, categories).catch(() =>
+          toast.error('Failed to delete category.')));
     }
   },
 

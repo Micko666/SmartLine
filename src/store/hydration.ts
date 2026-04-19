@@ -8,7 +8,7 @@ import { fetchMenuItems, insertMenuItem } from '@/lib/supabase/queries/menu';
 import { fetchTables, insertTable } from '@/lib/supabase/queries/tables';
 import { fetchOrders } from '@/lib/supabase/queries/orders';
 import { fetchReceipts } from '@/lib/supabase/queries/receipts';
-import { fetchSettings, fetchNextOrderNumber, upsertSettings, upsertCalendarSettings, fetchCalendarSettings } from '@/lib/supabase/queries/settings';
+import { fetchSettings, fetchNextOrderNumber, upsertSettings, upsertCalendarSettings, fetchCalendarSettings, fetchCategories } from '@/lib/supabase/queries/settings';
 import { fetchReservations } from '@/lib/supabase/queries/reservations';
 import { fetchIngredients } from '@/lib/supabase/queries/ingredients';
 import { fetchKitchenEvents } from '@/lib/supabase/queries/kitchenEvents';
@@ -51,6 +51,7 @@ export async function loadWorkspaceFromSupabase(
     menuItems, tables, orders, receipts, settings, nextOrderNumber,
     reservations, ingredients, kitchenEvents, decorations,
     calendarEvents, eventPackages, calendarSettingsRaw, employees, shifts,
+    storedCategories,
   ] = await Promise.all([
     fetchMenuItems(userId),
     fetchTables(userId),
@@ -67,6 +68,7 @@ export async function loadWorkspaceFromSupabase(
     fetchCalendarSettings(userId),
     fetchEmployees(userId),
     fetchShifts(userId),
+    fetchCategories(userId),
   ]);
 
   // If settings row is missing (signup seed failed), create it now
@@ -98,9 +100,17 @@ export async function loadWorkspaceFromSupabase(
     workingExceptions: [],
   };
 
+  // Merge stored categories (user-created) with any categories already in use
+  // by menu items, then fall back to seed defaults so the list is never empty.
+  // Stored categories come from the `categories` JSONB column (migration 010).
+  const itemCategories = menuItems.map(m => m.category).filter(Boolean);
+  const mergedCategories = [
+    ...new Set([...storedCategories, ...itemCategories, ...SEED_CATEGORIES]),
+  ];
+
   return {
     menuItems,
-    categories: SEED_CATEGORIES,
+    categories: mergedCategories,
     tables,
     orders,
     receipts,
@@ -127,7 +137,6 @@ export async function loadWorkspaceFromSupabase(
  * no tables) but the current local store has data — meaning the user was
  * working in local mode before connecting Supabase.
  *
- * Also called manually from Settings → "Sync to Cloud".
  */
 export async function pushLocalToSupabase(
   local: {

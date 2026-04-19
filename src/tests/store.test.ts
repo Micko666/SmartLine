@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useStore, _resetStoreForTesting } from '../store';
-import { SEED_MENU_ITEMS, SEED_TABLES, FRESH_MENU_ITEMS } from '../domain/initialData';
+import { SEED_MENU_ITEMS, SEED_TABLES } from '../domain/initialData';
 import type { CartItem } from '../domain/types';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -489,21 +489,19 @@ describe('workspace isolation', () => {
     });
     const state = useStore.getState();
     expect(state.isAuthenticated).toBe(true);
-    // Fewer items than the full demo seed
-    expect(state.menuItems.length).toBe(FRESH_MENU_ITEMS.length);
-    expect(state.menuItems.length).toBeLessThan(SEED_MENU_ITEMS.length);
+    // New accounts start with a blank menu
+    expect(state.menuItems).toHaveLength(0);
     expect(state.settings.businessName).toBe("Alice's Bistro");
     expect(state.orders).toHaveLength(0);
     expect(state.receipts).toHaveLength(0);
   });
 
-  it('new user starter items have null stock (unlimited by default)', async () => {
+  it('new user starts with an empty menu (blank canvas)', async () => {
     await useStore.getState().signup({
       email: 'bob@example.com', password: 'pass1234',
       name: 'Bob', businessName: "Bob's Place",
     });
-    const nullStockItems = useStore.getState().menuItems.filter(i => i.stock === null);
-    expect(nullStockItems.length).toBe(useStore.getState().menuItems.length);
+    expect(useStore.getState().menuItems).toHaveLength(0);
   });
 
   it('two accounts do not share menu items, orders, or settings', async () => {
