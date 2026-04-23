@@ -46,9 +46,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     navigate('/');
   };
 
-  // Unread active orders for badge
+  // Notification badge — only TODAY's active orders trigger the alert.
+  // Orders from previous days that are still mid-flow save their status but
+  // are shown as a carry-over section in /orders without ringing the bell.
+  const todayStr = new Date().toISOString().slice(0, 10);
   const activeCount = orders.filter(o =>
-    o.status === 'paid' || o.status === 'preparing' || o.status === 'ready',
+    (o.status === 'paid' || o.status === 'preparing' || o.status === 'ready') &&
+    o.createdAt.slice(0, 10) === todayStr,
   ).length;
 
   const pendingBookings = calendarEvents.filter(e => e.status === 'pending').length;

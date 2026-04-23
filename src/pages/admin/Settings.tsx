@@ -263,7 +263,7 @@ export default function Settings() {
               icon: UtensilsCrossed,
               label: 'Food Order Portal',
               description: 'Dine-in, takeaway & delivery — customers choose on arrival',
-              href: `${window.location.origin}/menu?r=${settings.restaurantToken}`,
+              href: `${window.location.origin}/order/${settings.restaurantToken}`,
             },
             {
               icon: CalendarDays,

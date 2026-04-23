@@ -74,19 +74,31 @@ export default function Orders() {
     : filter === 'tables' ? orders.filter(o => ACTIVE_STATUSES.includes(o.status as OrderStatus))
     : orders.filter(o => o.status === filter);
 
-  // Split visible orders into today vs. previous days so the live board
-  // doesn't force an infinite scroll. Previous days live in a collapsible log.
-  const { todayOrders, olderByDay, olderDayKeys } = useMemo(() => {
+  // Split visible orders into three buckets:
+  //   1. carryoverActive  — from previous days, still in an active status (paid/preparing/ready)
+  //                         → pinned at the very top until they reach a terminal state
+  //   2. todayOrders      — today's orders
+  //   3. olderByDay       — previous-day orders that are already in a terminal state (accordion)
+  const { carryoverActive, todayOrders, olderByDay, olderDayKeys } = useMemo(() => {
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const carryoverActive: Order[] = [];
     const todayOrders: Order[] = [];
     const older: Record<string, Order[]> = {};
     for (const o of filtered) {
       const k = dayKey(o.createdAt);
-      if (k === today) todayOrders.push(o);
-      else (older[k] = older[k] ?? []).push(o);
+      if (k === today) {
+        todayOrders.push(o);
+      } else if (ACTIVE_STATUSES.includes(o.status as OrderStatus)) {
+        carryoverActive.push(o);
+      } else {
+        (older[k] = older[k] ?? []).push(o);
+      }
     }
+    // Oldest carryover first so urgent items surface quickly
+    carryoverActive.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     return {
+      carryoverActive,
       todayOrders,
       olderByDay: older,
       olderDayKeys: Object.keys(older).sort((a, b) => b.localeCompare(a)),
@@ -197,6 +209,109 @@ export default function Orders() {
           </div>
         ) : (
           <div className="space-y-6">
+            {/* ── Carryover active orders (previous days, not yet terminal) ── */}
+            {carryoverActive.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <AlertTriangle className="w-3.5 h-3.5 text-warning" />
+                  <h2 className="font-display font-semibold text-sm text-warning uppercase tracking-wide">
+                    Needs attention
+                  </h2>
+                  <span className="text-xs text-warning/70 normal-case">
+                    · {carryoverActive.length} order{carryoverActive.length === 1 ? '' : 's'} from previous days still active
+                  </span>
+                </div>
+                <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  <AnimatePresence mode="popLayout">
+                    {carryoverActive.map(order => {
+                      const nextStatus = advance(order.status);
+                      const canCancel = canTransition(order.status, 'cancelled');
+                      const finalPrepTime = order.estimatedPrepTime + order.prepTimeAdjustment;
+                      return (
+                        <motion.div
+                          key={order.id} layout
+                          initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+                          className="glass-card p-5 border-warning/40 relative overflow-hidden"
+                        >
+                          {/* Amber left accent bar */}
+                          <div className="absolute left-0 top-0 bottom-0 w-1 bg-warning rounded-l-2xl" />
+                          <div className="pl-1">
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="font-display text-lg font-bold shrink-0">#{order.orderNumber}</span>
+                                <span className={ORDER_STATUS_CSS[order.status]}>{ORDER_STATUS_LABELS[order.status]}</span>
+                              </div>
+                              <div className="flex flex-col items-end gap-0.5 shrink-0">
+                                <span className="text-xs text-warning font-medium">
+                                  {new Date(order.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground tabular-nums">{formatTime(order.createdAt)}</span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
+                              <span className="font-medium text-foreground">{order.tableName}</span>
+                              <span>·</span>
+                              <span className="capitalize">{order.paymentMethod.replace('_', ' ')}</span>
+                            </div>
+
+                            <div className="space-y-1.5 mb-4">
+                              {order.items.map((item, i) => (
+                                <div key={i} className="flex items-center justify-between text-sm">
+                                  <span className="truncate">{item.menuItemIcon} {item.quantity}× {item.menuItemName}</span>
+                                  <span className="text-muted-foreground shrink-0 ml-2">{sym}{item.lineTotal.toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+
+                            {order.notes && (
+                              <p className="text-xs text-muted-foreground mb-3 p-2 bg-muted/50 rounded-lg italic">"{order.notes}"</p>
+                            )}
+
+                            <div className="flex items-center justify-between pt-3 border-t border-border">
+                              <div>
+                                <p className="text-sm font-bold">{sym}{order.total.toFixed(2)}</p>
+                                <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+                                  <Clock className="w-3 h-3" /> ~{finalPrepTime} min
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {(order.status === 'preparing' || order.status === 'paid') && (
+                                  <button
+                                    onClick={() => setEventOrder(order)}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-warning/40 text-warning text-xs font-medium hover:bg-warning/10 transition-colors"
+                                    title="Log kitchen event"
+                                  >
+                                    <AlertTriangle className="w-3 h-3" />
+                                  </button>
+                                )}
+                                {canCancel && (
+                                  <button
+                                    onClick={() => handleCancel(order.id, order.orderNumber)}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-destructive/30 text-destructive text-xs font-medium hover:bg-destructive/10 transition-colors"
+                                  >
+                                    <X className="w-3 h-3" /> Cancel
+                                  </button>
+                                )}
+                                {nextStatus && nextStatus !== 'cancelled' && (
+                                  <button
+                                    onClick={() => handleAdvance(order.id, order.orderNumber, order.status)}
+                                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity"
+                                  >
+                                    {ORDER_STATUS_LABELS[nextStatus]} <ArrowRight className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </AnimatePresence>
+                </div>
+              </div>
+            )}
+
             {todayOrders.length > 0 && (
               <div>
                 <div className="flex items-baseline justify-between mb-3">
