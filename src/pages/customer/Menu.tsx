@@ -92,11 +92,12 @@ const ALLERGEN_EMOJI: Record<string, string> = {
 };
 
 // ─── Payment options ──────────────────────────────────────────────────────────
-const PAYMENT_METHODS: { id: PaymentMethod; label: string; icon: React.ElementType }[] = [
+const PAYMENT_METHODS: { id: PaymentMethod; label: string; deliveryLabel?: string; hideForDelivery?: boolean; icon: React.ElementType }[] = [
   { id: 'card',       label: 'Credit / Debit Card',  icon: CreditCard },
   { id: 'google_pay', label: 'Google Pay',            icon: Smartphone },
   { id: 'apple_pay',  label: 'Apple Pay',             icon: Smartphone },
-  { id: 'cash',       label: 'Pay at Counter',        icon: Banknote },
+  // "Pay at Counter" makes no sense for delivery — hide it. For takeaway it becomes "Pay on Pickup".
+  { id: 'cash', label: 'Pay on Pickup', deliveryLabel: '', hideForDelivery: true, icon: Banknote },
 ];
 
 // ─── Stock badge ──────────────────────────────────────────────────────────────
@@ -396,10 +397,18 @@ export default function CustomerMenu() {
       setShowPayment(false);
       setCart([]);
       setCartIssues([]);
+      // Build receipt URL — carry all scheduling params so the receipt page
+      // can reconstruct a correct "Order More" link and show the right copy.
       const params = new URLSearchParams();
       if (restaurantToken) params.set('r', restaurantToken);
-      if (orderMode === 'dine-in' && tableParam) params.set('t', tableParam);
-      else if (orderMode !== 'dine-in') params.set('mode', orderMode);
+      if (orderMode === 'dine-in' && tableParam) {
+        params.set('t', tableParam);
+      } else if (orderMode !== 'dine-in') {
+        params.set('mode', orderMode);
+        if (scheduledDate) params.set('date', scheduledDate);
+        if (scheduledTime) params.set('time', scheduledTime);
+        if (orderMode === 'delivery' && deliveryAddress.trim()) params.set('addr', deliveryAddress.trim());
+      }
       navigate(`/receipt/${result.receipt.id}?${params.toString()}`);
     } else {
       const issues = result.unavailableItems;
@@ -420,6 +429,12 @@ export default function CustomerMenu() {
   const needsModeSelection = !menuLoading && !tableParam && !modeParam;
   if (needsModeSelection) {
     const selectMode = (mode: OrderMode) => {
+      if (mode === 'dine-in') {
+        // Dine-in needs the table picker — send to OrderPortal which has it
+        if (restaurantToken) navigate(`/order/${restaurantToken}`);
+        return;
+      }
+      // Takeaway / delivery — set mode param; SchedulingStep handles the rest
       const next = new URLSearchParams(searchParams);
       next.set('mode', mode);
       setSearchParams(next, { replace: true });
@@ -1386,16 +1401,21 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
           {/* Payment method */}
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Payment method</p>
           <div className="grid grid-cols-2 gap-2 mb-5">
-            {PAYMENT_METHODS.map(({ id, label, icon: Icon }) => (
-              <button
-                key={id} onClick={() => onPaymentMethod(id)}
-                className={`flex items-center gap-2 p-3 rounded-xl border text-sm font-medium transition-colors ${paymentMethod === id ? 'border-primary bg-primary/5 text-primary' : 'border-border bg-muted/30 text-foreground'}`}
-              >
-                <Icon className="w-4 h-4 shrink-0" />
-                <span className="text-left leading-tight">{label}</span>
-                {paymentMethod === id && <CheckCircle2 className="w-3.5 h-3.5 ml-auto shrink-0" />}
-              </button>
-            ))}
+            {PAYMENT_METHODS
+              .filter(p => !(orderMode === 'delivery' && p.hideForDelivery))
+              .map(({ id, label, deliveryLabel, icon: Icon }) => {
+                const displayLabel = orderMode === 'delivery' && deliveryLabel !== undefined ? deliveryLabel : label;
+                return (
+                  <button
+                    key={id} onClick={() => onPaymentMethod(id)}
+                    className={`flex items-center gap-2 p-3 rounded-xl border text-sm font-medium transition-colors ${paymentMethod === id ? 'border-primary bg-primary/5 text-primary' : 'border-border bg-muted/30 text-foreground'}`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <span className="text-left leading-tight">{displayLabel}</span>
+                    {paymentMethod === id && <CheckCircle2 className="w-3.5 h-3.5 ml-auto shrink-0" />}
+                  </button>
+                );
+              })}
           </div>
 
           {/* Notes */}

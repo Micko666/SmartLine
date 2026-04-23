@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
-import { CheckCircle2, Clock, ChefHat } from 'lucide-react';
+import { CheckCircle2, Clock, ChefHat, ShoppingBag, Bike } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -19,6 +19,10 @@ export default function CustomerReceipt() {
   const [searchParams] = useSearchParams();
   const restaurantToken = searchParams.get('r') ?? '';
   const tableId         = searchParams.get('t') ?? '';
+  const mode            = searchParams.get('mode') ?? '';          // 'takeaway' | 'delivery' | ''
+  const scheduledDate   = searchParams.get('date') ?? '';
+  const scheduledTime   = searchParams.get('time') ?? '';
+  const scheduledAddr   = searchParams.get('addr') ?? '';
 
   const { receipts, orders, settings } = useStore(useShallow(s => ({
     receipts: s.receipts,
@@ -69,11 +73,39 @@ export default function CustomerReceipt() {
     );
   }
 
-  const createdAt       = new Date(receipt.createdAt);
+  const createdAt         = new Date(receipt.createdAt);
   const estimatedPrepTime = order?.estimatedPrepTime ?? 15;
-  const menuUrl         = restaurantToken
-    ? `/menu?${tableId ? `t=${tableId}&` : ''}r=${restaurantToken}`
-    : null;
+  const isScheduled       = (mode === 'takeaway' || mode === 'delivery') && !!scheduledDate && !!scheduledTime;
+
+  // Human-readable scheduled label
+  function fmtScheduled(dateStr: string, timeStr: string) {
+    const today = new Date().toISOString().slice(0, 10);
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    const dateLabel =
+      dateStr === today    ? 'Today' :
+      dateStr === tomorrow ? 'Tomorrow' :
+      new Date(dateStr + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+    return `${dateLabel} at ${timeStr}`;
+  }
+
+  // "Order More" — correctly reconstruct the full menu URL with all params
+  // so the customer lands back on the exact same mode/schedule, not the
+  // generic mode-selector (which was the old bug).
+  let menuUrl: string | null = null;
+  if (restaurantToken) {
+    if (tableId) {
+      // Dine-in: return to same table
+      menuUrl = `/menu?t=${encodeURIComponent(tableId)}&r=${encodeURIComponent(restaurantToken)}`;
+    } else if (mode === 'takeaway' || mode === 'delivery') {
+      // Takeaway / delivery: carry the full scheduling context
+      const p = new URLSearchParams({ mode, r: restaurantToken });
+      if (scheduledDate) p.set('date', scheduledDate);
+      if (scheduledTime) p.set('time', scheduledTime);
+      if (scheduledAddr) p.set('addr', scheduledAddr);
+      menuUrl = `/menu?${p.toString()}`;
+    }
+    // No menuUrl for receipt-only views (no table, no mode)
+  }
 
   return (
     <div className="min-h-screen bg-background pb-12">
@@ -94,11 +126,25 @@ export default function CustomerReceipt() {
           animate={{ scale: 1, opacity: 1 }}
           className="text-center mb-2"
         >
-          <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-3">
-            <CheckCircle2 className="w-8 h-8 text-green-600" />
+          <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3 ${
+            isScheduled ? 'bg-primary/10' : 'bg-green-500/10'
+          }`}>
+            {isScheduled && mode === 'takeaway' ? (
+              <ShoppingBag className="w-8 h-8 text-primary" />
+            ) : isScheduled && mode === 'delivery' ? (
+              <Bike className="w-8 h-8 text-primary" />
+            ) : (
+              <CheckCircle2 className="w-8 h-8 text-green-600" />
+            )}
           </div>
           <h1 className="font-display text-2xl font-bold">Order Confirmed</h1>
-          <p className="text-muted-foreground text-sm mt-1">Your order is with the kitchen</p>
+          <p className="text-muted-foreground text-sm mt-1">
+            {isScheduled
+              ? mode === 'takeaway'
+                ? `Ready for pickup ${fmtScheduled(scheduledDate, scheduledTime)}`
+                : `Delivery scheduled for ${fmtScheduled(scheduledDate, scheduledTime)}`
+              : 'Your order is with the kitchen'}
+          </p>
         </motion.div>
 
         {/* Order number — prominent "show to staff" badge */}
@@ -116,19 +162,35 @@ export default function CustomerReceipt() {
           <p className="text-[10px] text-muted-foreground mt-3 opacity-50">Show this to a staff member if needed</p>
         </motion.div>
 
-        {/* Estimated wait */}
+        {/* Timing card — scheduled time for takeaway/delivery, wait for dine-in */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.13 }}
           className="glass-card p-4 flex items-center gap-3"
         >
-          <Clock className="w-5 h-5 text-amber-500 shrink-0" />
+          <Clock className={`w-5 h-5 shrink-0 ${isScheduled ? 'text-primary' : 'text-amber-500'}`} />
           <div>
-            <p className="font-semibold text-sm">~{estimatedPrepTime} min estimated wait</p>
-            <p className="text-xs text-muted-foreground">
-              Placed at {createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </p>
+            {isScheduled ? (
+              <>
+                <p className="font-semibold text-sm">
+                  {mode === 'takeaway' ? 'Pickup' : 'Delivery'}: {fmtScheduled(scheduledDate, scheduledTime)}
+                </p>
+                {scheduledAddr && (
+                  <p className="text-xs text-muted-foreground mt-0.5">{scheduledAddr}</p>
+                )}
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Ordered at {createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-semibold text-sm">~{estimatedPrepTime} min estimated wait</p>
+                <p className="text-xs text-muted-foreground">
+                  Placed at {createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </>
+            )}
           </div>
         </motion.div>
 
