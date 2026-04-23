@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   ShoppingBag, Plus, Minus, X, ChefHat, Clock, Search,
   CreditCard, Smartphone, Banknote, CheckCircle2, AlertTriangle,
-  ClipboardList,
+  ClipboardList, Package, Bike, User, Phone, MapPin,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
@@ -17,10 +17,16 @@ import { useMenuSubscription } from '@/lib/supabase/realtime/useMenuSubscription
 import { fetchRestaurantByToken } from '@/lib/supabase/queries/public';
 
 // ─── Unique stock-reservation session ID (per page load, intentionally fresh) ─
-// This is separate from the persisted customer session — it is only used for
-// the 5-minute stock hold during active checkout. A fresh one each page load
-// means stale holds from closed tabs never block inventory.
 const SESSION_ID = `session-${Math.random().toString(36).slice(2)}`;
+
+// ─── Order modes ──────────────────────────────────────────────────────────────
+type OrderMode = 'dine-in' | 'takeaway' | 'delivery';
+
+const MODE_META: Record<OrderMode, { label: string; icon: React.ElementType; subtitle: string; tableId: string }> = {
+  'dine-in':  { label: 'Dine In',  icon: ChefHat,  subtitle: '',          tableId: '' },
+  takeaway:   { label: 'Takeaway', icon: Package,   subtitle: '🥡 Takeaway — collect from counter', tableId: 'takeaway' },
+  delivery:   { label: 'Delivery', icon: Bike,      subtitle: '🛵 Delivery — we bring it to you',   tableId: 'delivery' },
+};
 
 // ─── Dietary & allergen display maps ─────────────────────────────────────────
 const DIETARY_EMOJI: Record<string, string> = {
@@ -61,7 +67,7 @@ const PAYMENT_METHODS: { id: PaymentMethod; label: string; icon: React.ElementTy
   { id: 'cash',       label: 'Pay at Counter',        icon: Banknote },
 ];
 
-// ─── Stock badge helper ───────────────────────────────────────────────────────
+// ─── Stock badge ──────────────────────────────────────────────────────────────
 function StockBadge({ stock, threshold }: { stock: number | null; threshold: number }) {
   if (stock === null) return null;
   if (stock === 0) return <span className="text-[10px] font-semibold text-destructive px-1.5 py-0.5 rounded-full bg-destructive/10">Unavailable</span>;
@@ -75,35 +81,42 @@ export default function CustomerMenu() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  const tableId         = searchParams.get('t') ?? '';
-  // restaurantToken scopes this device's session to one restaurant.
-  // Present in all QR-generated URLs (&r=...). Falls back to empty string
-  // for old QR codes — session features are gracefully disabled in that case.
+  // URL params — ?t=tableId for dine-in, ?mode=takeaway|delivery for off-premise
+  const tableParam      = searchParams.get('t') ?? '';
+  const modeParam       = searchParams.get('mode') ?? '';
   const restaurantToken = searchParams.get('r') ?? '';
+
+  // Derive order mode
+  const orderMode: OrderMode =
+    modeParam === 'takeaway' ? 'takeaway' :
+    modeParam === 'delivery' ? 'delivery' : 'dine-in';
+
+  // The tableId sent to checkout — real UUID for dine-in, keyword for off-premise
+  const effectiveTableId = orderMode === 'dine-in'
+    ? (tableParam || 'walk-in')
+    : MODE_META[orderMode].tableId;
 
   const {
     menuItems, categories, tables, settings, orders,
     validateCart, createReservation, releaseReservation, checkout, getAvailableStock,
   } = useStore(useShallow(s => ({
-    menuItems:         s.menuItems,
-    categories:        s.categories,
-    tables:            s.tables,
-    settings:          s.settings,
-    orders:            s.orders,
-    validateCart:      s.validateCart,
-    createReservation: s.createReservation,
+    menuItems:          s.menuItems,
+    categories:         s.categories,
+    tables:             s.tables,
+    settings:           s.settings,
+    orders:             s.orders,
+    validateCart:       s.validateCart,
+    createReservation:  s.createReservation,
     releaseReservation: s.releaseReservation,
-    checkout:          s.checkout,
-    getAvailableStock: s.getAvailableStock,
+    checkout:           s.checkout,
+    getAvailableStock:  s.getAvailableStock,
   })));
 
-  const table     = tables.find(t => t.id === tableId);
+  const table     = tables.find(t => t.id === tableParam);
   const sym       = settings.currencySymbol;
   const threshold = settings.lowStockThreshold;
 
-  // ── Supabase: bootstrap menu data from restaurantToken on first load ───────
-  // When Supabase is enabled the customer has a separate device with no store
-  // data. We fetch the menu and settings by token and inject into Zustand.
+  // ── Supabase bootstrap ─────────────────────────────────────────────────────
   const [sbUserId, setSbUserId] = useState<string | null>(null);
   const [menuLoading, setMenuLoading] = useState(isSupabaseEnabled() && !!restaurantToken);
 
@@ -123,19 +136,15 @@ export default function CustomerMenu() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restaurantToken]);
 
-  // Subscribe to real-time stock updates for this restaurant
   useMenuSubscription(sbUserId);
 
-  // ── Stable device identity (differentiates two phones at the same table) ──
   const deviceId = useMemo(() => getDeviceId(), []);
 
-  // ── Cart — restored from the persisted session if one exists ──────────────
+  // ── Cart (restored from persisted session) ─────────────────────────────────
   const [cart, setCart] = useState<CartItem[]>(() => {
     if (!restaurantToken) return [];
     const session = loadSession(restaurantToken);
-    // Only restore if same table and no orders placed yet
-    if (!session || session.tableId !== tableId || session.placedOrderIds?.length) return [];
-    // Convert enriched SessionCartItem[] → lean CartItem[]
+    if (!session || session.tableId !== effectiveTableId || session.placedOrderIds?.length) return [];
     return session.cart.map(si => ({
       menuItemId: si.menuItemId,
       quantity: si.quantity,
@@ -143,30 +152,32 @@ export default function CustomerMenu() {
     }));
   });
 
-  // ── Previously placed order IDs in this visit (for "Your orders" view) ────
   const [placedOrderIds, setPlacedOrderIds] = useState<string[]>(() => {
     if (!restaurantToken) return [];
     const session = loadSession(restaurantToken);
-    if (!session || session.tableId !== tableId) return [];
+    if (!session || session.tableId !== effectiveTableId) return [];
     return session.placedOrderIds ?? [];
   });
 
   // ── UI state ───────────────────────────────────────────────────────────────
-  const [activeCat,       setActiveCat]       = useState('All');
-  const [search,          setSearch]          = useState('');
-  const [showCart,        setShowCart]        = useState(false);
-  const [showPayment,     setShowPayment]     = useState(false);
-  const [showSessionOrders, setShowSessionOrders] = useState(false);
-  const [selectedItem,    setSelectedItem]    = useState<MenuItem | null>(null);
-  const [selectedModifiers, setSelectedModifiers] = useState<CartItemModifier[]>([]);
-  const [paymentMethod,   setPaymentMethod]   = useState<PaymentMethod>('card');
-  const [notes,           setNotes]           = useState('');
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
-  const [cartIssues,      setCartIssues]      = useState<string[]>([]);
+  const [activeCat,         setActiveCat]         = useState('All');
+  const [search,            setSearch]             = useState('');
+  const [showCart,          setShowCart]           = useState(false);
+  const [showPayment,       setShowPayment]        = useState(false);
+  const [showSessionOrders, setShowSessionOrders]  = useState(false);
+  const [selectedItem,      setSelectedItem]       = useState<MenuItem | null>(null);
+  const [selectedModifiers, setSelectedModifiers]  = useState<CartItemModifier[]>([]);
+  const [paymentMethod,     setPaymentMethod]      = useState<PaymentMethod>('card');
+  const [notes,             setNotes]              = useState('');
+  const [checkoutLoading,   setCheckoutLoading]    = useState(false);
+  const [cartIssues,        setCartIssues]         = useState<string[]>([]);
 
-  // ── Session persistence ───────────────────────────────────────────────────
-  // Auto-save whenever cart or order history changes. Enriches lean CartItem[]
-  // with display data so the cart can be restored without a menu lookup.
+  // Customer info — collected at payment for takeaway / delivery
+  const [customerName,     setCustomerName]     = useState('');
+  const [customerPhone,    setCustomerPhone]    = useState('');
+  const [deliveryAddress,  setDeliveryAddress]  = useState('');
+
+  // ── Session persistence ────────────────────────────────────────────────────
   useEffect(() => {
     if (!restaurantToken) return;
     const enrichedCart: SessionCartItem[] = cart.map(ci => {
@@ -189,22 +200,18 @@ export default function CustomerMenu() {
     });
     saveSession(restaurantToken, {
       deviceId,
-      tableId,
+      tableId: effectiveTableId,
       cart: enrichedCart,
       placedOrderIds,
       updatedAt: Date.now(),
     });
-  }, [cart, placedOrderIds, restaurantToken, deviceId, tableId, menuItems]);
+  }, [cart, placedOrderIds, restaurantToken, deviceId, effectiveTableId, menuItems]);
 
-  // ── Release reservation on unmount ────────────────────────────────────────
-  useEffect(() => {
-    return () => releaseReservation(SESSION_ID);
-  }, [releaseReservation]);
+  useEffect(() => { return () => releaseReservation(SESSION_ID); }, [releaseReservation]);
 
-  // ── Orders placed in this session (looked up live from the store) ─────────
   const sessionOrders = orders.filter(o => placedOrderIds.includes(o.id));
 
-  // ── Available items for this menu ─────────────────────────────────────────
+  // ── Menu items ─────────────────────────────────────────────────────────────
   const visibleItems = menuItems.filter(item => {
     if (item.status !== 'active') return false;
     if (item.stock !== null && item.stock === 0 && settings.zeroStockBehavior === 'hide') return false;
@@ -216,9 +223,7 @@ export default function CustomerMenu() {
     .filter(i => !search || i.name.toLowerCase().includes(search.toLowerCase()) || i.description.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => a.sortOrder - b.sortOrder);
 
-  const availableCategories = [...new Set(
-    visibleItems.map(i => i.category).filter(Boolean)
-  )];
+  const availableCategories = [...new Set(visibleItems.map(i => i.category).filter(Boolean))];
 
   // ── Cart calculations ──────────────────────────────────────────────────────
   const cartTotal = cart.reduce((sum, ci) => {
@@ -232,9 +237,9 @@ export default function CustomerMenu() {
     return sum + (item.price + modExtra) * ci.quantity;
   }, 0);
 
-  const taxAmount       = settings.taxDisplay === 'exclusive' ? cartTotal * (settings.taxRate / 100) : 0;
+  const taxAmount        = settings.taxDisplay === 'exclusive' ? cartTotal * (settings.taxRate / 100) : 0;
   const cartTotalWithTax = cartTotal + taxAmount;
-  const totalItems      = cart.reduce((s, ci) => s + ci.quantity, 0);
+  const totalItems       = cart.reduce((s, ci) => s + ci.quantity, 0);
 
   const estimatedWait = cart.length === 0 ? 0 : (() => {
     const maxPrep = Math.max(...cart.map(ci => {
@@ -244,19 +249,21 @@ export default function CustomerMenu() {
     return maxPrep + Math.max(0, cart.length - 1) * 2;
   })();
 
+  // Whether customer info is sufficiently filled for non-dine-in checkout
+  const customerInfoValid =
+    orderMode === 'dine-in' ||
+    (customerName.trim().length > 0 &&
+     customerPhone.trim().length > 0 &&
+     (orderMode !== 'delivery' || deliveryAddress.trim().length > 0));
+
   // ── Cart actions ───────────────────────────────────────────────────────────
   const addToCart = (item: MenuItem, modifiers: CartItemModifier[] = []) => {
     const avail  = getAvailableStock(item.id);
     const inCart = cart.find(c => c.menuItemId === item.id)?.quantity ?? 0;
-    if (item.stock !== null && inCart >= avail) {
-      toast.error(`Only ${avail} available`);
-      return;
-    }
+    if (item.stock !== null && inCart >= avail) { toast.error(`Only ${avail} available`); return; }
     setCart(prev => {
       const existing = prev.find(c => c.menuItemId === item.id && JSON.stringify(c.selectedModifiers) === JSON.stringify(modifiers));
-      if (existing) {
-        return prev.map(c => c === existing ? { ...c, quantity: c.quantity + 1 } : c);
-      }
+      if (existing) return prev.map(c => c === existing ? { ...c, quantity: c.quantity + 1 } : c);
       return [...prev, { menuItemId: item.id, quantity: 1, selectedModifiers: modifiers }];
     });
   };
@@ -268,11 +275,9 @@ export default function CustomerMenu() {
     );
   };
 
-  const removeFromCart = (menuItemId: string) => {
-    setCart(prev => prev.filter(c => c.menuItemId !== menuItemId));
-  };
+  const removeFromCart = (menuItemId: string) => setCart(prev => prev.filter(c => c.menuItemId !== menuItemId));
 
-  // ── Revalidate cart against current store state ────────────────────────────
+  // ── Cart revalidation ──────────────────────────────────────────────────────
   const revalidateCart = useCallback(() => {
     if (cart.length === 0) return true;
     const result = validateCart(cart);
@@ -297,51 +302,49 @@ export default function CustomerMenu() {
     return true;
   }, [cart, validateCart]);
 
-  // ── Open cart ──────────────────────────────────────────────────────────────
-  const handleOpenCart = () => {
-    revalidateCart();
-    setShowCart(true);
-  };
+  const handleOpenCart = () => { revalidateCart(); setShowCart(true); };
 
-  // ── Proceed to payment ─────────────────────────────────────────────────────
   const handleProceedToPayment = () => {
-    if (!revalidateCart()) {
-      toast.error('Some items were updated. Please review your cart.');
-      return;
-    }
+    if (!revalidateCart()) { toast.error('Some items were updated. Please review your cart.'); return; }
     const reserved = createReservation(SESSION_ID, cart);
-    if (!reserved) {
-      revalidateCart();
-      toast.error('Some items ran out of stock. Cart has been updated.');
-      return;
-    }
+    if (!reserved) { revalidateCart(); toast.error('Some items ran out of stock. Cart has been updated.'); return; }
     setShowCart(false);
     setShowPayment(true);
     setCartIssues([]);
   };
 
-  // ── Submit payment ─────────────────────────────────────────────────────────
+  // ── Submit checkout ────────────────────────────────────────────────────────
   const handlePayment = async () => {
     setCheckoutLoading(true);
+
+    // Build notes: prepend customer contact info for takeaway / delivery
+    let fullNotes = notes.trim();
+    if (orderMode !== 'dine-in') {
+      const infoLines = [
+        `Name: ${customerName.trim()}`,
+        `Phone: ${customerPhone.trim()}`,
+        ...(orderMode === 'delivery' ? [`Address: ${deliveryAddress.trim()}`] : []),
+      ].join('\n');
+      fullNotes = [infoLines, fullNotes].filter(Boolean).join('\n---\n');
+    }
+
     const result = await checkout({
-      sessionId:          SESSION_ID,
-      tableId:            tableId || 'walk-in',
+      sessionId:       SESSION_ID,
+      tableId:         effectiveTableId,
       paymentMethod,
       cart,
-      notes:              notes.trim() || undefined,
-      restaurantToken:    restaurantToken || undefined,
+      notes:           fullNotes || undefined,
+      restaurantToken: restaurantToken || undefined,
     });
 
     setCheckoutLoading(false);
 
     if (result.success) {
       const updatedOrderIds = [...placedOrderIds, result.order.id];
-      // Explicitly persist cleared state before navigating — the effect-based
-      // save may not flush in time if navigate() causes an immediate unmount.
       if (restaurantToken) {
         saveSession(restaurantToken, {
           deviceId,
-          tableId,
+          tableId: effectiveTableId,
           cart: [],
           placedOrderIds: updatedOrderIds,
           updatedAt: Date.now(),
@@ -353,7 +356,8 @@ export default function CustomerMenu() {
       setCartIssues([]);
       const params = new URLSearchParams();
       if (restaurantToken) params.set('r', restaurantToken);
-      if (tableId) params.set('t', tableId);
+      if (orderMode === 'dine-in' && tableParam) params.set('t', tableParam);
+      else if (orderMode !== 'dine-in') params.set('mode', orderMode);
       navigate(`/receipt/${result.receipt.id}?${params.toString()}`);
     } else {
       const issues = result.unavailableItems;
@@ -369,6 +373,20 @@ export default function CustomerMenu() {
     }
   };
 
+  // ── Mode unavailable screen ────────────────────────────────────────────────
+  if (!menuLoading && orderMode === 'takeaway' && !settings.takeawayEnabled) {
+    return <ModeUnavailableScreen mode="takeaway" businessName={settings.businessName} logoUrl={settings.logoUrl} />;
+  }
+  if (!menuLoading && orderMode === 'delivery' && !settings.deliveryEnabled) {
+    return <ModeUnavailableScreen mode="delivery" businessName={settings.businessName} logoUrl={settings.logoUrl} />;
+  }
+
+  // ── Header subtitle ────────────────────────────────────────────────────────
+  const headerSubtitle =
+    orderMode === 'takeaway' ? MODE_META.takeaway.subtitle :
+    orderMode === 'delivery' ? MODE_META.delivery.subtitle :
+    [table?.name, settings.openingHours].filter(Boolean).join(' · ');
+
   return (
     <div className="min-h-screen bg-background pb-28">
       {/* Header */}
@@ -383,12 +401,20 @@ export default function CustomerMenu() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-display font-bold text-sm truncate">{settings.businessName}</p>
-            <p className="text-[10px] text-muted-foreground">
-              {table ? `${table.name} · ` : ''}{settings.openingHours}
-            </p>
+            {headerSubtitle && (
+              <p className="text-[10px] text-muted-foreground truncate">{headerSubtitle}</p>
+            )}
           </div>
 
-          {/* Previous orders badge — visible after first successful order */}
+          {/* Mode badge */}
+          {orderMode !== 'dine-in' && (
+            <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/10 text-primary text-[10px] font-semibold shrink-0">
+              {orderMode === 'takeaway' ? <Package className="w-3 h-3" /> : <Bike className="w-3 h-3" />}
+              {MODE_META[orderMode].label}
+            </span>
+          )}
+
+          {/* Previous orders badge */}
           {restaurantToken && placedOrderIds.length > 0 && (
             <button
               onClick={() => setShowSessionOrders(true)}
@@ -400,7 +426,8 @@ export default function CustomerMenu() {
             </button>
           )}
 
-          {tableId && !table && (
+          {/* Dine-in table not found warning */}
+          {orderMode === 'dine-in' && tableParam && !table && (
             <span className="flex items-center gap-1 text-[10px] text-warning shrink-0">
               <AlertTriangle className="w-3 h-3" /> Table not found
             </span>
@@ -472,7 +499,6 @@ export default function CustomerMenu() {
               onClick={() => !isOut && setSelectedItem(item)}
             >
               <div className="flex gap-3 p-4">
-                {/* Image */}
                 <div className="shrink-0 w-20 h-20 rounded-xl overflow-hidden bg-muted flex items-center justify-center">
                   {item.imageUrl ? (
                     <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
@@ -482,8 +508,6 @@ export default function CustomerMenu() {
                     <span className="text-4xl">{item.icon}</span>
                   )}
                 </div>
-
-                {/* Info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -496,7 +520,6 @@ export default function CustomerMenu() {
                   </div>
                   <p className="text-xs text-muted-foreground line-clamp-2 mt-1">{item.description}</p>
 
-                  {/* Quick diet/allergen indicators on card */}
                   {((item.dietaryTags?.length ?? 0) > 0 || (item.allergens?.length ?? 0) > 0 || item.calories != null) && (
                     <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                       {item.calories != null && (
@@ -554,7 +577,6 @@ export default function CustomerMenu() {
         })}
       </div>
 
-
       {/* Sticky cart button */}
       <AnimatePresence>
         {totalItems > 0 && (
@@ -591,21 +613,12 @@ export default function CustomerMenu() {
       <AnimatePresence>
         {showCart && (
           <CartSheet
-            cart={cart}
-            menuItems={menuItems}
-            sym={sym}
-            cartTotal={cartTotal}
-            taxAmount={taxAmount}
-            cartTotalWithTax={cartTotalWithTax}
-            estimatedWait={estimatedWait}
-            taxDisplay={settings.taxDisplay}
-            taxRate={settings.taxRate}
-            issues={cartIssues}
-            sessionOrders={sessionOrders}
-            onUpdateQty={updateQty}
-            onRemove={removeFromCart}
-            onClose={() => setShowCart(false)}
-            onProceed={handleProceedToPayment}
+            cart={cart} menuItems={menuItems} sym={sym}
+            cartTotal={cartTotal} taxAmount={taxAmount} cartTotalWithTax={cartTotalWithTax}
+            estimatedWait={estimatedWait} taxDisplay={settings.taxDisplay} taxRate={settings.taxRate}
+            issues={cartIssues} sessionOrders={sessionOrders}
+            onUpdateQty={updateQty} onRemove={removeFromCart}
+            onClose={() => setShowCart(false)} onProceed={handleProceedToPayment}
           />
         )}
       </AnimatePresence>
@@ -614,19 +627,20 @@ export default function CustomerMenu() {
       <AnimatePresence>
         {showPayment && (
           <PaymentSheet
-            cart={cart}
-            menuItems={menuItems}
-            sym={sym}
-            cartTotalWithTax={cartTotalWithTax}
-            taxAmount={taxAmount}
-            taxDisplay={settings.taxDisplay}
-            taxRate={settings.taxRate}
-            tableName={table?.name ?? 'Walk-in'}
-            paymentMethod={paymentMethod}
-            notes={notes}
-            loading={checkoutLoading}
-            onPaymentMethod={setPaymentMethod}
-            onNotes={setNotes}
+            cart={cart} menuItems={menuItems} sym={sym}
+            cartTotalWithTax={cartTotalWithTax} taxAmount={taxAmount}
+            taxDisplay={settings.taxDisplay} taxRate={settings.taxRate}
+            orderMode={orderMode}
+            displayName={
+              orderMode === 'dine-in'
+                ? (table?.name ?? 'Walk-in')
+                : MODE_META[orderMode].label
+            }
+            paymentMethod={paymentMethod} notes={notes} loading={checkoutLoading}
+            customerName={customerName} customerPhone={customerPhone} deliveryAddress={deliveryAddress}
+            customerInfoValid={customerInfoValid}
+            onPaymentMethod={setPaymentMethod} onNotes={setNotes}
+            onCustomerName={setCustomerName} onCustomerPhone={setCustomerPhone} onDeliveryAddress={setDeliveryAddress}
             onClose={() => { setShowPayment(false); releaseReservation(SESSION_ID); }}
             onPay={handlePayment}
           />
@@ -636,19 +650,42 @@ export default function CustomerMenu() {
       {/* Session orders sheet */}
       <AnimatePresence>
         {showSessionOrders && (
-          <SessionOrdersSheet
-            orders={sessionOrders}
-            sym={sym}
-            onClose={() => setShowSessionOrders(false)}
-          />
+          <SessionOrdersSheet orders={sessionOrders} sym={sym} onClose={() => setShowSessionOrders(false)} />
         )}
       </AnimatePresence>
     </div>
   );
 }
 
-// ─── Item Detail Sheet ────────────────────────────────────────────────────────
+// ─── Mode Unavailable ─────────────────────────────────────────────────────────
+function ModeUnavailableScreen({ mode, businessName, logoUrl }: { mode: OrderMode; businessName: string; logoUrl: string }) {
+  const meta = MODE_META[mode];
+  const Icon = meta.icon;
+  return (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center px-6 text-center gap-6">
+      <div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center">
+        {logoUrl ? (
+          <img src={logoUrl} alt="logo" className="w-full h-full rounded-2xl object-cover" />
+        ) : (
+          <ChefHat className="w-8 h-8 text-primary-foreground" />
+        )}
+      </div>
+      <div>
+        <h1 className="font-display text-xl font-bold">{businessName}</h1>
+        <div className="mt-4 flex items-center justify-center gap-2 text-muted-foreground">
+          <Icon className="w-5 h-5" />
+          <span className="font-medium">{meta.label}</span>
+        </div>
+        <p className="text-muted-foreground text-sm mt-2">
+          {meta.label} orders are not available right now.
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">Please contact the restaurant or visit in person.</p>
+      </div>
+    </div>
+  );
+}
 
+// ─── Item Detail Sheet ────────────────────────────────────────────────────────
 function ItemSheet({ item, sym, onAdd, onClose }: {
   item: MenuItem; sym: string;
   onAdd: (modifiers: CartItemModifier[]) => void;
@@ -687,19 +724,14 @@ function ItemSheet({ item, sym, onAdd, onClose }: {
           </div>
 
           <div className="w-full h-48 rounded-2xl overflow-hidden bg-muted flex items-center justify-center mb-4">
-            {item.imageUrl ? (
-              <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
-            ) : item.thumbnailUrl ? (
-              <img src={item.thumbnailUrl} alt={item.name} className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-7xl">{item.icon}</span>
-            )}
+            {item.imageUrl ? <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
+              : item.thumbnailUrl ? <img src={item.thumbnailUrl} alt={item.name} className="w-full h-full object-cover" />
+              : <span className="text-7xl">{item.icon}</span>}
           </div>
 
           <h2 className="font-display text-xl font-bold">{item.name}</h2>
           <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{item.description}</p>
 
-          {/* Price + meta row */}
           <div className="flex items-center gap-3 mt-3 flex-wrap">
             <span className="font-bold text-2xl">{sym}{(item.price + extraTotal).toFixed(2)}</span>
             <span className="text-sm text-muted-foreground flex items-center gap-1">
@@ -712,7 +744,6 @@ function ItemSheet({ item, sym, onAdd, onClose }: {
             )}
           </div>
 
-          {/* Dietary tags */}
           {(item.dietaryTags?.length ?? 0) > 0 && (
             <div className="mt-4">
               <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Dietary</p>
@@ -727,17 +758,13 @@ function ItemSheet({ item, sym, onAdd, onClose }: {
             </div>
           )}
 
-          {/* Allergens */}
           {(item.allergens?.length ?? 0) > 0 && (
             <div className="mt-4 p-4 rounded-2xl bg-amber-50 border border-amber-200">
-              <p className="text-xs font-bold text-amber-800 mb-2.5 flex items-center gap-1.5">
-                ⚠️ Contains allergens
-              </p>
+              <p className="text-xs font-bold text-amber-800 mb-2.5 flex items-center gap-1.5">⚠️ Contains allergens</p>
               <div className="flex flex-wrap gap-2">
                 {item.allergens!.map(a => (
                   <span key={a} className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 capitalize">
-                    {ALLERGEN_EMOJI[a] && <span>{ALLERGEN_EMOJI[a]}</span>}
-                    {a}
+                    {ALLERGEN_EMOJI[a] && <span>{ALLERGEN_EMOJI[a]}</span>}{a}
                   </span>
                 ))}
               </div>
@@ -754,16 +781,9 @@ function ItemSheet({ item, sym, onAdd, onClose }: {
                   const isSelected = selected.some(s => s.modifierId === mod.id && s.optionId === opt.id);
                   return (
                     <label key={opt.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors cursor-pointer ${isSelected ? 'border-primary bg-primary/5' : 'border-border bg-muted/30'}`}>
-                      <input
-                        type={mod.maxSelections === 1 ? 'radio' : 'checkbox'}
-                        checked={isSelected}
-                        onChange={() => toggleModifier(mod.id, opt.id)}
-                        className="accent-primary"
-                      />
+                      <input type={mod.maxSelections === 1 ? 'radio' : 'checkbox'} checked={isSelected} onChange={() => toggleModifier(mod.id, opt.id)} className="accent-primary" />
                       <span className="text-sm flex-1">{opt.name}</span>
-                      {opt.priceAdjustment !== 0 && (
-                        <span className="text-xs font-medium text-muted-foreground">+{sym}{opt.priceAdjustment.toFixed(2)}</span>
-                      )}
+                      {opt.priceAdjustment !== 0 && <span className="text-xs font-medium text-muted-foreground">+{sym}{opt.priceAdjustment.toFixed(2)}</span>}
                     </label>
                   );
                 })}
@@ -785,7 +805,6 @@ function ItemSheet({ item, sym, onAdd, onClose }: {
 }
 
 // ─── Cart Sheet ───────────────────────────────────────────────────────────────
-
 function CartSheet({ cart, menuItems, sym, cartTotal, taxAmount, cartTotalWithTax, estimatedWait, taxDisplay, taxRate, issues, sessionOrders, onUpdateQty, onRemove, onClose, onProceed }: {
   cart: CartItem[]; menuItems: MenuItem[]; sym: string;
   cartTotal: number; taxAmount: number; cartTotalWithTax: number; estimatedWait: number;
@@ -838,13 +857,12 @@ function CartSheet({ cart, menuItems, sym, cartTotal, taxAmount, cartTotalWithTa
                     return s + (opt?.priceAdjustment ?? 0);
                   }, 0);
                   const unitPrice = item.price + modExtra;
-
                   return (
                     <div key={`${ci.menuItemId}-${JSON.stringify(ci.selectedModifiers)}`} className="flex items-start gap-3">
                       <div className="w-12 h-12 rounded-xl overflow-hidden bg-muted flex items-center justify-center shrink-0">
-                        {item.imageUrl || item.thumbnailUrl ? (
-                          <img src={item.thumbnailUrl || item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
-                        ) : <span className="text-xl">{item.icon}</span>}
+                        {item.imageUrl || item.thumbnailUrl
+                          ? <img src={item.thumbnailUrl || item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
+                          : <span className="text-xl">{item.icon}</span>}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate">{item.name}</p>
@@ -897,20 +915,15 @@ function CartSheet({ cart, menuItems, sym, cartTotal, taxAmount, cartTotalWithTa
             </>
           )}
 
-          {/* Previous orders this session */}
           {sessionOrders.length > 0 && (
             <div className="mt-6 pt-5 border-t border-border">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                Already ordered this visit
-              </p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Already ordered this visit</p>
               <div className="space-y-2">
                 {sessionOrders.map(order => (
                   <div key={order.id} className="flex items-center justify-between py-2 px-3 rounded-xl bg-muted/40 text-sm">
                     <div>
                       <span className="font-semibold">#{order.orderNumber}</span>
-                      <span className="text-muted-foreground ml-2">
-                        {order.items.map(i => `${i.quantity}× ${i.menuItemName}`).join(', ')}
-                      </span>
+                      <span className="text-muted-foreground ml-2">{order.items.map(i => `${i.quantity}× ${i.menuItemName}`).join(', ')}</span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0 ml-3">
                       <span className={ORDER_STATUS_CSS[order.status]}>{ORDER_STATUS_LABELS[order.status]}</span>
@@ -928,16 +941,27 @@ function CartSheet({ cart, menuItems, sym, cartTotal, taxAmount, cartTotalWithTa
 }
 
 // ─── Payment Sheet ────────────────────────────────────────────────────────────
-
-function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDisplay, taxRate, tableName, paymentMethod, notes, loading, onPaymentMethod, onNotes, onClose, onPay }: {
+function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDisplay, taxRate,
+  orderMode, displayName, paymentMethod, notes, loading,
+  customerName, customerPhone, deliveryAddress, customerInfoValid,
+  onPaymentMethod, onNotes, onCustomerName, onCustomerPhone, onDeliveryAddress, onClose, onPay,
+}: {
   cart: CartItem[]; menuItems: MenuItem[]; sym: string;
   cartTotalWithTax: number; taxAmount: number; taxDisplay: string; taxRate: number;
-  tableName: string; paymentMethod: PaymentMethod; notes: string; loading: boolean;
+  orderMode: OrderMode; displayName: string;
+  paymentMethod: PaymentMethod; notes: string; loading: boolean;
+  customerName: string; customerPhone: string; deliveryAddress: string;
+  customerInfoValid: boolean;
   onPaymentMethod: (m: PaymentMethod) => void;
   onNotes: (n: string) => void;
+  onCustomerName: (v: string) => void;
+  onCustomerPhone: (v: string) => void;
+  onDeliveryAddress: (v: string) => void;
   onClose: () => void;
   onPay: () => void;
 }) {
+  const inputCls = 'w-full h-10 px-3.5 rounded-xl border border-input bg-muted/50 text-sm focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-primary transition-colors';
+
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-foreground/30 backdrop-blur-sm" onClick={onClose}
@@ -949,13 +973,20 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
       >
         <div className="max-w-lg mx-auto p-5 pb-8">
           <div className="flex items-center justify-between mb-5">
-            <h2 className="font-display text-lg font-bold">Payment</h2>
+            <div>
+              <h2 className="font-display text-lg font-bold">Payment</h2>
+              {orderMode !== 'dine-in' && (
+                <p className="text-xs text-muted-foreground mt-0.5">{MODE_META[orderMode].subtitle}</p>
+              )}
+            </div>
             <button onClick={onClose} className="p-1.5 rounded-xl bg-muted"><X className="w-5 h-5" /></button>
           </div>
 
           {/* Order summary */}
           <div className="glass-card p-4 mb-5 space-y-2">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Order summary · {tableName}</p>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+              Order summary · {displayName}
+            </p>
             {cart.map(ci => {
               const item = menuItems.find(m => m.id === ci.menuItemId);
               if (!item) return null;
@@ -982,6 +1013,46 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
             </div>
           </div>
 
+          {/* Customer info — takeaway & delivery only */}
+          {orderMode !== 'dine-in' && (
+            <div className="mb-5">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Your Details</p>
+              <div className="space-y-2.5">
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <input
+                    value={customerName} onChange={e => onCustomerName(e.target.value)}
+                    placeholder="Full name *"
+                    className={`${inputCls} pl-9`}
+                  />
+                </div>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <input
+                    value={customerPhone} onChange={e => onCustomerPhone(e.target.value)}
+                    placeholder="Phone number *" type="tel"
+                    className={`${inputCls} pl-9`}
+                  />
+                </div>
+                {orderMode === 'delivery' && (
+                  <div className="relative">
+                    <MapPin className="absolute left-3 top-3 w-4 h-4 text-muted-foreground" />
+                    <textarea
+                      value={deliveryAddress} onChange={e => onDeliveryAddress(e.target.value)}
+                      placeholder="Delivery address *" rows={2}
+                      className="w-full px-3.5 pl-9 py-2.5 rounded-xl border border-input bg-muted/50 text-sm focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-primary transition-colors resize-none"
+                    />
+                  </div>
+                )}
+              </div>
+              {!customerInfoValid && (
+                <p className="text-xs text-destructive mt-2 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" /> Please fill in all required fields above
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Payment method */}
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Payment method</p>
           <div className="grid grid-cols-2 gap-2 mb-5">
@@ -1007,11 +1078,14 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
           />
 
           <button
-            onClick={onPay} disabled={loading}
-            className="w-full h-14 rounded-2xl bg-primary text-primary-foreground font-bold text-base flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-60"
+            onClick={onPay} disabled={loading || !customerInfoValid}
+            className="w-full h-14 rounded-2xl bg-primary text-primary-foreground font-bold text-base flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-50"
           >
             {loading ? (
-              <span className="flex items-center gap-2"><span className="w-4 h-4 border-2 border-primary-foreground/40 border-t-primary-foreground rounded-full animate-spin" />Processing…</span>
+              <span className="flex items-center gap-2">
+                <span className="w-4 h-4 border-2 border-primary-foreground/40 border-t-primary-foreground rounded-full animate-spin" />
+                Processing…
+              </span>
             ) : (
               <>Place Order · {sym}{cartTotalWithTax.toFixed(2)}</>
             )}
@@ -1023,12 +1097,7 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
 }
 
 // ─── Session Orders Sheet ─────────────────────────────────────────────────────
-// Shows all orders placed on this device at this restaurant during the current visit.
-// Lets a customer check status, review what they ordered, and see their running total.
-
-function SessionOrdersSheet({ orders, sym, onClose }: {
-  orders: Order[]; sym: string; onClose: () => void;
-}) {
+function SessionOrdersSheet({ orders, sym, onClose }: { orders: Order[]; sym: string; onClose: () => void }) {
   const totalSpent = orders.reduce((sum, o) => sum + o.total, 0);
 
   return (
@@ -1058,7 +1127,6 @@ function SessionOrdersSheet({ orders, sym, onClose }: {
             <div className="space-y-3">
               {orders.map(order => (
                 <div key={order.id} className="glass-card p-4">
-                  {/* Order header */}
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <span className="font-bold">#{order.orderNumber}</span>
@@ -1066,31 +1134,23 @@ function SessionOrdersSheet({ orders, sym, onClose }: {
                     </div>
                     <span className={ORDER_STATUS_CSS[order.status]}>{ORDER_STATUS_LABELS[order.status]}</span>
                   </div>
-
-                  {/* Items */}
                   <div className="space-y-1.5 mb-3">
                     {order.items.map((item, i) => (
                       <div key={i} className="flex justify-between text-sm">
                         <span className="text-muted-foreground">
                           {item.menuItemIcon} {item.quantity}× {item.menuItemName}
-                          {item.modifiers.length > 0 && (
-                            <span className="text-xs"> · {item.modifiers.map(m => m.optionName).join(', ')}</span>
-                          )}
+                          {item.modifiers.length > 0 && <span className="text-xs"> · {item.modifiers.map(m => m.optionName).join(', ')}</span>}
                         </span>
                         <span className="font-medium shrink-0 ml-3">{sym}{item.lineTotal.toFixed(2)}</span>
                       </div>
                     ))}
                   </div>
-
-                  {/* Order total */}
                   <div className="flex justify-between text-sm font-semibold pt-2 border-t border-border">
                     <span>Order total</span>
                     <span>{sym}{order.total.toFixed(2)}</span>
                   </div>
                 </div>
               ))}
-
-              {/* Running total */}
               <div className="p-4 rounded-2xl bg-primary/5 border border-primary/20">
                 <div className="flex justify-between font-bold text-base">
                   <span>Total this visit</span>

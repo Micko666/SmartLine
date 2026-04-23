@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Save, ChefHat, Globe, CreditCard, Package, ImagePlus, Wifi, WifiOff, Link2, UtensilsCrossed, CalendarDays, Users, ShoppingBag, PauseCircle } from 'lucide-react';
+import { Save, ChefHat, Globe, CreditCard, Package, ImagePlus, Wifi, WifiOff, Link2, UtensilsCrossed, CalendarDays, Users, ShoppingBag, PauseCircle, PackageOpen, Bike } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -195,6 +195,46 @@ export default function Settings() {
               <p className="text-xs text-muted-foreground mt-1">Leave blank to show a default "We're not accepting orders right now" message.</p>
             </div>
           )}
+
+          <div className="pt-2 space-y-1">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pb-1">Order channels</p>
+
+            {/* Takeaway toggle */}
+            <div className="flex items-center justify-between py-3 border-b border-border">
+              <div className="flex items-center gap-2.5">
+                <PackageOpen className="w-4 h-4 text-muted-foreground" />
+                <div>
+                  <p className="text-sm font-medium">Takeaway</p>
+                  <p className="text-xs text-muted-foreground">Customers order ahead and collect in person</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => up('takeawayEnabled', !(form.takeawayEnabled ?? true))}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${(form.takeawayEnabled ?? true) ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+              >
+                <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${(form.takeawayEnabled ?? true) ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            </div>
+
+            {/* Delivery toggle */}
+            <div className="flex items-center justify-between py-3">
+              <div className="flex items-center gap-2.5">
+                <Bike className="w-4 h-4 text-muted-foreground" />
+                <div>
+                  <p className="text-sm font-medium">Delivery</p>
+                  <p className="text-xs text-muted-foreground">Customers provide an address at checkout</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => up('deliveryEnabled', !(form.deliveryEnabled ?? false))}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${(form.deliveryEnabled ?? false) ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+              >
+                <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${(form.deliveryEnabled ?? false) ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            </div>
+          </div>
         </section>
 
         {/* QR / App URL */}
@@ -221,23 +261,42 @@ export default function Settings() {
           {[
             {
               icon: UtensilsCrossed,
-              label: 'Food Order Portal',
-              description: 'Dine-in guide, takeaway & delivery orders',
-              href: `${window.location.origin}/order/${settings.restaurantToken}`,
+              label: 'Dine-In Menu',
+              description: 'Share with tables — customers scan and order in-seat',
+              href: `${window.location.origin}/menu?mode=dine-in&r=${settings.restaurantToken}`,
+              always: true,
+            },
+            {
+              icon: PackageOpen,
+              label: 'Takeaway Order',
+              description: 'Customers browse and order ahead for collection',
+              href: `${window.location.origin}/menu?mode=takeaway&r=${settings.restaurantToken}`,
+              always: false,
+              enabled: form.takeawayEnabled ?? true,
+            },
+            {
+              icon: Bike,
+              label: 'Delivery Order',
+              description: 'Customers order with delivery address at checkout',
+              href: `${window.location.origin}/menu?mode=delivery&r=${settings.restaurantToken}`,
+              always: false,
+              enabled: form.deliveryEnabled ?? false,
             },
             {
               icon: CalendarDays,
               label: 'Event Booking',
               description: 'Private events, group reservations, packages',
               href: `${window.location.origin}/book/${settings.restaurantToken}`,
+              always: true,
             },
             {
               icon: Users,
               label: 'Staff Roster',
               description: 'Read-only weekly schedule for your team',
               href: `${window.location.origin}/roster/${settings.restaurantToken}`,
+              always: true,
             },
-          ].map(({ icon: Icon, label, description, href }) => (
+          ].filter(l => l.always || l.enabled).map(({ icon: Icon, label, description, href }) => (
             <div key={label} className="flex items-center gap-3 p-3 rounded-xl border border-border bg-muted/20">
               <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                 <Icon className="w-4 h-4 text-primary" />

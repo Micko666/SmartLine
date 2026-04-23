@@ -1011,7 +1011,7 @@ export const useStore = create<AppState>()((set, get) => ({
           if (!orderItem || m.stock === null) return m;
           return { ...m, stock: Math.max(0, m.stock - orderItem.quantity), salesCount: m.salesCount + orderItem.quantity, updatedAt: createdAt };
         }),
-        tables: tableId !== 'walk-in'
+        tables: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tableId)
           ? s.tables.map(t => t.id === tableId ? { ...t, status: 'occupied' as TableStatus } : t)
           : s.tables,
       }));
@@ -1356,7 +1356,8 @@ function _localCheckout(
   }
 
   const table = tables.find(t => t.id === tableId);
-  const tableName = table?.name ?? tableId;
+  const MODE_NAMES: Record<string, string> = { 'walk-in': 'Walk-in', takeaway: 'Takeaway', delivery: 'Delivery' };
+  const tableName = table?.name ?? MODE_NAMES[tableId] ?? tableId;
   const subtotal = orderItems.reduce((s, i) => s + i.lineTotal, 0);
   const taxRate = settings.taxRate;
   const taxAmount = settings.taxDisplay === 'exclusive' ? subtotal * (taxRate / 100) : 0;

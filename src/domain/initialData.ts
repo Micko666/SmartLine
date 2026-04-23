@@ -56,6 +56,8 @@ export const DEFAULT_SETTINGS: BusinessSettings = {
   restaurantToken: 'demo',
   orderingPaused: false,
   orderingPausedMessage: '',
+  takeawayEnabled: true,
+  deliveryEnabled: false,
 };
 
 export const DEMO_USER: User = {

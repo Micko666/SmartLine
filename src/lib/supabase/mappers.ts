@@ -32,6 +32,8 @@ export function mapSettingsRow(row: Record<string, unknown>): BusinessSettings {
     restaurantToken:        row.restaurant_token as string,
     orderingPaused:         Boolean(row.ordering_paused ?? false),
     orderingPausedMessage:  (row.ordering_paused_message as string) ?? '',
+    takeawayEnabled:        Boolean(row.takeaway_enabled ?? true),
+    deliveryEnabled:        Boolean(row.delivery_enabled ?? false),
     stations:               (row.stations as Station[] | undefined) ?? [],
   };
 }
@@ -56,6 +58,8 @@ export function settingsToRow(s: BusinessSettings, userId: string): Record<strin
     restaurant_token:          s.restaurantToken,
     ordering_paused:           s.orderingPaused ?? false,
     ordering_paused_message:   s.orderingPausedMessage ?? '',
+    takeaway_enabled:          s.takeawayEnabled ?? true,
+    delivery_enabled:          s.deliveryEnabled ?? false,
     stations:                  s.stations ?? [],
   };
 }

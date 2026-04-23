@@ -294,6 +294,10 @@ export interface BusinessSettings {
   orderingPaused: boolean;
   /** Message shown on the order portal when ordering is paused. */
   orderingPausedMessage: string;
+  /** When true, customers can place takeaway (pickup) orders via the public portal. */
+  takeawayEnabled: boolean;
+  /** When true, customers can place delivery orders via the public portal. */
+  deliveryEnabled: boolean;
   /**
    * Station profiles — persisted here for Supabase JSONB compatibility.
    * Runtime reads should use the top-level `stations` store slice instead.
