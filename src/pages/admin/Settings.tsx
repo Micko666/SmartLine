@@ -261,42 +261,23 @@ export default function Settings() {
           {[
             {
               icon: UtensilsCrossed,
-              label: 'Dine-In Menu',
-              description: 'Share with tables — customers scan and order in-seat',
-              href: `${window.location.origin}/menu?mode=dine-in&r=${settings.restaurantToken}`,
-              always: true,
-            },
-            {
-              icon: PackageOpen,
-              label: 'Takeaway Order',
-              description: 'Customers browse and order ahead for collection',
-              href: `${window.location.origin}/menu?mode=takeaway&r=${settings.restaurantToken}`,
-              always: false,
-              enabled: form.takeawayEnabled ?? true,
-            },
-            {
-              icon: Bike,
-              label: 'Delivery Order',
-              description: 'Customers order with delivery address at checkout',
-              href: `${window.location.origin}/menu?mode=delivery&r=${settings.restaurantToken}`,
-              always: false,
-              enabled: form.deliveryEnabled ?? false,
+              label: 'Food Order Portal',
+              description: 'Dine-in, takeaway & delivery — customers choose on arrival',
+              href: `${window.location.origin}/menu?r=${settings.restaurantToken}`,
             },
             {
               icon: CalendarDays,
               label: 'Event Booking',
               description: 'Private events, group reservations, packages',
               href: `${window.location.origin}/book/${settings.restaurantToken}`,
-              always: true,
             },
             {
               icon: Users,
               label: 'Staff Roster',
               description: 'Read-only weekly schedule for your team',
               href: `${window.location.origin}/roster/${settings.restaurantToken}`,
-              always: true,
             },
-          ].filter(l => l.always || l.enabled).map(({ icon: Icon, label, description, href }) => (
+          ].map(({ icon: Icon, label, description, href }) => (
             <div key={label} className="flex items-center gap-3 p-3 rounded-xl border border-border bg-muted/20">
               <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                 <Icon className="w-4 h-4 text-primary" />
