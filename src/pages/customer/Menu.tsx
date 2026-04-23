@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   ShoppingBag, Plus, Minus, X, ChefHat, Clock, Search,
   CreditCard, Smartphone, Banknote, CheckCircle2, AlertTriangle,
-  ClipboardList, Package, Bike, User, Phone, MapPin,
+  ClipboardList, Package, Bike, User, Phone, MapPin, Calendar, ArrowRight,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
@@ -47,6 +47,38 @@ const DIETARY_STYLE: Record<string, string> = {
   kosher:       'bg-purple-500/10 text-purple-700 border-purple-200',
   spicy:        'bg-red-500/10 text-red-700 border-red-200',
 };
+// ─── Scheduling helpers ───────────────────────────────────────────────────────
+
+/** Human-readable label for a scheduled pickup/delivery time. */
+function formatScheduledLabel(dateStr: string, timeStr: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+  const dateLabel =
+    dateStr === today    ? 'Today' :
+    dateStr === tomorrow ? 'Tomorrow' :
+    new Date(dateStr + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  return `${dateLabel} · ${timeStr}`;
+}
+
+/** Generate 15-min slots starting at least bufferMinutes from now (for today). */
+function getSchedulingSlots(dateStr: string, bufferMinutes = 30): string[] {
+  const isToday = dateStr === new Date().toISOString().slice(0, 10);
+  const slots: string[] = [];
+  let minMins = 0;
+  if (isToday) {
+    const now = new Date();
+    minMins = Math.ceil((now.getHours() * 60 + now.getMinutes() + bufferMinutes) / 15) * 15;
+  }
+  for (let h = 6; h < 24; h++) {
+    for (const m of [0, 15, 30, 45]) {
+      if (!isToday || h * 60 + m >= minMins) {
+        slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+      }
+    }
+  }
+  return slots;
+}
+
 const ALLERGEN_EMOJI: Record<string, string> = {
   gluten:    '🌾',
   dairy:     '🥛',
@@ -86,6 +118,10 @@ export default function CustomerMenu() {
   const tableParam      = searchParams.get('t') ?? '';
   const modeParam       = searchParams.get('mode') ?? '';
   const restaurantToken = searchParams.get('r') ?? '';
+  // Scheduling params set by OrderPortal before navigating here
+  const scheduledDate   = searchParams.get('date') ?? '';
+  const scheduledTime   = searchParams.get('time') ?? '';
+  const scheduledAddr   = searchParams.get('addr') ?? '';
 
   // Derive order mode
   const orderMode: OrderMode =
@@ -173,10 +209,11 @@ export default function CustomerMenu() {
   const [checkoutLoading,   setCheckoutLoading]    = useState(false);
   const [cartIssues,        setCartIssues]         = useState<string[]>([]);
 
-  // Customer info — collected at payment for takeaway / delivery
+  // Customer info — collected at payment for takeaway / delivery.
+  // deliveryAddress is pre-filled from the URL ?addr= param set by OrderPortal.
   const [customerName,     setCustomerName]     = useState('');
   const [customerPhone,    setCustomerPhone]    = useState('');
-  const [deliveryAddress,  setDeliveryAddress]  = useState('');
+  const [deliveryAddress,  setDeliveryAddress]  = useState(scheduledAddr);
 
   // ── Session persistence ────────────────────────────────────────────────────
   useEffect(() => {
@@ -318,14 +355,18 @@ export default function CustomerMenu() {
   const handlePayment = async () => {
     setCheckoutLoading(true);
 
-    // Build notes: prepend customer contact info for takeaway / delivery
+    // Build notes: prepend schedule + contact info for takeaway / delivery
     let fullNotes = notes.trim();
     if (orderMode !== 'dine-in') {
+      const schedLine = scheduledDate && scheduledTime
+        ? `${orderMode === 'takeaway' ? 'Pickup' : 'Delivery'}: ${formatScheduledLabel(scheduledDate, scheduledTime)}`
+        : '';
       const infoLines = [
+        schedLine,
         `Name: ${customerName.trim()}`,
         `Phone: ${customerPhone.trim()}`,
         ...(orderMode === 'delivery' ? [`Address: ${deliveryAddress.trim()}`] : []),
-      ].join('\n');
+      ].filter(Boolean).join('\n');
       fullNotes = [infoLines, fullNotes].filter(Boolean).join('\n---\n');
     }
 
@@ -405,6 +446,46 @@ export default function CustomerMenu() {
     return <ModeUnavailableScreen mode="delivery" businessName={settings.businessName} logoUrl={settings.logoUrl} />;
   }
 
+  // ── Needs scheduling — takeaway/delivery arrived without date+time params ──
+  // This handles the edge case of someone visiting /menu?mode=takeaway&r=… directly.
+  // OrderPortal always sets these params; this is just a safety fallback.
+  const needsScheduling = !menuLoading &&
+    (orderMode === 'takeaway' || orderMode === 'delivery') &&
+    (!scheduledDate || !scheduledTime);
+
+  if (needsScheduling) {
+    return (
+      <div className="min-h-screen bg-background">
+        <header className="sticky top-0 z-30 bg-card/90 backdrop-blur-xl border-b border-border">
+          <div className="max-w-lg mx-auto px-4 h-14 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center shrink-0">
+              {settings.logoUrl
+                ? <img src={settings.logoUrl} alt="logo" className="w-full h-full rounded-xl object-cover" />
+                : <ChefHat className="w-4 h-4 text-primary-foreground" />}
+            </div>
+            <div>
+              <p className="font-display font-bold text-sm">{settings.businessName}</p>
+              <p className="text-[10px] text-muted-foreground">
+                {orderMode === 'takeaway' ? 'Schedule your pickup' : 'Schedule your delivery'}
+              </p>
+            </div>
+          </div>
+        </header>
+        <SchedulingStep
+          orderMode={orderMode as 'takeaway' | 'delivery'}
+          onConfirm={(date, time, addr) => {
+            if (addr) setDeliveryAddress(addr);
+            const next = new URLSearchParams(searchParams);
+            next.set('date', date);
+            next.set('time', time);
+            if (addr) next.set('addr', addr);
+            setSearchParams(next, { replace: true });
+          }}
+        />
+      </div>
+    );
+  }
+
   // ── Header subtitle ────────────────────────────────────────────────────────
   const headerSubtitle =
     orderMode === 'takeaway' ? MODE_META.takeaway.subtitle :
@@ -430,11 +511,13 @@ export default function CustomerMenu() {
             )}
           </div>
 
-          {/* Mode badge */}
+          {/* Mode badge — shows scheduled time when available */}
           {orderMode !== 'dine-in' && (
             <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/10 text-primary text-[10px] font-semibold shrink-0">
               {orderMode === 'takeaway' ? <Package className="w-3 h-3" /> : <Bike className="w-3 h-3" />}
-              {MODE_META[orderMode].label}
+              {scheduledDate && scheduledTime
+                ? formatScheduledLabel(scheduledDate, scheduledTime)
+                : MODE_META[orderMode].label}
             </span>
           )}
 
@@ -660,6 +743,7 @@ export default function CustomerMenu() {
                 ? (table?.name ?? 'Walk-in')
                 : MODE_META[orderMode].label
             }
+            scheduledDate={scheduledDate} scheduledTime={scheduledTime}
             paymentMethod={paymentMethod} notes={notes} loading={checkoutLoading}
             customerName={customerName} customerPhone={customerPhone} deliveryAddress={deliveryAddress}
             customerInfoValid={customerInfoValid}
@@ -817,6 +901,98 @@ function ModeUnavailableScreen({ mode, businessName, logoUrl }: { mode: OrderMod
         </p>
         <p className="text-xs text-muted-foreground mt-1">Please contact the restaurant or visit in person.</p>
       </div>
+    </div>
+  );
+}
+
+// ─── Scheduling Step ──────────────────────────────────────────────────────────
+// Fallback shown when mode=takeaway/delivery but date+time not in URL.
+// Normally OrderPortal sets these before navigating; this handles direct links.
+
+function SchedulingStep({ orderMode, onConfirm }: {
+  orderMode: 'takeaway' | 'delivery';
+  onConfirm: (date: string, time: string, address: string) => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState(today);
+  const [address, setAddress] = useState('');
+  const slots = useMemo(() => getSchedulingSlots(date), [date]);
+  const [time, setTime] = useState(() => getSchedulingSlots(today)[0] ?? '12:00');
+
+  useEffect(() => {
+    setTime(prev => (slots.includes(prev) ? prev : (slots[0] ?? '12:00')));
+  }, [slots]);
+
+  const isToday = date === today;
+  const noSlots = isToday && slots.length === 0;
+  const canConfirm = !noSlots && time && (orderMode !== 'delivery' || address.trim().length > 0);
+
+  const inputCls = 'w-full h-11 px-3.5 rounded-xl border border-input bg-muted/50 text-sm focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-primary transition-colors';
+
+  return (
+    <div className="max-w-lg mx-auto px-4 py-6 space-y-4">
+      <div className="glass-card p-5 space-y-5">
+        <div>
+          <h2 className="font-display font-semibold text-base">
+            {orderMode === 'takeaway' ? 'When would you like to pick up?' : 'When should we deliver?'}
+          </h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            {orderMode === 'takeaway'
+              ? 'Choose your preferred time — your order will be ready at the counter.'
+              : 'Choose your delivery time and enter your address.'}
+          </p>
+        </div>
+
+        <div>
+          <label className="text-xs text-muted-foreground font-medium mb-1.5 flex items-center gap-1">
+            <Calendar className="w-3 h-3" /> Date
+          </label>
+          <input type="date" min={today} value={date} onChange={e => setDate(e.target.value)} className={inputCls} />
+        </div>
+
+        <div>
+          <label className="text-xs text-muted-foreground font-medium mb-1.5 flex items-center gap-1">
+            <Clock className="w-3 h-3" /> {orderMode === 'takeaway' ? 'Pickup time' : 'Delivery time'}
+          </label>
+          {noSlots ? (
+            <div className="p-3 rounded-xl bg-muted/50 border border-border text-sm text-muted-foreground text-center">
+              No slots available for today — select a future date.
+            </div>
+          ) : (
+            <select value={time} onChange={e => setTime(e.target.value)} className={inputCls}>
+              {slots.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
+          {isToday && !noSlots && (
+            <p className="text-xs text-muted-foreground mt-1.5 flex items-center gap-1.5">
+              <Clock className="w-3 h-3" /> Showing times at least 30 min from now
+            </p>
+          )}
+        </div>
+
+        {orderMode === 'delivery' && (
+          <div>
+            <label className="text-xs text-muted-foreground font-medium mb-1.5 flex items-center gap-1">
+              <MapPin className="w-3 h-3" /> Delivery address *
+            </label>
+            <input
+              type="text"
+              value={address}
+              onChange={e => setAddress(e.target.value)}
+              placeholder="Street, city, postcode"
+              className={inputCls}
+            />
+          </div>
+        )}
+      </div>
+
+      <button
+        onClick={() => canConfirm && onConfirm(date, time, address)}
+        disabled={!canConfirm}
+        className="w-full rounded-2xl bg-primary text-primary-foreground font-semibold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed py-4"
+      >
+        Continue to Menu <ArrowRight className="w-4 h-4" />
+      </button>
     </div>
   );
 }
@@ -1078,13 +1254,14 @@ function CartSheet({ cart, menuItems, sym, cartTotal, taxAmount, cartTotalWithTa
 
 // ─── Payment Sheet ────────────────────────────────────────────────────────────
 function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDisplay, taxRate,
-  orderMode, displayName, paymentMethod, notes, loading,
+  orderMode, displayName, scheduledDate, scheduledTime, paymentMethod, notes, loading,
   customerName, customerPhone, deliveryAddress, customerInfoValid,
   onPaymentMethod, onNotes, onCustomerName, onCustomerPhone, onDeliveryAddress, onClose, onPay,
 }: {
   cart: CartItem[]; menuItems: MenuItem[]; sym: string;
   cartTotalWithTax: number; taxAmount: number; taxDisplay: string; taxRate: number;
   orderMode: OrderMode; displayName: string;
+  scheduledDate: string; scheduledTime: string;
   paymentMethod: PaymentMethod; notes: string; loading: boolean;
   customerName: string; customerPhone: string; deliveryAddress: string;
   customerInfoValid: boolean;
@@ -1148,6 +1325,23 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
               <span>Total</span><span>{sym}{cartTotalWithTax.toFixed(2)}</span>
             </div>
           </div>
+
+          {/* Scheduled time — takeaway & delivery */}
+          {orderMode !== 'dine-in' && scheduledDate && scheduledTime && (
+            <div className="mb-5 p-4 rounded-2xl bg-primary/5 border border-primary/20 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                {orderMode === 'takeaway' ? <Package className="w-4 h-4 text-primary" /> : <Bike className="w-4 h-4 text-primary" />}
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  {orderMode === 'takeaway' ? 'Pickup time' : 'Delivery time'}
+                </p>
+                <p className="text-sm font-bold text-primary mt-0.5">
+                  {formatScheduledLabel(scheduledDate, scheduledTime)}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Customer info — takeaway & delivery only */}
           {orderMode !== 'dine-in' && (

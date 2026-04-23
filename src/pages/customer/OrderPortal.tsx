@@ -3,27 +3,24 @@
  * Accessed via /order/:restaurantToken
  *
  * Three flows:
- *   • Dine In   — customer picks an available table → redirected to full menu (/menu?t=…&r=…)
- *   • Takeaway  — name, phone, date, time, notes
- *   • Delivery  — name, phone, address, date, time, notes
+ *   • Dine In   — pick an available table → /menu?t=…&r=…
+ *   • Takeaway  — pick date + time → /menu?mode=takeaway&date=…&time=…&r=…
+ *   • Delivery  — pick date + time + enter address → /menu?mode=delivery&date=…&time=…&addr=…&r=…
  *
- * When orderingPaused is true in settings, all flows are blocked and a
- * custom manager-written message is shown instead.
- *
- * Loading strategy: try localStorage first (zero latency for local/demo mode).
- * Supabase fetch happens in parallel; if the local store has a matching token
- * we never block the UI waiting for the network.
+ * All menu browsing and payment happen in /menu. This page is purely a
+ * scheduling / table-selection entry point — customers order and pay in one
+ * smooth flow once they reach the menu.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  UtensilsCrossed, ShoppingBag, Bike, ChefHat, ArrowLeft, CheckCircle,
-  Clock, Phone, MessageSquare, MapPin, Users, PauseCircle, Calendar,
+  UtensilsCrossed, ShoppingBag, Bike, ChefHat, ArrowLeft, ArrowRight,
+  Clock, MapPin, Users, PauseCircle, Calendar,
 } from 'lucide-react';
-import { fetchRestaurantByToken, submitBookingToSupabase } from '@/lib/supabase/queries/public';
+import { fetchRestaurantByToken } from '@/lib/supabase/queries/public';
 import { useStore } from '@/store';
 import { isSupabaseEnabled } from '@/store/flags';
-import type { CalendarEvent, Table, BusinessSettings } from '@/domain/types';
+import type { Table, BusinessSettings } from '@/domain/types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -34,28 +31,36 @@ interface PortalData {
   restaurantToken: string;
   settings: BusinessSettings;
   tables: Table[];
-  submitRequest: (data: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'>) => Promise<boolean>;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function today() { return new Date().toISOString().slice(0, 10); }
+function todayStr() { return new Date().toISOString().slice(0, 10); }
 
-function buildTimes(): string[] {
-  const times: string[] = [];
-  for (let h = 0; h < 24; h++) {
-    for (const m of [0, 30]) {
-      times.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+/**
+ * Generate 15-min time slots starting at least `bufferMinutes` from now
+ * (for today). Future dates get all slots.
+ */
+function getAvailableTimeSlots(date: string, bufferMinutes = 30): string[] {
+  const isToday = date === todayStr();
+  const slots: string[] = [];
+  let minMins = 0;
+  if (isToday) {
+    const now = new Date();
+    minMins = Math.ceil((now.getHours() * 60 + now.getMinutes() + bufferMinutes) / 15) * 15;
+  }
+  for (let h = 6; h < 24; h++) {
+    for (const m of [0, 15, 30, 45]) {
+      if (!isToday || h * 60 + m >= minMins) {
+        slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+      }
     }
   }
-  return times;
+  return slots;
 }
 
-const TIME_OPTIONS = buildTimes();
+// ─── ClosedScreen ─────────────────────────────────────────────────────────────
 
-// ─── Sub-screens ──────────────────────────────────────────────────────────────
-
-/** Shown when the manager has paused online ordering. */
 function ClosedScreen({ message, name }: { message: string; name: string }) {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-6 text-center px-6 bg-background">
@@ -72,23 +77,20 @@ function ClosedScreen({ message, name }: { message: string; name: string }) {
   );
 }
 
-/** Dine-in: customer picks a free table, then we navigate to the full menu. */
-function TablePicker({ tables, token, onBack }: { tables: Table[]; token: string; onBack: () => void }) {
-  const navigate = useNavigate();
+// ─── TablePicker ──────────────────────────────────────────────────────────────
 
-  // Group by zone for nicer layout
+function TablePicker({ tables, token }: { tables: Table[]; token: string }) {
+  const navigate = useNavigate();
   const zones = Array.from(new Set(tables.map(t => t.zone ?? 'Dining Room'))).sort();
+  const available = tables.filter(t => t.status === 'available');
 
   function pickTable(tableId: string) {
     navigate(`/menu?t=${encodeURIComponent(tableId)}&r=${encodeURIComponent(token)}`);
   }
 
-  const available = tables.filter(t => t.status === 'available');
-  const occupied  = tables.filter(t => t.status !== 'available');
-
   return (
     <div className="space-y-5 pb-8">
-      <div className="glass-card p-5">
+      <div className="glass-card p-4">
         <p className="text-sm text-muted-foreground">
           {available.length > 0
             ? `${available.length} table${available.length !== 1 ? 's' : ''} available — tap one to open the menu.`
@@ -133,7 +135,7 @@ function TablePicker({ tables, token, onBack }: { tables: Table[]; token: string
         );
       })}
 
-      {occupied.length > 0 && available.length === 0 && (
+      {available.length === 0 && (
         <div className="glass-card p-4 text-center text-sm text-muted-foreground">
           All {tables.length} tables occupied. Ask a member of staff for assistance.
         </div>
@@ -142,122 +144,184 @@ function TablePicker({ tables, token, onBack }: { tables: Table[]; token: string
   );
 }
 
+// ─── ScheduleStep ─────────────────────────────────────────────────────────────
+// Shown for takeaway / delivery. Customer picks when they want their order,
+// then is navigated to the full menu where they browse, cart up, and pay
+// exactly like dine-in — no separate "request" step.
+
+function ScheduleStep({ mode, token }: {
+  mode: 'takeaway' | 'delivery';
+  token: string;
+}) {
+  const navigate = useNavigate();
+  const today = todayStr();
+  const [date, setDate] = useState(today);
+  const [address, setAddress] = useState('');
+
+  const slots = useMemo(() => getAvailableTimeSlots(date), [date]);
+  const [time, setTime] = useState(() => getAvailableTimeSlots(today)[0] ?? '12:00');
+
+  // When date changes, snap time to first valid slot if current is out of range
+  useEffect(() => {
+    setTime(prev => (slots.includes(prev) ? prev : (slots[0] ?? '12:00')));
+  }, [slots]);
+
+  const isToday = date === today;
+  const noSlotsToday = isToday && slots.length === 0;
+  const canContinue = !noSlotsToday && time && (mode !== 'delivery' || address.trim().length > 0);
+
+  function handleContinue() {
+    if (!canContinue) return;
+    const params = new URLSearchParams({ mode, r: token, date, time });
+    if (address.trim()) params.set('addr', address.trim());
+    navigate(`/menu?${params.toString()}`);
+  }
+
+  const inputCls = 'w-full h-11 px-3.5 rounded-xl border border-input bg-muted/30 text-sm focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-primary transition-colors';
+
+  return (
+    <div className="space-y-4">
+      <div className="glass-card p-5 space-y-5">
+        <div>
+          <h2 className="font-display font-semibold text-base">
+            {mode === 'takeaway' ? 'When would you like to pick up?' : 'When should we deliver?'}
+          </h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            {mode === 'takeaway'
+              ? 'Choose your preferred date and time — your order will be ready at the counter.'
+              : 'Choose when you\'d like your order delivered to your address.'}
+          </p>
+        </div>
+
+        {/* Date */}
+        <div>
+          <label className="text-xs text-muted-foreground font-medium mb-1.5 flex items-center gap-1">
+            <Calendar className="w-3 h-3" /> Date
+          </label>
+          <input
+            type="date"
+            min={today}
+            value={date}
+            onChange={e => setDate(e.target.value)}
+            className={inputCls}
+          />
+        </div>
+
+        {/* Time */}
+        <div>
+          <label className="text-xs text-muted-foreground font-medium mb-1.5 flex items-center gap-1">
+            <Clock className="w-3 h-3" />
+            {mode === 'takeaway' ? 'Pickup time' : 'Delivery time'}
+          </label>
+          {noSlotsToday ? (
+            <div className="p-3 rounded-xl bg-muted/50 border border-border text-sm text-muted-foreground text-center">
+              No available slots for today — please select a future date.
+            </div>
+          ) : (
+            <select
+              value={time}
+              onChange={e => setTime(e.target.value)}
+              className={inputCls}
+            >
+              {slots.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
+          {isToday && !noSlotsToday && (
+            <p className="text-xs text-muted-foreground mt-1.5 flex items-center gap-1.5">
+              <Clock className="w-3 h-3" />
+              Showing times at least 30 min from now
+            </p>
+          )}
+        </div>
+
+        {/* Address — delivery only */}
+        {mode === 'delivery' && (
+          <div>
+            <label className="text-xs text-muted-foreground font-medium mb-1.5 flex items-center gap-1">
+              <MapPin className="w-3 h-3" /> Delivery address *
+            </label>
+            <input
+              type="text"
+              value={address}
+              onChange={e => setAddress(e.target.value)}
+              placeholder="Street, city, postcode"
+              className={inputCls}
+            />
+            <p className="text-xs text-muted-foreground mt-1.5">
+              Map integration coming soon — enter your full address for now.
+            </p>
+          </div>
+        )}
+      </div>
+
+      <button
+        onClick={handleContinue}
+        disabled={!canContinue}
+        className="w-full rounded-2xl bg-primary text-primary-foreground font-semibold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed py-4"
+      >
+        Browse Menu <ArrowRight className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export default function OrderPortal() {
   const { restaurantToken } = useParams<{ restaurantToken: string }>();
-
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState('');
-  const [data, setData]           = useState<PortalData | null>(null);
-  const [mode, setMode]           = useState<Mode | null>(null);
-  const [submitted, setSubmitted] = useState(false);
-
-  const [form, setForm] = useState({
-    name: '', phone: '', date: today(), time: '12:00',
-    notes: '', address: '',
-  });
-
-  // ── Build portal data from a restaurant fetch result ──────────────────────
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState('');
+  const [data,    setData]    = useState<PortalData | null>(null);
+  const [mode,    setMode]    = useState<Mode | null>(null);
 
   const buildPortalData = useCallback((
-    res: { userId: string; settings: BusinessSettings; tables: Table[] },
+    res: { settings: BusinessSettings; tables: Table[] },
     token: string,
-    isLocal: boolean,
-  ): PortalData => {
-    const storeState = useStore.getState();
-    return {
-      restaurantName:  res.settings?.businessName ?? 'SmartLine',
-      restaurantToken: token,
-      settings:        res.settings,
-      tables:          res.tables ?? [],
-      submitRequest: async (eventData) => {
-        if (isLocal) { storeState.addCalendarEvent(eventData); return true; }
-        return (await submitBookingToSupabase(token, eventData)).ok;
-      },
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ── Load — local-first, then Supabase in background ───────────────────────
+  ): PortalData => ({
+    restaurantName:  res.settings?.businessName ?? 'SmartLine',
+    restaurantToken: token,
+    settings:        res.settings,
+    tables:          res.tables ?? [],
+  }), []);
 
   useEffect(() => {
     if (!restaurantToken) { setError('Invalid link.'); setLoading(false); return; }
 
-    // 1. Try localStorage immediately (zero-latency for demo / self-hosted)
+    // 1. Try localStorage first (zero-latency for demo / self-hosted)
     const storeState = useStore.getState();
     if (storeState.settings?.restaurantToken === restaurantToken) {
       setData(buildPortalData(
-        { userId: storeState.user?.id ?? '', settings: storeState.settings, tables: storeState.tables },
+        { settings: storeState.settings, tables: storeState.tables },
         restaurantToken,
-        true,
       ));
       setLoading(false);
 
-      // Refresh from Supabase in background if available (fresher stock/settings)
+      // Refresh from Supabase in background if available
       if (isSupabaseEnabled()) {
         fetchRestaurantByToken(restaurantToken)
           .then(fresh => {
-            if (fresh) {
-              setData(buildPortalData(
-                { userId: fresh.userId, settings: fresh.settings, tables: fresh.tables },
-                restaurantToken,
-                false,
-              ));
-            }
+            if (fresh) setData(buildPortalData({ settings: fresh.settings, tables: fresh.tables }, restaurantToken));
           })
-          .catch(() => { /* non-critical */ });
+          .catch(() => {});
       }
       return;
     }
 
-    // 2. No local match — must fetch from Supabase (real deployment, customer device)
+    // 2. No local match — must fetch (real deployment, customer device)
     (async () => {
       try {
         const res = await fetchRestaurantByToken(restaurantToken);
         if (!res) { setError('Restaurant not found.'); setLoading(false); return; }
-        setData(buildPortalData(
-          { userId: res.userId, settings: res.settings, tables: res.tables },
-          restaurantToken,
-          false,
-        ));
+        setData(buildPortalData({ settings: res.settings, tables: res.tables }, restaurantToken));
       } catch {
         setError('Failed to load this page. Please try again.');
       } finally {
         setLoading(false);
       }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [restaurantToken]);
+  }, [restaurantToken, buildPortalData]);
 
-  // ── Submit (takeaway / delivery) ───────────────────────────────────────────
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!data || !mode || mode === 'dine-in') return;
-    if (!form.name.trim() || !form.phone.trim()) return;
-
-    const notes = mode === 'delivery' && form.address.trim()
-      ? `Delivery to: ${form.address.trim()}${form.notes ? ' — ' + form.notes : ''}`
-      : form.notes;
-
-    const ok = await data.submitRequest({
-      date:          form.date,
-      timeSlot:      form.time,
-      type:          mode === 'takeaway' ? 'takeaway' : 'delivery',
-      status:        'pending',
-      customerName:  form.name.trim(),
-      customerPhone: form.phone.trim(),
-      customerEmail: '',
-      guestCount:    1,
-      notes,
-      createdBy:     'customer',
-    });
-
-    if (ok) setSubmitted(true);
-  }
-
-  // ── Screens ────────────────────────────────────────────────────────────────
+  // ── Loading / error ────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -276,39 +340,13 @@ export default function OrderPortal() {
     );
   }
 
-  // Paused ordering — show custom message
   if (data.settings?.orderingPaused) {
     return <ClosedScreen name={data.restaurantName} message={data.settings.orderingPausedMessage} />;
   }
 
-  if (submitted) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-5 text-center px-4 bg-background">
-        <div className="w-16 h-16 rounded-2xl bg-success/10 flex items-center justify-center">
-          <CheckCircle className="w-8 h-8 text-success" />
-        </div>
-        <div>
-          <h1 className="font-display text-2xl font-bold">
-            {mode === 'takeaway' ? 'Pickup order received!' : 'Delivery request received!'}
-          </h1>
-          <p className="text-muted-foreground mt-2 max-w-sm text-sm">
-            The restaurant will confirm your order shortly. Keep your phone nearby — we'll contact you at {form.phone}.
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            {mode === 'takeaway' ? 'Pickup' : 'Delivery'}: {form.date} at {form.time}
-          </p>
-        </div>
-        <button
-          onClick={() => { setMode(null); setSubmitted(false); setForm({ name: '', phone: '', date: today(), time: '12:00', notes: '', address: '' }); }}
-          className="btn-ghost text-sm"
-        >
-          Place another order
-        </button>
-      </div>
-    );
-  }
+  const { takeawayEnabled = true, deliveryEnabled = false } = data.settings;
 
-  const isToday = form.date === today();
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-background">
@@ -316,7 +354,10 @@ export default function OrderPortal() {
       <header className="border-b border-border bg-card/80 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-lg mx-auto px-4 py-3 flex items-center gap-3">
           {mode !== null ? (
-            <button onClick={() => setMode(null)} className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground shrink-0">
+            <button
+              onClick={() => setMode(null)}
+              className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground shrink-0"
+            >
               <ArrowLeft className="w-4 h-4" />
             </button>
           ) : (
@@ -327,161 +368,91 @@ export default function OrderPortal() {
           <div className="flex-1 min-w-0">
             <p className="font-display font-bold text-sm leading-tight truncate">{data.restaurantName}</p>
             <p className="text-[11px] text-muted-foreground">
-              {mode === null     ? 'How would you like to order?' :
-               mode === 'dine-in' ? 'Pick your table' :
-               mode === 'takeaway' ? 'Takeaway order' : 'Delivery order'}
+              {mode === null       ? 'How would you like to order?' :
+               mode === 'dine-in'  ? 'Pick your table' :
+               mode === 'takeaway' ? 'Schedule your pickup' :
+                                     'Schedule your delivery'}
             </p>
           </div>
         </div>
       </header>
 
-      <div className="max-w-lg mx-auto px-4 py-6 space-y-5">
+      <div className="max-w-lg mx-auto px-4 py-6 space-y-4">
 
         {/* ── Mode selector ── */}
         {mode === null && (
-          <div className="grid grid-cols-1 gap-3">
+          <div className="space-y-3">
             {/* Dine In */}
             <button
               onClick={() => setMode('dine-in')}
-              className="glass-card p-5 text-left hover:shadow-md transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center gap-4"
+              className="w-full glass-card p-5 text-left hover:shadow-md transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center gap-4"
             >
               <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
                 <UtensilsCrossed className="w-6 h-6 text-primary" />
               </div>
-              <div>
+              <div className="flex-1">
                 <p className="font-semibold text-base">Dine In</p>
                 <p className="text-sm text-muted-foreground mt-0.5">Pick a table and order from the menu</p>
               </div>
+              <ArrowRight className="w-5 h-5 text-muted-foreground shrink-0" />
             </button>
 
             {/* Takeaway */}
             <button
-              onClick={() => setMode('takeaway')}
-              className="glass-card p-5 text-left hover:shadow-md transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center gap-4"
+              onClick={() => takeawayEnabled && setMode('takeaway')}
+              disabled={!takeawayEnabled}
+              className={`w-full glass-card p-5 text-left transition-all flex items-center gap-4 ${
+                takeawayEnabled
+                  ? 'hover:shadow-md hover:scale-[1.01] active:scale-[0.99]'
+                  : 'opacity-50 cursor-not-allowed'
+              }`}
             >
               <div className="w-12 h-12 rounded-xl bg-orange-500/10 flex items-center justify-center shrink-0">
                 <ShoppingBag className="w-6 h-6 text-orange-500" />
               </div>
-              <div>
+              <div className="flex-1">
                 <p className="font-semibold text-base">Takeaway</p>
-                <p className="text-sm text-muted-foreground mt-0.5">Order for pickup — today or a future date</p>
+                <p className="text-sm text-muted-foreground mt-0.5">Order ahead, collect at the counter</p>
               </div>
+              {takeawayEnabled
+                ? <ArrowRight className="w-5 h-5 text-muted-foreground shrink-0" />
+                : <span className="text-[10px] font-semibold text-muted-foreground bg-muted px-2 py-1 rounded-full shrink-0">Unavailable</span>
+              }
             </button>
 
             {/* Delivery */}
             <button
-              onClick={() => setMode('delivery')}
-              className="glass-card p-5 text-left hover:shadow-md transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center gap-4"
+              onClick={() => deliveryEnabled && setMode('delivery')}
+              disabled={!deliveryEnabled}
+              className={`w-full glass-card p-5 text-left transition-all flex items-center gap-4 ${
+                deliveryEnabled
+                  ? 'hover:shadow-md hover:scale-[1.01] active:scale-[0.99]'
+                  : 'opacity-50 cursor-not-allowed'
+              }`}
             >
               <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0">
                 <Bike className="w-6 h-6 text-blue-500" />
               </div>
-              <div>
+              <div className="flex-1">
                 <p className="font-semibold text-base">Delivery</p>
                 <p className="text-sm text-muted-foreground mt-0.5">We'll bring your order to your door</p>
               </div>
+              {deliveryEnabled
+                ? <ArrowRight className="w-5 h-5 text-muted-foreground shrink-0" />
+                : <span className="text-[10px] font-semibold text-muted-foreground bg-muted px-2 py-1 rounded-full shrink-0">Unavailable</span>
+              }
             </button>
           </div>
         )}
 
         {/* ── Dine In: table picker ── */}
         {mode === 'dine-in' && (
-          <TablePicker
-            tables={data.tables}
-            token={data.restaurantToken}
-            onBack={() => setMode(null)}
-          />
+          <TablePicker tables={data.tables} token={data.restaurantToken} />
         )}
 
-        {/* ── Takeaway / Delivery form ── */}
+        {/* ── Takeaway / Delivery: scheduling step ── */}
         {(mode === 'takeaway' || mode === 'delivery') && (
-          <div className="glass-card p-5">
-            <h2 className="font-display font-semibold mb-4 text-base">
-              {mode === 'takeaway' ? 'Pickup details' : 'Delivery details'}
-            </h2>
-            <form onSubmit={handleSubmit} className="space-y-4">
-
-              <div>
-                <label className="text-xs text-muted-foreground font-medium mb-1 block">Your name *</label>
-                <input type="text" required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  className="input-field w-full" placeholder="Full name" />
-              </div>
-
-              <div>
-                <label className="text-xs text-muted-foreground font-medium mb-1 block">
-                  <Phone className="w-3 h-3 inline mr-0.5" />Phone *
-                </label>
-                <input type="tel" required value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-                  className="input-field w-full" placeholder="+1 234 567 890" />
-              </div>
-
-              {mode === 'delivery' && (
-                <div>
-                  <label className="text-xs text-muted-foreground font-medium mb-1 block">
-                    <MapPin className="w-3 h-3 inline mr-0.5" />Delivery address *
-                  </label>
-                  <input type="text" required value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
-                    className="input-field w-full" placeholder="Street, city, postcode" />
-                </div>
-              )}
-
-              {/* Date & time — allow future dates prominently */}
-              <div>
-                <label className="text-xs text-muted-foreground font-medium mb-1 block">
-                  <Calendar className="w-3 h-3 inline mr-0.5" />
-                  {mode === 'takeaway' ? 'Pickup date & time' : 'Delivery date & time'}
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <input
-                    type="date"
-                    min={today()}
-                    value={form.date}
-                    onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-                    className="input-field w-full"
-                  />
-                  <select
-                    value={form.time}
-                    onChange={e => setForm(f => ({ ...f, time: e.target.value }))}
-                    className="input-field w-full"
-                  >
-                    {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-                {!isToday && (
-                  <p className="text-xs text-primary mt-1.5 flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    Advance order — the restaurant will confirm availability.
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="text-xs text-muted-foreground font-medium mb-1 block">
-                  <MessageSquare className="w-3 h-3 inline mr-0.5" />
-                  What would you like? / Notes (optional)
-                </label>
-                <textarea
-                  value={form.notes}
-                  onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                  rows={4}
-                  className="input-field w-full resize-none"
-                  placeholder={mode === 'takeaway'
-                    ? 'List items, quantities, dietary requirements, allergies…\ne.g. 2x Margherita, 1x Caesar Salad, no anchovies'
-                    : 'List items, quantities, dietary requirements, gate code…'}
-                />
-              </div>
-
-              <div className="pt-1">
-                <p className="text-xs text-muted-foreground mb-3">
-                  The restaurant will review and confirm your order. They'll contact you at the number above.
-                </p>
-                <button type="submit" className="btn-primary w-full text-base py-3">
-                  {mode === 'takeaway' ? 'Request pickup order' : 'Request delivery'}
-                </button>
-              </div>
-
-            </form>
-          </div>
+          <ScheduleStep mode={mode} token={data.restaurantToken} />
         )}
 
       </div>
