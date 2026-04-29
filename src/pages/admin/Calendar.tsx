@@ -1066,6 +1066,7 @@ export default function CalendarPage() {
   const [showWeekTemplateEditor, setShowWeekTemplateEditor] = useState(false);
   const [addingException, setAddingException]       = useState(false);
   const [exceptionForm, setExceptionForm]           = useState({ date: today(), isClosed: true, note: '', openTime: '09:00', closeTime: '22:00' });
+  const [settingsSection, setSettingsSection]       = useState<'booking' | 'roster'>('booking');
 
   // ── Calendar helpers ───────────────────────────────────────────────────────
 
@@ -1113,7 +1114,8 @@ export default function CalendarPage() {
 
   const employeeMap = useMemo(() => new Map(employees.map(e => [e.id, e])), [employees]);
 
-  const rosterLink  = `${window.location.origin}/roster/${settings.restaurantToken}`;
+  const rosterLink   = `${window.location.origin}/roster/${settings.restaurantToken}`;
+  const bookingLink  = `${window.location.origin}/book/${settings.restaurantToken}`;
   const weekTemplate = calendarSettings.weekTemplate ?? [];
   const hasWeekTemplate = weekTemplate.some(d => d.slots.length > 0);
 
@@ -1189,9 +1191,15 @@ export default function CalendarPage() {
               </button>
             )}
             {tab === 'bookings' && (
-              <button onClick={() => setShowEventForm(true)} className="btn-primary flex items-center gap-2">
-                <Plus className="w-4 h-4" /> New event
-              </button>
+              <div className="flex gap-2">
+                <button onClick={() => { navigator.clipboard.writeText(bookingLink); toast.success('Booking link copied!'); }}
+                  className="btn-ghost flex items-center gap-1.5 text-sm">
+                  <Link className="w-3.5 h-3.5" /> Booking link
+                </button>
+                <button onClick={() => setShowEventForm(true)} className="btn-primary flex items-center gap-2">
+                  <Plus className="w-4 h-4" /> New event
+                </button>
+              </div>
             )}
             {tab === 'roster' && rosterView === 'grid' && (
               <div className="flex gap-2">
@@ -1206,9 +1214,9 @@ export default function CalendarPage() {
               </div>
             )}
             {/* Settings */}
-            <button onClick={() => setShowSettingsModal(true)}
+            <button onClick={() => { setShowSettingsModal(true); setSettingsSection(tab === 'bookings' ? 'booking' : 'roster'); }}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl hover:bg-muted transition-colors text-sm font-medium text-muted-foreground hover:text-foreground"
-              title="Hours, rules, templates">
+              title={tab === 'bookings' ? 'Booking rules & hours' : 'Shift templates'}>
               <Settings2 className="w-4 h-4" />
               <span className="hidden sm:inline">Settings</span>
             </button>
@@ -1658,7 +1666,18 @@ export default function CalendarPage() {
 
       {/* ── Settings Modal ── */}
       {showSettingsModal && (
-        <Modal title="Calendar configuration" subtitle="Hours, rules, exceptions, and shift templates" wide onClose={() => setShowSettingsModal(false)}>
+        <Modal title="Calendar settings" wide onClose={() => setShowSettingsModal(false)}>
+          {/* Section switcher */}
+          <div className="flex gap-1 bg-muted/50 p-1 rounded-xl w-fit mb-5">
+            {([['booking', 'Booking'], ['roster', 'Roster']] as const).map(([s, label]) => (
+              <button key={s} onClick={() => setSettingsSection(s)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${settingsSection === s ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {settingsSection === 'booking' && (
           <div className="space-y-6">
             {/* Booking rules */}
             <div>
@@ -1784,8 +1803,11 @@ export default function CalendarPage() {
               )}
             </div>
 
-            <div className="border-t border-border" />
+          </div>
+          )}
 
+          {settingsSection === 'roster' && (
+          <div className="space-y-4">
             {/* Shift templates */}
             <div>
               <div className="flex items-center justify-between mb-4">
@@ -1819,8 +1841,9 @@ export default function CalendarPage() {
                 </div>
               )}
             </div>
-
           </div>
+          )}
+
         </Modal>
       )}
 
