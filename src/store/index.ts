@@ -1055,7 +1055,23 @@ export const useStore = create<AppState>()((set, get) => ({
   addCalendarEvent(data) {
     const event: CalendarEvent = { ...data, id: genId(), createdAt: now(), updatedAt: now() };
     set(s => ({ calendarEvents: [event, ...s.calendarEvents] }));
-    _persistLocal(get);
+    if (!get()._hasHydrated && _activeUserId && !isSupabaseEnabled()) {
+      // Public-page path (booking tab): store isn't hydrated so _persistLocal would
+      // overwrite the admin's full workspace with empty arrays. Do a surgical
+      // read-modify-write instead — only splice the new event into calendarEvents.
+      try {
+        const raw = localStorage.getItem(WORKSPACE_KEY(_activeUserId));
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.state) {
+            parsed.state.calendarEvents = [event, ...(parsed.state.calendarEvents ?? [])];
+            localStorage.setItem(WORKSPACE_KEY(_activeUserId), JSON.stringify(parsed));
+          }
+        }
+      } catch { /* ignore */ }
+    } else {
+      _persistLocal(get);
+    }
     const { user } = get();
     if (isSupabaseEnabled() && user?.id) {
       bridge.persistNewCalendarEvent(event, user.id).catch(() =>
@@ -1434,12 +1450,22 @@ if (typeof window !== 'undefined') {
     if (e.key !== WORKSPACE_KEY(_activeUserId) || !e.newValue) return;
     try {
       const parsed = JSON.parse(e.newValue);
-      if (parsed?.state) {
-        const { user } = useStore.getState();
-        if (!user) return;
-        const fresh = loadWorkspaceStateLocal(_activeUserId, user);
-        useStore.setState(fresh);
+      if (!parsed?.state) return;
+      const { user, _hasHydrated } = useStore.getState();
+      if (!_hasHydrated) {
+        // Public pages (booking, station, etc.) — store not hydrated.
+        // Only patch in the fields that public pages need so they stay live
+        // without clobbering or restoring anything else.
+        const { calendarEvents, orders } = parsed.state;
+        const patch: Partial<AppState> = {};
+        if (calendarEvents) patch.calendarEvents = calendarEvents;
+        if (orders)         patch.orders         = orders;
+        if (Object.keys(patch).length) useStore.setState(patch);
+        return;
       }
+      if (!user) return;
+      const fresh = loadWorkspaceStateLocal(_activeUserId, user);
+      useStore.setState(fresh);
     } catch { /* ignore */ }
   });
 }

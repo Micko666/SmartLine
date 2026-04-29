@@ -102,6 +102,21 @@ export default function BookingPage() {
   const [lookupPhone, setLookupPhone]     = useState('');
   const [lookupResults, setLookupResults] = useState<LeanEvent[] | null>(null);
 
+  // Live calendarEvents from the store — updated by the cross-tab storage listener
+  // when admin approves / rejects in another tab.
+  const storeCalendarEvents = useStore(s => s.calendarEvents);
+
+  // Auto-refresh an open lookup when admin changes a status in another tab.
+  useEffect(() => {
+    if (lookupPhone.trim() && lookupResults !== null) {
+      const merged = storeCalendarEvents.length
+        ? (storeCalendarEvents as LeanEvent[])
+        : (data?.calendarEvents ?? []);
+      runLookup(lookupPhone, merged);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeCalendarEvents]);
+
   // ── Load ───────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -214,9 +229,14 @@ export default function BookingPage() {
 
   // ── Lookup ─────────────────────────────────────────────────────────────────
 
-  function runLookup(phone: string, events: LeanEvent[]) {
+  function runLookup(phone: string, fallbackEvents?: LeanEvent[]) {
     const n = normalizePhone(phone.trim());
     if (!n) { setLookupResults([]); return; }
+    // Prefer live store data (updated by cross-tab sync) over the mount-time snapshot
+    const events = (storeCalendarEvents.length ? storeCalendarEvents as LeanEvent[] : null)
+      ?? fallbackEvents
+      ?? data?.calendarEvents
+      ?? [];
     setLookupResults(
       events.filter(e => normalizePhone(e.customerPhone ?? '') === n)
              .sort((a, b) => b.date.localeCompare(a.date))
