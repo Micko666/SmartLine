@@ -1424,6 +1424,26 @@ function _persistLocal(get: () => AppState) {
   saveWorkspaceStateLocal(_activeUserId, { menuItems, categories, tables, orders, receipts, settings: syncedSettings, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations, calendarEvents, eventPackages, calendarSettings, employees, shifts });
 }
 
+// ─── Cross-tab sync (local mode only) ────────────────────────────────────────
+// The storage event fires in every tab EXCEPT the one that wrote the value.
+// This keeps the admin tab live when a customer tab calls checkout() or submits
+// a booking — no page refresh needed.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (isSupabaseEnabled() || !_activeUserId) return;
+    if (e.key !== WORKSPACE_KEY(_activeUserId) || !e.newValue) return;
+    try {
+      const parsed = JSON.parse(e.newValue);
+      if (parsed?.state) {
+        const { user } = useStore.getState();
+        if (!user) return;
+        const fresh = loadWorkspaceStateLocal(_activeUserId, user);
+        useStore.setState(fresh);
+      }
+    } catch { /* ignore */ }
+  });
+}
+
 // ─── Test utility ─────────────────────────────────────────────────────────────
 
 export function _resetStoreForTesting() {
