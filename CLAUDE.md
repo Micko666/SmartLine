@@ -1,99 +1,107 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code sessions on this repository.
 
 ## Commands
 
 ```bash
-npm run dev          # Start dev server at http://localhost:8080
+npm run dev          # Dev server at http://localhost:8080
 npm run build        # Production build
-npm run build:dev    # Development build
-npm run preview      # Preview production build
-npm run lint         # Run ESLint
-npm run test         # Run Vitest once
-npm run test:watch   # Run Vitest in watch mode
+npm run lint         # ESLint
+npm run test         # Vitest (once)
+npm run test:watch   # Vitest (watch)
 ```
 
 Demo login: `demo@smartline.io` / `demo1234`
 
-## Architecture
+## Stack
 
-**SmartLine** is a restaurant operations platform (React + TypeScript + Vite) with a fully unified Zustand store. There is no backend — all data is persisted to `localStorage` via Zustand's `persist` middleware under the key `smartline-v1`.
+**SmartLine** — restaurant operations platform.
+- React 18 + TypeScript + Vite
+- Zustand (store + localStorage persistence under key `smartline-v1`)
+- Supabase (optional; toggled via `src/store/flags.ts` → `isSupabaseEnabled()`)
+- Tailwind CSS + shadcn/ui, framer-motion, lucide-react
+- Path alias: `@/` → `src/`
 
-### Single source of truth
+## Key Files
 
-Every page reads from and writes to `src/store/index.ts`. There is **no local state for business data** — menu items, orders, tables, stock, settings, and receipts all live in the store. Replacing localStorage with an API later means swapping the Zustand `storage` adapter only.
-
-### Domain layer (`src/domain/`)
-
-| File | Purpose |
+| Path | Purpose |
 |------|---------|
-| `types.ts` | All TypeScript interfaces (`MenuItem`, `Order`, `Table`, `Receipt`, `CartItem`, `StockReservation`, `BusinessSettings`, …) |
-| `orderMachine.ts` | Valid order status transitions, `advance()`, `canTransition()`, status labels/CSS. Status flow: `paid → preparing → ready → served → completed` (also `cancelled → refunded`) |
-| `initialData.ts` | Seed menu items, seed tables, default settings, demo user |
+| `src/domain/types.ts` | All TS interfaces — edit here first when adding fields |
+| `src/domain/initialData.ts` | Default settings + seed data |
+| `src/domain/orderMachine.ts` | Order status state machine |
+| `src/store/index.ts` | Single source of truth; all business actions live here |
+| `src/store/flags.ts` | `isSupabaseEnabled()` feature flag |
+| `src/lib/supabase/mappers.ts` | DB row ↔ domain object mapping (snake_case ↔ camelCase) |
+| `src/lib/supabase/queries/public.ts` | `fetchRestaurantByToken`, `submitBookingToSupabase` |
+| `supabase/migrations/` | Sequential SQL migrations (apply via Supabase MCP) |
+| `src/App.tsx` | All routes |
+| `src/pages/customer/OrderPortal.tsx` | Public entry: mode selector → table picker / scheduling |
+| `src/pages/customer/Menu.tsx` | Customer menu, cart, checkout (dine-in + takeaway + delivery) |
+| `src/pages/customer/Receipt.tsx` | Post-order receipt page |
+| `src/pages/admin/Orders.tsx` | Admin order management |
+| `src/pages/admin/Settings.tsx` | Business settings |
+| `src/components/layout/DashboardLayout.tsx` | Admin shell + notification badges |
 
-### Store (`src/store/index.ts`)
-
-Key actions:
-- `checkout(payload)` — atomic: validates stock, checks reservations, deducts stock, creates `Order` + `Receipt`, marks table occupied, increments order number
-- `validateCart(cart)` — non-destructive pre-check; returns issues list
-- `createReservation(sessionId, cart)` — holds stock for 5 min during payment; blocks concurrent oversell
-- `releaseReservation(sessionId)` — frees reserved stock on abandon/checkout
-- `cancelOrder(orderId)` — restores stock, marks table available
-- `advanceOrderStatus(orderId)` — uses `orderMachine.advance()` for safe transitions
-- `adjustPrepTime(orderId, delta)` — manual kitchen adjustment (minutes)
-
-### Routing (`src/App.tsx`)
+## Routes
 
 | Route | Surface | Auth |
 |-------|---------|------|
 | `/` | Login | Public |
 | `/signup` | Signup | Public |
-| `/menu?t={tableId}` | Customer menu | Public |
-| `/receipt/{receiptId}` | Post-payment receipt | Public |
-| `/dashboard` | Dashboard | `AdminGuard` |
-| `/orders` | Order management | `AdminGuard` |
-| `/menu-manager` | Menu CRUD | `AdminGuard` |
-| `/inventory` | Stock management | `AdminGuard` |
-| `/tables` | Tables + QR codes | `AdminGuard` |
-| `/prep-times` | Kitchen timing | `AdminGuard` |
-| `/analytics` | Charts | `AdminGuard` |
-| `/settings` | Business settings | `AdminGuard` |
+| `/order/:token` | OrderPortal (mode select → table/schedule) | Public |
+| `/menu?t={id}&r={token}` | Dine-in customer menu | Public |
+| `/menu?mode=takeaway&r={token}&date=…&time=…` | Takeaway menu | Public |
+| `/menu?mode=delivery&r={token}&date=…&time=…&addr=…` | Delivery menu | Public |
+| `/receipt/:id?r=…&mode=…&date=…&time=…` | Receipt | Public |
+| `/book/:token` | Reservation booking | Public |
+| `/dashboard` … `/settings` | Admin panel | AdminGuard |
 
-`AdminGuard` (`src/components/admin/AdminGuard.tsx`) redirects unauthenticated users to `/` and preserves the `from` location for post-login redirect.
+## Customer Ordering Flows
 
-### Customer flow
+**Dine-in**: `/order/:token` → pick table → `/menu?t={id}&r={token}` → cart → pay → receipt  
+**Takeaway**: `/order/:token` → Takeaway → schedule (date + 15-min slot, min 30 min from now) → `/menu?mode=takeaway&date&time&r` → cart → pay → receipt  
+**Delivery**: same as takeaway + mandatory address input → `/menu?mode=delivery&date&time&addr&r`
 
-1. Manager creates tables in `/tables`, each gets a QR code for `{origin}/menu?t={tableId}`
-2. Customer scans QR → opens `/menu?t={tableId}` (mobile-first, no admin UI)
-3. Browse → add to cart → checkout → payment sheet → `store.checkout()` runs atomically
-4. If stock conflict at payment time: unavailable items are listed, cart is revalidated, customer must review before retrying
-5. On success: redirected to `/receipt/{receiptId}` showing full receipt
-6. Admin sees new `paid` order instantly in `/orders` and `/dashboard`
+Receipt "Order More" reconstructs the full URL with all scheduling params — do not simplify it.
 
-### Stock rules
+## Supabase RPCs
 
-- `stock: null` = unlimited (no deduction, no reservation needed)
-- `stock: number` = tracked; deducted at checkout; restored on `cancelOrder`
-- `settings.lowStockThreshold` = badge threshold (default 5)
-- `settings.zeroStockBehavior`: `'hide'` removes item from customer menu; `'disable'` greys it out
-- Reservations expire after 5 min; purged on store rehydration
+- `get_customer_menu(token)` — returns settings + menu items + tables in one call
+- `atomic_checkout(...)` — serialised checkout; handles stock, reservations, order creation
+- `submit_booking(...)` — creates `calendar_events` row
+- All RPCs use `SECURITY DEFINER` + `SET search_path = public`
+- Use `gen_random_uuid()` (pg_catalog), never `uuid_generate_v4()` (extensions schema — not on path)
+- Non-UUID `table_id` strings (`takeaway`, `delivery`, `walk-in`) pass through a UUID regex guard
 
-### Auth
+## Store Conventions
 
-Login credentials are checked against the demo account and a `smartline-accounts` array in localStorage (separate from the main store). `signup()` writes to this array. The structure is ready for real API: replace the `login`/`signup` store actions with API calls.
+- No local state for business data — everything in `useStore`
+- `useShallow` for all multi-key selectors
+- `checkout()` is atomic — validates stock + reservations, deducts, creates Order + Receipt
+- Table status only updated when `tableId` matches UUID regex (`/^[0-9a-f]{8}-…$/i`)
+- `takeawayEnabled` / `deliveryEnabled` in `BusinessSettings` toggle channels
 
-### Images
+## Coding Conventions
 
-`MenuItem` has `imageUrl` (full food photo) and `thumbnailUrl` (small icon), both stored as base64 data-URLs when uploaded via the file picker in MenuManager. Emoji `icon` is always the fallback.
+- Keep explanations short unless teaching is requested
+- Prefer targeted `Read` + `Edit` over full-file rewrites
+- Run targeted tests before full suite: `npm test -- src/tests/store.test.ts`
+- Migrations are numbered sequentially (`013_…`); apply via Supabase MCP `apply_migration`
+- Domain types first → store actions → UI; never bypass the store from UI components
+- shadcn/ui components in `src/components/ui/` — extend by composition, don't edit directly
 
-### Tests (`src/tests/`)
+## Current State (as of Apr 2026)
 
-- `orderMachine.test.ts` — state machine transitions, advance logic, terminal states
-- `store.test.ts` — checkout, stock deduction, oversell prevention, cancel/restore, table management, settings, cart validation, getAvailableStock
+- Supabase backend live; local demo mode also works
+- All three ordering channels functional end-to-end (dine-in, takeaway, delivery)
+- Real-time sync via `useRealtimeCoordinator` in admin layout
+- Calendar, Analytics, Stations, Ingredients, PrepTimes pages complete
+- Orders page: today grid + carryover-active section (previous-day unfinished orders pinned at top) + historical accordion
 
-All tests use `useStore.setState()` to reset to a clean fixture before each test — no mocking needed.
+## Remaining TODOs
 
-### UI components
-
-`src/components/ui/` — shadcn/ui primitives (do not edit directly, extend by composition). Path alias `@/` → `src/`. Tailwind CSS with HSL CSS variables in `src/index.css`. Primary color: teal `hsl(160, 84%, 29%)`. Fonts: Inter (body), Space Grotesk (headings).
+1. **Structured opening hours** — `openingHours` is currently a display string only; no automatic gate on ordering outside business hours. Need per-day open/close schedule in `BusinessSettings`, auto-close check in OrderPortal + Menu, and filtering of takeaway/delivery time slots to business hours.
+2. **Delivery address map** — currently a plain text input; map integration planned.
+3. **Scheduled order visibility in admin** — pickup/delivery time is embedded in order notes; consider promoting it to a first-class `Order` field for better kitchen display.
+4. **Auth hardening** — credentials stored in `smartline-accounts` localStorage array; ready to swap for real API calls in `login`/`signup` store actions.
