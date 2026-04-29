@@ -58,6 +58,15 @@ export const DEFAULT_SETTINGS: BusinessSettings = {
   orderingPausedMessage: '',
   takeawayEnabled: true,
   deliveryEnabled: false,
+  businessHours: [
+    { dayOfWeek: 1, isOpen: true,  openTime: '08:00', closeTime: '23:00' },
+    { dayOfWeek: 2, isOpen: true,  openTime: '08:00', closeTime: '23:00' },
+    { dayOfWeek: 3, isOpen: true,  openTime: '08:00', closeTime: '23:00' },
+    { dayOfWeek: 4, isOpen: true,  openTime: '08:00', closeTime: '23:00' },
+    { dayOfWeek: 5, isOpen: true,  openTime: '08:00', closeTime: '23:00' },
+    { dayOfWeek: 6, isOpen: true,  openTime: '10:00', closeTime: '23:00' },
+    { dayOfWeek: 0, isOpen: false, openTime: '10:00', closeTime: '22:00' },
+  ],
 };
 
 export const DEMO_USER: User = {

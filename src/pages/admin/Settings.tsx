@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Save, ChefHat, Globe, CreditCard, Package, ImagePlus, Wifi, WifiOff, Link2, UtensilsCrossed, CalendarDays, Users, ShoppingBag, PauseCircle, PackageOpen, Bike } from 'lucide-react';
+import { Save, ChefHat, Globe, CreditCard, Package, ImagePlus, Wifi, WifiOff, Link2, UtensilsCrossed, CalendarDays, Users, ShoppingBag, PauseCircle, PackageOpen, Bike, Clock } from 'lucide-react';
+import type { WorkingDay } from '@/domain/types';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
@@ -11,9 +12,35 @@ const CURRENCIES = [{ code: 'EUR', symbol: '€', label: 'EUR (€)' }, { code: 
 const SERVICE_MODES = ['dine-in', 'takeaway', 'pickup', 'quick-service', 'bakery-workflow'];
 const LANGUAGES = ['English', 'French', 'German', 'Spanish', 'Italian', 'Arabic'];
 
+const DEFAULT_BUSINESS_HOURS: WorkingDay[] = [
+  { dayOfWeek: 1, isOpen: true,  openTime: '08:00', closeTime: '23:00' },
+  { dayOfWeek: 2, isOpen: true,  openTime: '08:00', closeTime: '23:00' },
+  { dayOfWeek: 3, isOpen: true,  openTime: '08:00', closeTime: '23:00' },
+  { dayOfWeek: 4, isOpen: true,  openTime: '08:00', closeTime: '23:00' },
+  { dayOfWeek: 5, isOpen: true,  openTime: '08:00', closeTime: '23:00' },
+  { dayOfWeek: 6, isOpen: true,  openTime: '10:00', closeTime: '23:00' },
+  { dayOfWeek: 0, isOpen: false, openTime: '10:00', closeTime: '22:00' },
+];
+
+const DAY_NAMES_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DISPLAY_DOW: WorkingDay['dayOfWeek'][] = [1, 2, 3, 4, 5, 6, 0];
+
 export default function Settings() {
   const { settings, updateSettings } = useStore(useShallow(s => ({ settings: s.settings, updateSettings: s.updateSettings })));
-  const [form, setForm] = useState({ ...settings });
+  const [form, setForm] = useState({
+    ...settings,
+    businessHours: settings.businessHours?.length ? settings.businessHours : DEFAULT_BUSINESS_HOURS,
+  });
+
+  function updateBusinessHour(dow: WorkingDay['dayOfWeek'], patch: Partial<WorkingDay>) {
+    setForm(f => ({
+      ...f,
+      businessHours: (f.businessHours ?? DEFAULT_BUSINESS_HOURS).map(d =>
+        d.dayOfWeek === dow ? { ...d, ...patch } : d,
+      ),
+    }));
+    setDirty(true);
+  }
   const [dirty, setDirty] = useState(false);
 
   const up = <K extends keyof typeof form>(key: K, val: typeof form[K]) => {
@@ -74,10 +101,6 @@ export default function Settings() {
               <select value={form.businessType} onChange={e => up('businessType', e.target.value)} className={select}>
                 {BUSINESS_TYPES.map(t => <option key={t}>{t}</option>)}
               </select>
-            </div>
-            <div>
-              <label className="text-xs font-medium mb-1.5 block">Opening Hours</label>
-              <input value={form.openingHours} onChange={e => up('openingHours', e.target.value)} placeholder="e.g. 08:00 – 23:00" className={input} />
             </div>
             <div>
               <label className="text-xs font-medium mb-1.5 block">Service Mode</label>
@@ -155,6 +178,46 @@ export default function Settings() {
                 <option value="hide">Hide item from customer menu</option>
               </select>
             </div>
+          </div>
+        </section>
+
+        {/* Opening Hours */}
+        <section className="glass-card p-6 space-y-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Clock className="w-4 h-4 text-primary" />
+            <h2 className="font-display font-semibold">Opening Hours</h2>
+          </div>
+          <p className="text-xs text-muted-foreground -mt-1">
+            Controls when the ordering portal is accessible. Orders placed outside these hours will see a "We're closed" screen.
+          </p>
+          <div className="space-y-2">
+            {DISPLAY_DOW.map(dow => {
+              const day = (form.businessHours ?? DEFAULT_BUSINESS_HOURS).find(d => d.dayOfWeek === dow)
+                ?? { dayOfWeek: dow, isOpen: false, openTime: '09:00', closeTime: '22:00' };
+              return (
+                <div key={dow} className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 w-20 cursor-pointer shrink-0">
+                    <input type="checkbox" checked={day.isOpen}
+                      onChange={e => updateBusinessHour(dow, { isOpen: e.target.checked })}
+                      className="w-4 h-4 rounded" />
+                    <span className="text-sm font-medium">{DAY_NAMES_SHORT[dow]}</span>
+                  </label>
+                  {day.isOpen ? (
+                    <div className="flex items-center gap-2">
+                      <input type="time" value={day.openTime}
+                        onChange={e => updateBusinessHour(dow, { openTime: e.target.value })}
+                        className={`${input} w-32`} />
+                      <span className="text-muted-foreground text-sm">–</span>
+                      <input type="time" value={day.closeTime}
+                        onChange={e => updateBusinessHour(dow, { closeTime: e.target.value })}
+                        className={`${input} w-32`} />
+                    </div>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">Closed</span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
 

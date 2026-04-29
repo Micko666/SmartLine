@@ -37,11 +37,47 @@ interface PortalData {
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
 
+function timeToMins(t: string) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
+/**
+ * Check if ordering is currently open given businessHours.
+ * Returns { open: true } or { open: false, reason } for the closed screen.
+ */
+function checkOpenStatus(
+  businessHours: BusinessSettings['businessHours'],
+): { open: true } | { open: false; reason: string } {
+  if (!businessHours?.length) return { open: true };
+  const now  = new Date();
+  const dow  = now.getDay() as 0|1|2|3|4|5|6;
+  const day  = businessHours.find(d => d.dayOfWeek === dow);
+  if (!day || !day.isOpen) {
+    const names = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    return { open: false, reason: `We're closed on ${names[dow]}s. Check back on our next open day.` };
+  }
+  const nowMins   = now.getHours() * 60 + now.getMinutes();
+  const openMins  = timeToMins(day.openTime);
+  const closeMins = timeToMins(day.closeTime);
+  if (nowMins < openMins) {
+    return { open: false, reason: `We open at ${day.openTime} today. Come back then to place your order.` };
+  }
+  if (nowMins >= closeMins) {
+    return { open: false, reason: `We closed at ${day.closeTime} today. See you next time!` };
+  }
+  return { open: true };
+}
+
 /**
  * Generate 15-min time slots starting at least `bufferMinutes` from now
- * (for today). Future dates get all slots.
+ * (for today). Future dates respect businessHours open/close windows.
  */
-function getAvailableTimeSlots(date: string, bufferMinutes = 30): string[] {
+function getAvailableTimeSlots(
+  date: string,
+  bufferMinutes = 30,
+  businessHours?: BusinessSettings['businessHours'],
+): string[] {
   const isToday = date === todayStr();
   const slots: string[] = [];
   let minMins = 0;
@@ -49,11 +85,23 @@ function getAvailableTimeSlots(date: string, bufferMinutes = 30): string[] {
     const now = new Date();
     minMins = Math.ceil((now.getHours() * 60 + now.getMinutes() + bufferMinutes) / 15) * 15;
   }
-  for (let h = 6; h < 24; h++) {
-    for (const m of [0, 15, 30, 45]) {
-      if (!isToday || h * 60 + m >= minMins) {
-        slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
-      }
+
+  // Determine open window for this day from businessHours
+  let windowOpen  = 6 * 60;
+  let windowClose = 24 * 60;
+  if (businessHours?.length) {
+    const dow = new Date(date + 'T12:00:00').getDay() as 0|1|2|3|4|5|6;
+    const day = businessHours.find(d => d.dayOfWeek === dow);
+    if (!day || !day.isOpen) return [];
+    windowOpen  = timeToMins(day.openTime);
+    windowClose = timeToMins(day.closeTime);
+  }
+
+  for (let mins = windowOpen; mins < windowClose; mins += 15) {
+    if (!isToday || mins >= minMins) {
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
     }
   }
   return slots;
@@ -149,17 +197,18 @@ function TablePicker({ tables, token }: { tables: Table[]; token: string }) {
 // then is navigated to the full menu where they browse, cart up, and pay
 // exactly like dine-in — no separate "request" step.
 
-function ScheduleStep({ mode, token }: {
+function ScheduleStep({ mode, token, businessHours }: {
   mode: 'takeaway' | 'delivery';
   token: string;
+  businessHours?: BusinessSettings['businessHours'];
 }) {
   const navigate = useNavigate();
   const today = todayStr();
   const [date, setDate] = useState(today);
   const [address, setAddress] = useState('');
 
-  const slots = useMemo(() => getAvailableTimeSlots(date), [date]);
-  const [time, setTime] = useState(() => getAvailableTimeSlots(today)[0] ?? '12:00');
+  const slots = useMemo(() => getAvailableTimeSlots(date, 30, businessHours), [date, businessHours]);
+  const [time, setTime] = useState(() => getAvailableTimeSlots(today, 30, businessHours)[0] ?? '12:00');
 
   // When date changes, snap time to first valid slot if current is out of range
   useEffect(() => {
@@ -344,6 +393,11 @@ export default function OrderPortal() {
     return <ClosedScreen name={data.restaurantName} message={data.settings.orderingPausedMessage} />;
   }
 
+  const openStatus = checkOpenStatus(data.settings?.businessHours);
+  if (!openStatus.open) {
+    return <ClosedScreen name={data.restaurantName} message={openStatus.reason} />;
+  }
+
   const { takeawayEnabled = true, deliveryEnabled = false } = data.settings;
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -452,7 +506,7 @@ export default function OrderPortal() {
 
         {/* ── Takeaway / Delivery: scheduling step ── */}
         {(mode === 'takeaway' || mode === 'delivery') && (
-          <ScheduleStep mode={mode} token={data.restaurantToken} />
+          <ScheduleStep mode={mode} token={data.restaurantToken} businessHours={data.settings?.businessHours} />
         )}
 
       </div>

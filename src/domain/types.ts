@@ -299,6 +299,11 @@ export interface BusinessSettings {
   /** When true, customers can place delivery orders via the public portal. */
   deliveryEnabled: boolean;
   /**
+   * Structured per-day opening hours used to gate the order portal.
+   * If absent, no automatic gating is applied.
+   */
+  businessHours?: WorkingDay[];
+  /**
    * Station profiles — persisted here for Supabase JSONB compatibility.
    * Runtime reads should use the top-level `stations` store slice instead.
    * @internal
