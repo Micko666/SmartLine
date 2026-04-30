@@ -2,35 +2,31 @@
  * OrderPortal — public food ordering entry point.
  * Accessed via /order/:restaurantToken
  *
- * Three flows:
- *   • Dine In   — pick an available table → /menu?t=…&r=…
+ * Two flows:
  *   • Takeaway  — pick date + time → /menu?mode=takeaway&date=…&time=…&r=…
  *   • Delivery  — pick date + time + enter address → /menu?mode=delivery&date=…&time=…&addr=…&r=…
  *
- * All menu browsing and payment happen in /menu. This page is purely a
- * scheduling / table-selection entry point — customers order and pay in one
- * smooth flow once they reach the menu.
+ * All menu browsing and payment happen in /menu.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  UtensilsCrossed, ShoppingBag, Bike, ChefHat, ArrowLeft, ArrowRight,
-  Clock, MapPin, Users, PauseCircle, Calendar,
+  ShoppingBag, Bike, ChefHat, ArrowLeft, ArrowRight,
+  Clock, MapPin, PauseCircle, Calendar,
 } from 'lucide-react';
 import { fetchRestaurantByToken } from '@/lib/supabase/queries/public';
 import { useStore } from '@/store';
 import { isSupabaseEnabled } from '@/store/flags';
-import type { Table, BusinessSettings } from '@/domain/types';
+import type { BusinessSettings } from '@/domain/types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Mode = 'dine-in' | 'takeaway' | 'delivery';
+type Mode = 'takeaway' | 'delivery';
 
 interface PortalData {
   restaurantName: string;
   restaurantToken: string;
   settings: BusinessSettings;
-  tables: Table[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -121,73 +117,6 @@ function ClosedScreen({ message, name }: { message: string; name: string }) {
           {message || "We're not accepting online orders right now. Please check back later or ask a member of staff."}
         </p>
       </div>
-    </div>
-  );
-}
-
-// ─── TablePicker ──────────────────────────────────────────────────────────────
-
-function TablePicker({ tables, token }: { tables: Table[]; token: string }) {
-  const navigate = useNavigate();
-  const zones = Array.from(new Set(tables.map(t => t.zone ?? 'Dining Room'))).sort();
-  const available = tables.filter(t => t.status === 'available');
-
-  function pickTable(tableId: string) {
-    navigate(`/menu?t=${encodeURIComponent(tableId)}&r=${encodeURIComponent(token)}`);
-  }
-
-  return (
-    <div className="space-y-5 pb-8">
-      <div className="glass-card p-4">
-        <p className="text-sm text-muted-foreground">
-          {available.length > 0
-            ? `${available.length} table${available.length !== 1 ? 's' : ''} available — tap one to open the menu.`
-            : 'All tables are currently occupied. Please ask a member of staff.'}
-        </p>
-      </div>
-
-      {zones.map(zone => {
-        const zoneTables = tables.filter(t => (t.zone ?? 'Dining Room') === zone);
-        return (
-          <div key={zone}>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground px-1 mb-2">{zone}</p>
-            <div className="grid grid-cols-2 gap-3">
-              {zoneTables.map(table => {
-                const free = table.status === 'available';
-                return (
-                  <button
-                    key={table.id}
-                    disabled={!free}
-                    onClick={() => pickTable(table.id)}
-                    className={`glass-card p-4 text-left transition-all ${free
-                      ? 'hover:shadow-md hover:scale-[1.02] active:scale-[0.98]'
-                      : 'opacity-50 cursor-not-allowed'}`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-semibold text-sm">{table.name}</span>
-                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
-                        free ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'
-                      }`}>
-                        {free ? 'Free' : 'Occupied'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Users className="w-3 h-3" />
-                      <span>Up to {table.capacity}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-
-      {available.length === 0 && (
-        <div className="glass-card p-4 text-center text-sm text-muted-foreground">
-          All {tables.length} tables occupied. Ask a member of staff for assistance.
-        </div>
-      )}
     </div>
   );
 }
@@ -324,13 +253,12 @@ export default function OrderPortal() {
   const [mode,    setMode]    = useState<Mode | null>(null);
 
   const buildPortalData = useCallback((
-    res: { settings: BusinessSettings; tables: Table[] },
+    settings: BusinessSettings,
     token: string,
   ): PortalData => ({
-    restaurantName:  res.settings?.businessName ?? 'SmartLine',
+    restaurantName:  settings?.businessName ?? 'SmartLine',
     restaurantToken: token,
-    settings:        res.settings,
-    tables:          res.tables ?? [],
+    settings,
   }), []);
 
   useEffect(() => {
@@ -339,17 +267,14 @@ export default function OrderPortal() {
     // 1. Try localStorage first (zero-latency for demo / self-hosted)
     const storeState = useStore.getState();
     if (storeState.settings?.restaurantToken === restaurantToken) {
-      setData(buildPortalData(
-        { settings: storeState.settings, tables: storeState.tables },
-        restaurantToken,
-      ));
+      setData(buildPortalData(storeState.settings, restaurantToken));
       setLoading(false);
 
       // Refresh from Supabase in background if available
       if (isSupabaseEnabled()) {
         fetchRestaurantByToken(restaurantToken)
           .then(fresh => {
-            if (fresh) setData(buildPortalData({ settings: fresh.settings, tables: fresh.tables }, restaurantToken));
+            if (fresh) setData(buildPortalData(fresh.settings, restaurantToken));
           })
           .catch(() => {});
       }
@@ -361,7 +286,7 @@ export default function OrderPortal() {
       try {
         const res = await fetchRestaurantByToken(restaurantToken);
         if (!res) { setError('Restaurant not found.'); setLoading(false); return; }
-        setData(buildPortalData({ settings: res.settings, tables: res.tables }, restaurantToken));
+        setData(buildPortalData(res.settings, restaurantToken));
       } catch {
         setError('Failed to load this page. Please try again.');
       } finally {
@@ -423,7 +348,6 @@ export default function OrderPortal() {
             <p className="font-display font-bold text-sm leading-tight truncate">{data.restaurantName}</p>
             <p className="text-[11px] text-muted-foreground">
               {mode === null       ? 'How would you like to order?' :
-               mode === 'dine-in'  ? 'Pick your table' :
                mode === 'takeaway' ? 'Schedule your pickup' :
                                      'Schedule your delivery'}
             </p>
@@ -436,21 +360,6 @@ export default function OrderPortal() {
         {/* ── Mode selector ── */}
         {mode === null && (
           <div className="space-y-3">
-            {/* Dine In */}
-            <button
-              onClick={() => setMode('dine-in')}
-              className="w-full glass-card p-5 text-left hover:shadow-md transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center gap-4"
-            >
-              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                <UtensilsCrossed className="w-6 h-6 text-primary" />
-              </div>
-              <div className="flex-1">
-                <p className="font-semibold text-base">Dine In</p>
-                <p className="text-sm text-muted-foreground mt-0.5">Pick a table and order from the menu</p>
-              </div>
-              <ArrowRight className="w-5 h-5 text-muted-foreground shrink-0" />
-            </button>
-
             {/* Takeaway */}
             <button
               onClick={() => takeawayEnabled && setMode('takeaway')}
@@ -497,11 +406,6 @@ export default function OrderPortal() {
               }
             </button>
           </div>
-        )}
-
-        {/* ── Dine In: table picker ── */}
-        {mode === 'dine-in' && (
-          <TablePicker tables={data.tables} token={data.restaurantToken} />
         )}
 
         {/* ── Takeaway / Delivery: scheduling step ── */}

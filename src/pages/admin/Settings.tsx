@@ -236,7 +236,7 @@ export default function Settings() {
             </div>
             <button
               type="button"
-              onClick={() => up('orderingPaused', !form.orderingPaused)}
+              onClick={() => { const next = !form.orderingPaused; up('orderingPaused', next); updateSettings({ orderingPaused: next }); }}
               className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${form.orderingPaused ? 'bg-destructive' : 'bg-muted-foreground/30'}`}
             >
               <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${form.orderingPaused ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -273,7 +273,7 @@ export default function Settings() {
               </div>
               <button
                 type="button"
-                onClick={() => up('takeawayEnabled', !(form.takeawayEnabled ?? true))}
+                onClick={() => { const next = !(form.takeawayEnabled ?? true); up('takeawayEnabled', next); updateSettings({ takeawayEnabled: next }); }}
                 className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${(form.takeawayEnabled ?? true) ? 'bg-primary' : 'bg-muted-foreground/30'}`}
               >
                 <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${(form.takeawayEnabled ?? true) ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -291,7 +291,7 @@ export default function Settings() {
               </div>
               <button
                 type="button"
-                onClick={() => up('deliveryEnabled', !(form.deliveryEnabled ?? false))}
+                onClick={() => { const next = !(form.deliveryEnabled ?? false); up('deliveryEnabled', next); updateSettings({ deliveryEnabled: next }); }}
                 className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${(form.deliveryEnabled ?? false) ? 'bg-primary' : 'bg-muted-foreground/30'}`}
               >
                 <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${(form.deliveryEnabled ?? false) ? 'translate-x-6' : 'translate-x-1'}`} />
