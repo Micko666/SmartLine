@@ -57,6 +57,24 @@ const DECORATION_DEFAULTS: Record<DecorationType, { w: number; h: number; label:
 function snapGrid(v: number) { return Math.round(v / GRID) * GRID; }
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
 
+/**
+ * Returns the absolute CSS positioning for the resize grip so it always sits
+ * at the VISUAL bottom-right (SE) corner regardless of the element's CSS
+ * rotation.  Rotation is in degrees; only multiples of 90° are expected.
+ *
+ *   0°  → DOM bottom-right  → { bottom: -8, right: -8 }
+ *  90°  → DOM top-right     → { top:    -8, right: -8 }
+ * 180°  → DOM top-left      → { top:    -8, left:  -8 }
+ * 270°  → DOM bottom-left   → { bottom: -8, left:  -8 }
+ */
+function resizeGripPos(rotation: number): React.CSSProperties {
+  const r = ((rotation % 360) + 360) % 360;
+  if (r === 90)  return { position: 'absolute', top:    -8, right:  -8 };
+  if (r === 180) return { position: 'absolute', top:    -8, left:   -8 };
+  if (r === 270) return { position: 'absolute', bottom: -8, left:   -8 };
+  return               { position: 'absolute', bottom: -8, right:  -8 };
+}
+
 function cycleStatus(current: TableStatus, dir: 1 | -1): TableStatus {
   const i = STATUS_CYCLE.indexOf(current);
   return STATUS_CYCLE[((i + dir) + STATUS_CYCLE.length) % STATUS_CYCLE.length];
@@ -334,10 +352,11 @@ function TableTile({
         </div>
       )}
 
-      {/* Resize grip — bottom-right corner, only when selected */}
+      {/* Resize grip — always at the visual SE corner regardless of rotation */}
       {selected && (
         <div
-          className="absolute -bottom-2 -right-2 w-5 h-5 rounded-full bg-primary border-2 border-background shadow-md cursor-se-resize z-30 flex items-center justify-center"
+          style={{ ...resizeGripPos(rotation), width: 20, height: 20, zIndex: 30 }}
+          className="rounded-full bg-primary border-2 border-background shadow-md cursor-se-resize flex items-center justify-center"
           title="Drag to resize"
           onPointerDown={e => { e.stopPropagation(); onResizeStart(e); }}
           onPointerMove={e => { e.stopPropagation(); onResizeMove(e); }}
@@ -390,7 +409,8 @@ function DecorationTile({
 
       {selected && (
         <div
-          className="absolute -bottom-2 -right-2 w-5 h-5 rounded-full bg-primary border-2 border-background shadow-md cursor-se-resize z-30 flex items-center justify-center"
+          style={{ ...resizeGripPos(decoration.rotation ?? 0), width: 20, height: 20, zIndex: 30 }}
+          className="rounded-full bg-primary border-2 border-background shadow-md cursor-se-resize flex items-center justify-center"
           title="Drag to resize"
           onPointerDown={e => { e.stopPropagation(); onResizeStart(e); }}
           onPointerMove={e => { e.stopPropagation(); onResizeMove(e); }}
@@ -1261,20 +1281,24 @@ export default function Tables() {
   }
 
   // ── Decoration resize ────────────────────────────────────────────────────────
-  const resizeDecRef = useRef<{ id: string; startCX: number; startCY: number; origW: number; origH: number } | null>(null);
+  const resizeDecRef = useRef<{ id: string; startCX: number; startCY: number; origW: number; origH: number; rotation: number } | null>(null);
   const [resizeDecState, setResizeDecState] = useState<{ id: string; w: number; h: number } | null>(null);
 
   function handleDecResizeStart(e: React.PointerEvent, dec: MapDecoration) {
     e.currentTarget.setPointerCapture(e.pointerId);
-    resizeDecRef.current = { id: dec.id, startCX: e.clientX, startCY: e.clientY, origW: dec.w, origH: dec.h };
+    resizeDecRef.current = { id: dec.id, startCX: e.clientX, startCY: e.clientY, origW: dec.w, origH: dec.h, rotation: dec.rotation ?? 0 };
   }
 
   function handleDecResizeMove(e: React.PointerEvent, dec: MapDecoration) {
     if (!resizeDecRef.current || resizeDecRef.current.id !== dec.id) return;
     const dx = (e.clientX - resizeDecRef.current.startCX) / scale;
     const dy = (e.clientY - resizeDecRef.current.startCY) / scale;
-    const nw = clamp(Math.round(resizeDecRef.current.origW + dx), 20, 400);
-    const nh = clamp(Math.round(resizeDecRef.current.origH + dy), 12, 400);
+    // At 90° or 270° the element's local width/height axes are swapped relative
+    // to the screen — dragging down increases width and right increases height.
+    const r = ((resizeDecRef.current.rotation % 360) + 360) % 360;
+    const [localDx, localDy] = (r === 90 || r === 270) ? [dy, dx] : [dx, dy];
+    const nw = clamp(Math.round(resizeDecRef.current.origW + localDx), 20, 400);
+    const nh = clamp(Math.round(resizeDecRef.current.origH + localDy), 12, 400);
     setResizeDecState({ id: dec.id, w: nw, h: nh });
   }
 

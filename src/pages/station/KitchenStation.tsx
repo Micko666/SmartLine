@@ -427,7 +427,7 @@ export default function KitchenStation({ station, restaurantToken, userId, resta
   function toggleExpanded(orderId: string) {
     setExpandedIds(prev => {
       const next = new Set(prev);
-      next.has(orderId) ? next.delete(orderId) : next.add(orderId);
+      if (next.has(orderId)) { next.delete(orderId); } else { next.add(orderId); }
       return next;
     });
   }
