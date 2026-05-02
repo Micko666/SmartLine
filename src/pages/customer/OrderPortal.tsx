@@ -145,8 +145,8 @@ function ScheduleStep({ mode, token, businessHours }: {
   }, [slots]);
 
   const isToday = date === today;
-  const noSlotsToday = isToday && slots.length === 0;
-  const canContinue = !noSlotsToday && time && (mode !== 'delivery' || address.trim().length > 0);
+  const noSlots = slots.length === 0;
+  const canContinue = !noSlots && time && (mode !== 'delivery' || address.trim().length > 0);
 
   function handleContinue() {
     if (!canContinue) return;
@@ -191,9 +191,11 @@ function ScheduleStep({ mode, token, businessHours }: {
             <Clock className="w-3 h-3" />
             {mode === 'takeaway' ? 'Pickup time' : 'Delivery time'}
           </label>
-          {noSlotsToday ? (
+          {noSlots ? (
             <div className="p-3 rounded-xl bg-muted/50 border border-border text-sm text-muted-foreground text-center">
-              No available slots for today — please select a future date.
+              {isToday
+                ? 'No available slots for today — please select a future date.'
+                : "We're not taking orders on this day — please choose a different date."}
             </div>
           ) : (
             <select

@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { CheckCircle2, Clock, ChefHat, CreditCard, ArrowRight, X, RotateCcw, AlertTriangle, Table2, Flame, ChevronDown, ChevronUp, History } from 'lucide-react';
+import { CheckCircle2, Clock, ChefHat, CreditCard, ArrowRight, X, RotateCcw, AlertTriangle, Table2, Flame, ChevronDown, ChevronUp, History, CalendarClock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
@@ -33,6 +33,19 @@ const ACTIVE_STATUSES: OrderStatus[] = ['paid', 'preparing', 'ready'];
 function timeAgo(iso: string) {
   const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
   return m < 1 ? 'just now' : `${m}m ago`;
+}
+
+/** Format "YYYY-MM-DD HH:MM" into a short human label for display on order cards. */
+function formatScheduledFor(scheduledFor: string): string {
+  const [dateStr, timeStr] = scheduledFor.split(' ');
+  if (!dateStr || !timeStr) return scheduledFor;
+  const today    = new Date().toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+  const dateLabel =
+    dateStr === today    ? 'Today' :
+    dateStr === tomorrow ? 'Tomorrow' :
+    new Date(dateStr + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  return `${dateLabel} · ${timeStr}`;
 }
 
 function formatTime(iso: string) {
@@ -254,6 +267,12 @@ export default function Orders() {
                               <span>·</span>
                               <span className="capitalize">{order.paymentMethod.replace('_', ' ')}</span>
                             </div>
+                            {order.scheduledFor && (
+                              <div className="flex items-center gap-1.5 text-xs font-medium text-primary bg-primary/10 px-2.5 py-1 rounded-lg mb-3 w-fit">
+                                <CalendarClock className="w-3 h-3 shrink-0" />
+                                {formatScheduledFor(order.scheduledFor)}
+                              </div>
+                            )}
 
                             <div className="space-y-1.5 mb-4">
                               {order.items.map((item, i) => (
@@ -348,6 +367,12 @@ export default function Orders() {
                       <span>·</span>
                       <span className="capitalize">{order.paymentMethod.replace('_', ' ')}</span>
                     </div>
+                    {order.scheduledFor && (
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-primary bg-primary/10 px-2.5 py-1 rounded-lg mb-3 w-fit">
+                        <CalendarClock className="w-3 h-3 shrink-0" />
+                        {formatScheduledFor(order.scheduledFor)}
+                      </div>
+                    )}
 
                     <div className="space-y-1.5 mb-4">
                       {order.items.map((item, i) => (
@@ -573,6 +598,11 @@ function TableOrderGroup({
                 <p className="text-xs text-foreground/70 truncate">
                   {order.items.map(i => `${i.quantity}× ${i.menuItemName}`).join(' · ')}
                 </p>
+                {order.scheduledFor && (
+                  <p className="text-[10px] font-medium text-primary mt-0.5 flex items-center gap-1">
+                    <CalendarClock className="w-2.5 h-2.5 shrink-0" />{formatScheduledFor(order.scheduledFor)}
+                  </p>
+                )}
                 {order.notes && (
                   <p className="text-[10px] text-muted-foreground italic mt-0.5 truncate">"{order.notes}"</p>
                 )}

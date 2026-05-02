@@ -101,7 +101,7 @@ Receipt "Order More" reconstructs the full URL with all scheduling params — do
 
 ## Remaining TODOs
 
-1. **Structured opening hours** — `openingHours` is currently a display string only; no automatic gate on ordering outside business hours. Need per-day open/close schedule in `BusinessSettings`, auto-close check in OrderPortal + Menu, and filtering of takeaway/delivery time slots to business hours.
+1. ~~**Structured opening hours**~~ — ✅ Done. `businessHours: WorkingDay[]` in `BusinessSettings`; OrderPortal gates on `checkOpenStatus()`, slot picker filters to open windows. Settings page has full per-day editor.
 2. **Delivery address map** — currently a plain text input; map integration planned.
-3. **Scheduled order visibility in admin** — pickup/delivery time is embedded in order notes; consider promoting it to a first-class `Order` field for better kitchen display.
+3. ~~**Scheduled order visibility in admin**~~ — ✅ Done. `scheduledFor?: string` ("YYYY-MM-DD HH:MM") is a first-class field on `Order`; Menu.tsx sets it at checkout; Orders page shows a `CalendarClock` badge on takeaway/delivery cards.
 4. **Auth hardening** — credentials stored in `smartline-accounts` localStorage array; ready to swap for real API calls in `login`/`signup` store actions.

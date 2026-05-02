@@ -377,6 +377,9 @@ export default function CustomerMenu() {
       paymentMethod,
       cart,
       notes:           fullNotes || undefined,
+      scheduledFor:    (orderMode !== 'dine-in' && scheduledDate && scheduledTime)
+                         ? `${scheduledDate} ${scheduledTime}`
+                         : undefined,
       restaurantToken: restaurantToken || undefined,
     });
 

@@ -145,6 +145,11 @@ export interface Order {
   total: number;
   paymentMethod: PaymentMethod;
   notes: string;
+  /**
+   * ISO "YYYY-MM-DD HH:MM" string for the customer's requested pickup / delivery
+   * time. Null for dine-in orders. Promoted from notes so kitchen can sort/filter.
+   */
+  scheduledFor?: string;
   estimatedPrepTime: number;
   prepTimeAdjustment: number; // manual admin adjustment in minutes
   createdAt: string;
@@ -319,6 +324,8 @@ export interface CheckoutPayload {
   paymentMethod: PaymentMethod;
   cart: CartItem[];
   notes?: string;
+  /** Requested pickup / delivery time — "YYYY-MM-DD HH:MM". Stored on the Order. */
+  scheduledFor?: string;
   /**
    * restaurantToken is required for Supabase-mode checkout. Customer pages pass
    * the token from the URL; admin/authenticated checkout falls back to the

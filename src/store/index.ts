@@ -913,7 +913,7 @@ export const useStore = create<AppState>()((set, get) => ({
   },
 
   async checkout(payload) {
-    const { cart, sessionId, tableId, paymentMethod, notes } = payload;
+    const { cart, sessionId, tableId, paymentMethod, notes, scheduledFor } = payload;
 
     // ── Supabase path: delegate entirely to atomic_checkout RPC ───────────────
     if (isSupabaseEnabled()) {
@@ -1307,7 +1307,7 @@ function _localCheckout(
   get: () => AppState,
   set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
 ): CheckoutResult {
-  const { cart, sessionId, tableId, paymentMethod, notes } = payload;
+  const { cart, sessionId, tableId, paymentMethod, notes, scheduledFor } = payload;
   const { menuItems, tables, settings, nextOrderNumber } = get();
 
   set(s => ({ reservations: s.reservations.filter(r => r.expiresAt > Date.now()) }));
@@ -1389,7 +1389,7 @@ function _localCheckout(
     id: genId(), orderNumber: nextOrderNumber, tableId, tableName, items: orderItems,
     status: 'paid', subtotal, taxRate, taxAmount, total,
     paymentMethod: paymentMethod as PaymentMethod,
-    notes: notes ?? '', estimatedPrepTime, prepTimeAdjustment: 0,
+    notes: notes ?? '', scheduledFor, estimatedPrepTime, prepTimeAdjustment: 0,
     createdAt, paidAt: createdAt, updatedAt: createdAt,
   };
 
