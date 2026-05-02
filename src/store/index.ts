@@ -946,6 +946,7 @@ export const useStore = create<AppState>()((set, get) => ({
         p_payment_method:   paymentMethod,
         p_cart:             resolvedCart,
         p_notes:            notes ?? '',
+        p_scheduled_for:    scheduledFor ?? '',
       });
 
       if (error) return { success: false, error: error.message, unavailableItems: [] };
@@ -978,6 +979,7 @@ export const useStore = create<AppState>()((set, get) => ({
         total:               result.total as number,
         paymentMethod:       paymentMethod as PaymentMethod,
         notes:               notes ?? '',
+        scheduledFor:        (result.scheduledFor as string | undefined) || undefined,
         estimatedPrepTime:   result.estimatedPrepTime as number,
         prepTimeAdjustment:  0,
         createdAt,

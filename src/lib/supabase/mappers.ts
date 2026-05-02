@@ -34,6 +34,7 @@ export function mapSettingsRow(row: Record<string, unknown>): BusinessSettings {
     orderingPausedMessage:  (row.ordering_paused_message as string) ?? '',
     takeawayEnabled:        Boolean(row.takeaway_enabled ?? true),
     deliveryEnabled:        Boolean(row.delivery_enabled ?? false),
+    businessHours:          (row.business_hours as BusinessSettings['businessHours']) ?? undefined,
     stations:               (row.stations as Station[] | undefined) ?? [],
   };
 }
@@ -60,6 +61,7 @@ export function settingsToRow(s: BusinessSettings, userId: string): Record<strin
     ordering_paused_message:   s.orderingPausedMessage ?? '',
     takeaway_enabled:          s.takeawayEnabled ?? true,
     delivery_enabled:          s.deliveryEnabled ?? false,
+    business_hours:            s.businessHours ?? null,
     stations:                  s.stations ?? [],
   };
 }
@@ -180,6 +182,7 @@ export function mapOrderRow(row: Record<string, unknown>): Order {
     total:                Number(row.total ?? 0),
     paymentMethod:        (row.payment_method as Order['paymentMethod']) ?? 'cash',
     notes:                (row.notes as string) ?? '',
+    scheduledFor:         (row.scheduled_for as string | undefined) || undefined,
     estimatedPrepTime:    Number(row.estimated_prep_time ?? 15),
     prepTimeAdjustment:   Number(row.prep_time_adjustment ?? 0),
     createdAt:            row.created_at as string,
