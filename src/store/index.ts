@@ -1470,6 +1470,25 @@ if (typeof window !== 'undefined') {
   });
 }
 
+// ─── Public helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Read settings directly from localStorage (bypasses the in-memory store).
+ * Use in public pages whose Zustand store is unhydrated — e.g. OrderPortal,
+ * BookingPage — so they always see the latest admin-saved values.
+ */
+export function getPersistedSettings(): BusinessSettings | null {
+  if (isSupabaseEnabled() || !_activeUserId) return null;
+  try {
+    const raw = localStorage.getItem(WORKSPACE_KEY(_activeUserId));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.state?.settings) return { ...DEFAULT_SETTINGS, ...parsed.state.settings };
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
 // ─── Test utility ─────────────────────────────────────────────────────────────
 
 export function _resetStoreForTesting() {

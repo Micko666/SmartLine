@@ -15,7 +15,7 @@ import {
   Clock, MapPin, PauseCircle, Calendar,
 } from 'lucide-react';
 import { fetchRestaurantByToken } from '@/lib/supabase/queries/public';
-import { useStore } from '@/store';
+import { useStore, getPersistedSettings } from '@/store';
 import { isSupabaseEnabled } from '@/store/flags';
 import type { BusinessSettings } from '@/domain/types';
 
@@ -264,10 +264,15 @@ export default function OrderPortal() {
   useEffect(() => {
     if (!restaurantToken) { setError('Invalid link.'); setLoading(false); return; }
 
-    // 1. Try localStorage first (zero-latency for demo / self-hosted)
+    // 1. Try localStorage first (zero-latency for demo / self-hosted).
+    // Prefer getPersistedSettings() so unhydrated tabs (customer device on
+    // same origin) always see the latest admin-saved toggles (e.g. takeawayEnabled).
     const storeState = useStore.getState();
-    if (storeState.settings?.restaurantToken === restaurantToken) {
-      setData(buildPortalData(storeState.settings, restaurantToken));
+    const localSettings = (!storeState._hasHydrated && !isSupabaseEnabled())
+      ? (getPersistedSettings() ?? storeState.settings)
+      : storeState.settings;
+    if (localSettings?.restaurantToken === restaurantToken) {
+      setData(buildPortalData(localSettings, restaurantToken));
       setLoading(false);
 
       // Refresh from Supabase in background if available
