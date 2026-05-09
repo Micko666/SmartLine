@@ -415,8 +415,8 @@ export default function CustomerMenu() {
       navigate(`/receipt/${result.receipt.id}?${params.toString()}`);
     } else {
       const issues = result.unavailableItems;
-      setCartIssues(issues);
       revalidateCart();
+      setCartIssues(issues);
       if (issues.length > 0) {
         toast.error(`Some items are no longer available: ${issues.join(', ')}`);
       } else {
@@ -686,7 +686,7 @@ export default function CustomerMenu() {
                           </div>
                         ) : (
                           <button
-                            onClick={e => { e.stopPropagation(); addToCart(item); toast.success(`${item.name} added`); }}
+                            onClick={e => { e.stopPropagation(); addToCart(item); toast.success(`${item.name} added`, { position: 'top-center' }); }}
                             className="w-9 h-9 rounded-full bg-primary flex items-center justify-center hover:opacity-90 transition-opacity"
                           >
                             <Plus className="w-4 h-4 text-primary-foreground" />
@@ -728,7 +728,7 @@ export default function CustomerMenu() {
           <ItemSheet
             item={selectedItem}
             sym={sym}
-            onAdd={(modifiers) => { addToCart(selectedItem, modifiers); toast.success(`${selectedItem.name} added`); setSelectedItem(null); }}
+            onAdd={(modifiers) => { addToCart(selectedItem, modifiers); toast.success(`${selectedItem.name} added`, { position: 'top-center' }); setSelectedItem(null); }}
             onClose={() => setSelectedItem(null)}
           />
         )}
