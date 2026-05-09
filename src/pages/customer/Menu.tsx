@@ -353,7 +353,8 @@ export default function CustomerMenu() {
   };
 
   // ── Submit checkout ────────────────────────────────────────────────────────
-  const handlePayment = async () => {
+  const handlePayment = async (method: PaymentMethod) => {
+    setPaymentMethod(method);
     setCheckoutLoading(true);
 
     // Build notes: prepend schedule + contact info for takeaway / delivery
@@ -374,7 +375,7 @@ export default function CustomerMenu() {
     const result = await checkout({
       sessionId:       SESSION_ID,
       tableId:         effectiveTableId,
-      paymentMethod,
+      paymentMethod:   method,
       cart,
       notes:           fullNotes || undefined,
       scheduledFor:    (orderMode !== 'dine-in' && scheduledDate && scheduledTime)
@@ -765,7 +766,7 @@ export default function CustomerMenu() {
             paymentMethod={paymentMethod} notes={notes} loading={checkoutLoading}
             customerName={customerName} customerPhone={customerPhone} deliveryAddress={deliveryAddress}
             customerInfoValid={customerInfoValid}
-            onPaymentMethod={setPaymentMethod} onNotes={setNotes}
+            onNotes={setNotes}
             onCustomerName={setCustomerName} onCustomerPhone={setCustomerPhone} onDeliveryAddress={setDeliveryAddress}
             onClose={() => { setShowPayment(false); releaseReservation(SESSION_ID); }}
             onPay={handlePayment}
@@ -1274,7 +1275,7 @@ function CartSheet({ cart, menuItems, sym, cartTotal, taxAmount, cartTotalWithTa
 function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDisplay, taxRate,
   orderMode, displayName, scheduledDate, scheduledTime, paymentMethod, notes, loading,
   customerName, customerPhone, deliveryAddress, customerInfoValid,
-  onPaymentMethod, onNotes, onCustomerName, onCustomerPhone, onDeliveryAddress, onClose, onPay,
+  onNotes, onCustomerName, onCustomerPhone, onDeliveryAddress, onClose, onPay,
 }: {
   cart: CartItem[]; menuItems: MenuItem[]; sym: string;
   cartTotalWithTax: number; taxAmount: number; taxDisplay: string; taxRate: number;
@@ -1283,13 +1284,12 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
   paymentMethod: PaymentMethod; notes: string; loading: boolean;
   customerName: string; customerPhone: string; deliveryAddress: string;
   customerInfoValid: boolean;
-  onPaymentMethod: (m: PaymentMethod) => void;
   onNotes: (n: string) => void;
   onCustomerName: (v: string) => void;
   onCustomerPhone: (v: string) => void;
   onDeliveryAddress: (v: string) => void;
   onClose: () => void;
-  onPay: () => void;
+  onPay: (method: PaymentMethod) => void;
 }) {
   const inputCls = 'w-full h-10 px-3.5 rounded-xl border border-input bg-muted/50 text-sm focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-primary transition-colors';
 
@@ -1401,26 +1401,6 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
             </div>
           )}
 
-          {/* Payment method */}
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Payment method</p>
-          <div className="grid grid-cols-2 gap-2 mb-5">
-            {PAYMENT_METHODS
-              .filter(p => !(orderMode === 'delivery' && p.hideForDelivery))
-              .map(({ id, label, deliveryLabel, icon: Icon }) => {
-                const displayLabel = orderMode === 'delivery' && deliveryLabel !== undefined ? deliveryLabel : label;
-                return (
-                  <button
-                    key={id} onClick={() => onPaymentMethod(id)}
-                    className={`flex items-center gap-2 p-3 rounded-xl border text-sm font-medium transition-colors ${paymentMethod === id ? 'border-primary bg-primary/5 text-primary' : 'border-border bg-muted/30 text-foreground'}`}
-                  >
-                    <Icon className="w-4 h-4 shrink-0" />
-                    <span className="text-left leading-tight">{displayLabel}</span>
-                    {paymentMethod === id && <CheckCircle2 className="w-3.5 h-3.5 ml-auto shrink-0" />}
-                  </button>
-                );
-              })}
-          </div>
-
           {/* Notes */}
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Notes (optional)</p>
           <textarea
@@ -1430,19 +1410,35 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
             className="w-full px-3.5 py-2.5 rounded-xl border border-input bg-muted/50 text-sm focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-primary transition-colors resize-none mb-5"
           />
 
-          <button
-            onClick={onPay} disabled={loading || !customerInfoValid}
-            className="w-full h-14 rounded-2xl bg-primary text-primary-foreground font-bold text-base flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-50"
-          >
-            {loading ? (
-              <span className="flex items-center gap-2">
-                <span className="w-4 h-4 border-2 border-primary-foreground/40 border-t-primary-foreground rounded-full animate-spin" />
-                Processing…
-              </span>
-            ) : (
-              <>Place Order · {sym}{cartTotalWithTax.toFixed(2)}</>
-            )}
-          </button>
+          {/* Payment method — tap to pay */}
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Pay with</p>
+          <div className="grid grid-cols-2 gap-2">
+            {PAYMENT_METHODS
+              .filter(p => !(orderMode === 'delivery' && p.hideForDelivery))
+              .map(({ id, label, deliveryLabel, icon: Icon }) => {
+                const displayLabel = orderMode === 'delivery' && deliveryLabel !== undefined ? deliveryLabel : label;
+                const isActive = paymentMethod === id && loading;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => { if (!loading && customerInfoValid) onPay(id); }}
+                    disabled={loading || !customerInfoValid}
+                    className={`flex items-center gap-2 p-3.5 rounded-xl border text-sm font-semibold transition-all disabled:opacity-50 ${
+                      isActive
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-border bg-muted/30 text-foreground hover:border-primary hover:bg-primary/5 hover:text-primary'
+                    }`}
+                  >
+                    {isActive ? (
+                      <span className="w-4 h-4 border-2 border-primary-foreground/40 border-t-primary-foreground rounded-full animate-spin shrink-0" />
+                    ) : (
+                      <Icon className="w-4 h-4 shrink-0" />
+                    )}
+                    <span className="text-left leading-tight">{displayLabel}</span>
+                  </button>
+                );
+              })}
+          </div>
         </div>
       </motion.div>
     </motion.div>
