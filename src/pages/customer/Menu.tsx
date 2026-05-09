@@ -763,7 +763,7 @@ export default function CustomerMenu() {
                 : MODE_META[orderMode].label
             }
             scheduledDate={scheduledDate} scheduledTime={scheduledTime}
-            paymentMethod={paymentMethod} notes={notes} loading={checkoutLoading}
+            notes={notes} loading={checkoutLoading}
             customerName={customerName} customerPhone={customerPhone} deliveryAddress={deliveryAddress}
             customerInfoValid={customerInfoValid}
             onNotes={setNotes}
@@ -1273,7 +1273,7 @@ function CartSheet({ cart, menuItems, sym, cartTotal, taxAmount, cartTotalWithTa
 
 // ─── Payment Sheet ────────────────────────────────────────────────────────────
 function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDisplay, taxRate,
-  orderMode, displayName, scheduledDate, scheduledTime, paymentMethod, notes, loading,
+  orderMode, displayName, scheduledDate, scheduledTime, notes, loading,
   customerName, customerPhone, deliveryAddress, customerInfoValid,
   onNotes, onCustomerName, onCustomerPhone, onDeliveryAddress, onClose, onPay,
 }: {
@@ -1281,7 +1281,7 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
   cartTotalWithTax: number; taxAmount: number; taxDisplay: string; taxRate: number;
   orderMode: OrderMode; displayName: string;
   scheduledDate: string; scheduledTime: string;
-  paymentMethod: PaymentMethod; notes: string; loading: boolean;
+  notes: string; loading: boolean;
   customerName: string; customerPhone: string; deliveryAddress: string;
   customerInfoValid: boolean;
   onNotes: (n: string) => void;
@@ -1291,7 +1291,10 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
   onClose: () => void;
   onPay: (method: PaymentMethod) => void;
 }) {
+  const [selected, setSelected] = useState<PaymentMethod>('card');
   const inputCls = 'w-full h-10 px-3.5 rounded-xl border border-input bg-muted/50 text-sm focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-primary transition-colors';
+  const availableMethods = PAYMENT_METHODS.filter(p => !(orderMode === 'delivery' && p.hideForDelivery));
+  const selectedMethod = availableMethods.find(p => p.id === selected) ?? availableMethods[0];
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -1410,35 +1413,53 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
             className="w-full px-3.5 py-2.5 rounded-xl border border-input bg-muted/50 text-sm focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-primary transition-colors resize-none mb-5"
           />
 
-          {/* Payment method — tap to pay */}
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Pay with</p>
-          <div className="grid grid-cols-2 gap-2">
-            {PAYMENT_METHODS
-              .filter(p => !(orderMode === 'delivery' && p.hideForDelivery))
-              .map(({ id, label, deliveryLabel, icon: Icon }) => {
-                const displayLabel = orderMode === 'delivery' && deliveryLabel !== undefined ? deliveryLabel : label;
-                const isActive = paymentMethod === id && loading;
-                return (
-                  <button
-                    key={id}
-                    onClick={() => { if (!loading && customerInfoValid) onPay(id); }}
-                    disabled={loading || !customerInfoValid}
-                    className={`flex items-center gap-2 p-3.5 rounded-xl border text-sm font-semibold transition-all disabled:opacity-50 ${
-                      isActive
-                        ? 'border-primary bg-primary text-primary-foreground'
-                        : 'border-border bg-muted/30 text-foreground hover:border-primary hover:bg-primary/5 hover:text-primary'
-                    }`}
-                  >
-                    {isActive ? (
-                      <span className="w-4 h-4 border-2 border-primary-foreground/40 border-t-primary-foreground rounded-full animate-spin shrink-0" />
-                    ) : (
-                      <Icon className="w-4 h-4 shrink-0" />
-                    )}
-                    <span className="text-left leading-tight">{displayLabel}</span>
-                  </button>
-                );
-              })}
+          {/* Payment method selector */}
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Payment method</p>
+          <div className="grid grid-cols-2 gap-2 mb-5">
+            {availableMethods.map(({ id, label, deliveryLabel, icon: Icon }) => {
+              const displayLabel = orderMode === 'delivery' && deliveryLabel !== undefined ? deliveryLabel : label;
+              const isSelected = selected === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setSelected(id)}
+                  disabled={loading}
+                  className={`flex items-center gap-2.5 p-3.5 rounded-xl border text-sm font-medium transition-all ${
+                    isSelected
+                      ? 'border-primary bg-primary/8 text-primary shadow-sm'
+                      : 'border-border bg-muted/30 text-muted-foreground hover:border-border hover:text-foreground'
+                  }`}
+                >
+                  <Icon className={`w-4 h-4 shrink-0 ${isSelected ? 'text-primary' : ''}`} />
+                  <span className="text-left leading-tight flex-1">{displayLabel}</span>
+                  {isSelected && (
+                    <span className="w-4 h-4 rounded-full bg-primary flex items-center justify-center shrink-0">
+                      <CheckCircle2 className="w-3 h-3 text-primary-foreground" />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
+
+          {/* Pay button */}
+          <button
+            onClick={() => onPay(selected)}
+            disabled={loading || !customerInfoValid}
+            className="w-full h-14 rounded-2xl bg-primary text-primary-foreground font-bold text-base flex items-center justify-center gap-2.5 hover:opacity-90 transition-opacity disabled:opacity-50"
+          >
+            {loading ? (
+              <>
+                <span className="w-4 h-4 border-2 border-primary-foreground/40 border-t-primary-foreground rounded-full animate-spin" />
+                Processing…
+              </>
+            ) : (
+              <>
+                <selectedMethod.icon className="w-4 h-4" />
+                Pay with {orderMode === 'delivery' && selectedMethod.deliveryLabel !== undefined ? selectedMethod.deliveryLabel : selectedMethod.label} · {sym}{cartTotalWithTax.toFixed(2)}
+              </>
+            )}
+          </button>
         </div>
       </motion.div>
     </motion.div>
