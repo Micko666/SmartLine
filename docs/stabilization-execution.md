@@ -1,5 +1,7 @@
 # SmartLine stabilization execution
 
+> **Release verification (2026-09-27):** see [production-release-readiness.md](production-release-readiness.md) for the candidate SHA, clean runs, real-PostgreSQL concurrency, upgrade rehearsal, compatibility matrix, the current runbook and the final status. Sections below that conflict with it (runbook, blockers, test counts) are superseded by it.
+
 Branch: `stabilization/astra` · Date: 2026-09-27 · Base: `72516dd` (baseline commit of the supplied workspace)
 
 Status legend: **DONE**, **READY** (implemented and tested; needs a manual gate), **BLOCKED** (external dependency), **NOT DONE** (with reason), **DECISION** (product owner).
@@ -121,6 +123,9 @@ A hole found while doing this: `transition_order_internal(p_user_id, …)` (adde
 | 021 | privilege hardening |
 | 022 | `station_get_context` |
 | 023 | validate constraints |
+| 024 | payment recording: `record_payment`, `station_record_payment`, `get_order_status` returns `placedAt`/`paymentStatus`, `paid_at` default dropped, station `canRecordPayments` backfill |
+
+Release verification also changed 015 (fulfillment status `paid` → `placed`, `order_channel` backfill, duplicate production policy dropped, one id default) and 016–018 (use `placed`). None of these files has been applied to production.
 
 Migration discipline:
 - Every change is a new numbered file. It must replay in `npm run test:db`, pass the production-parity test and pass `supabase/preflight/production_preflight.sql` before any production apply.
@@ -179,7 +184,7 @@ Local vs Supabase: one set of domain rules. In Supabase mode the database is aut
 
 ## Production migrations NOT applied
 
-Nothing was written to production. It was used read-only for catalog inspection, advisors and the preflight (all zero on 2026-09-27).
+No migration was applied to production. **Correction:** during an interrupted apply attempt on 2026-09-27, one write happened: schema `backup_20260927` was created in production with copies of the public tables (15 relations). It is not reachable by `anon`/`authenticated` (no USAGE), and the public schema is unchanged (verified read-only). The owner decides when to drop it. Everything else was read-only.
 
 **REQUIRES explicit owner approval and a maintenance window.** Runbook:
 1. Run `supabase/preflight/production_preflight.sql` (read-only); every column must be 0.
@@ -197,14 +202,14 @@ Nothing was written to production. It was used read-only for catalog inspection,
 | Apply migrations 015–023 to production | REQUIRES approval + maintenance window (runbook above) |
 | Remote migration history repair | REQUIRES approval (mutates remote history) |
 | `supabase db reset` with the CLI | BLOCKED: Supabase CLI and Docker unavailable here; replay is verified with PGlite |
-| Truly parallel DB concurrency tests | REQUIRES Docker/local Supabase or a CI Postgres service |
+| Truly parallel DB concurrency tests | DONE: `npm run test:pg` on real PostgreSQL 17 (see readiness doc) |
 | GitHub Actions run | READY: workflow committed; the branch was not pushed (publishing needs the owner's go-ahead) |
 | E2E in CI | READY: CI installs Playwright Chromium. Locally, `PW_CHANNEL=chrome` reuses an installed Chrome (no browser download was done) |
 | Generic RPC rate limiting | NOT DONE: needs an API gateway or Edge Function in front of PostgREST; station PIN lockout and booking-code entropy are in place |
 | Local mode plaintext passwords | DECISION: tied to whether local/demo mode stays |
 | Text `date`/`time_slot`/`scheduled_for` columns → `date`/`time`/`timestamptz` | NOT DONE: preflight shows clean data, but every client mapper and RPC uses strings. Migrating the type is a separate, coordinated change; validation is enforced in the RPCs meanwhile |
 | Full CRUD persistence adapters | NOT DONE (see Phase E); the business-critical paths are covered |
-| Owner "mark as paid" | DECISION: depends on the payment provider choice |
+| Owner "mark as paid" | DONE (024): owner and service stations record in-person payments; provider choice still open |
 | Delivery map (TODO #2) | unchanged |
 
 ## Product decisions required
