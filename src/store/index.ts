@@ -9,10 +9,8 @@ import type {
   CalendarEvent, CalendarEventStatus, EventPackage, CalendarSettings, WorkingDay, WorkingException,
   Employee, Shift, WeeklyDayTemplate,
 } from '../domain/types';
-import {
-  SEED_MENU_ITEMS, SEED_TABLES, DEFAULT_SETTINGS, DEMO_USER, SEED_CATEGORIES,
-  FRESH_TABLES, SEED_INGREDIENTS,
-} from '../domain/initialData';
+import { DEFAULT_SETTINGS, DEMO_USER } from '../domain/initialData';
+import { AUTH_KEY, WORKSPACE_KEY, defaultWorkspace, emptyWorkspace, normalizeWorkspace, loadWorkspaceStateLocal, saveWorkspaceStateLocal, type WorkspaceSnapshot } from './workspace';
 import { advance, isActiveOrder, isRevenueOrder } from '../domain/orderMachine';
 import { normalizeStation } from '../domain/stations';
 import { isSupabaseEnabled } from './flags';
@@ -24,159 +22,28 @@ const genId = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
 const RESERVATION_TTL_MS = 5 * 60 * 1000;
 
-// ─── Workspace defaults ───────────────────────────────────────────────────────
-
-const DEFAULT_WORKING_DAYS: WorkingDay[] = [
-  { dayOfWeek: 0, isOpen: false, openTime: '09:00', closeTime: '22:00' },
-  { dayOfWeek: 1, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
-  { dayOfWeek: 2, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
-  { dayOfWeek: 3, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
-  { dayOfWeek: 4, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
-  { dayOfWeek: 5, isOpen: true,  openTime: '09:00', closeTime: '23:00' },
-  { dayOfWeek: 6, isOpen: true,  openTime: '10:00', closeTime: '23:00' },
-];
-
-const DEFAULT_CALENDAR_SETTINGS: CalendarSettings = {
-  maxEventsPerDay:    10,
-  requireApproval:    true,
-  advanceBookingDays: 90,
-  bookingMessage:     'We look forward to hosting you! Fill in your details and we will confirm your reservation shortly.',
-  workingDays:        DEFAULT_WORKING_DAYS,
-  workingExceptions:  [],
-  shiftTemplates:     [],
-  weekTemplate:       [],
-};
-
-type WorkspaceSnapshot = {
-  menuItems: MenuItem[];
-  categories: string[];
-  tables: Table[];
-  orders: Order[];
-  receipts: Receipt[];
-  settings: BusinessSettings;
-  nextOrderNumber: number;
-  reservations: StockReservation[];
-  ingredients: Ingredient[];
-  kitchenEvents: KitchenEvent[];
-  decorations: MapDecoration[];
-  calendarEvents: CalendarEvent[];
-  eventPackages: EventPackage[];
-  calendarSettings: CalendarSettings;
-  employees: Employee[];
-  shifts: Shift[];
-};
-
-function defaultWorkspace(user: User): WorkspaceSnapshot {
-  const isDemo = user.id === DEMO_USER.id;
-  return {
-    menuItems:      isDemo ? SEED_MENU_ITEMS : [],
-    categories:     SEED_CATEGORIES,
-    tables:         isDemo ? SEED_TABLES : FRESH_TABLES,
-    orders:         [],
-    receipts:       [],
-    settings: {
-      ...DEFAULT_SETTINGS,
-      businessName:    isDemo ? DEFAULT_SETTINGS.businessName : user.businessName,
-      restaurantToken: isDemo ? DEFAULT_SETTINGS.restaurantToken : genId(),
-    },
-    nextOrderNumber:  1001,
-    reservations:     [],
-    ingredients:      isDemo ? SEED_INGREDIENTS : [],
-    kitchenEvents:    [],
-    decorations:      [],
-    calendarEvents:   [],
-    eventPackages:    [],
-    calendarSettings: DEFAULT_CALENDAR_SETTINGS,
-    employees:        [],
-    shifts:           [],
-  };
-}
-
-// Legacy localStorage helpers — used only when Supabase is NOT enabled.
-const AUTH_KEY = 'smartline-auth';
-const WORKSPACE_KEY = (userId: string) => `smartline-workspace-${userId}`;
+// Active local workspace is set by login and refresh through the same action.
 let _activeUserId: string | null = null;
-
-if (typeof window !== 'undefined' && !isSupabaseEnabled()) {
-  try {
-    const saved = localStorage.getItem(AUTH_KEY);
-    if (saved) _activeUserId = JSON.parse(saved)?.user?.id ?? null;
-  } catch { /* ignore */ }
-}
-
-const TTL_90_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
-
-function loadWorkspaceStateLocal(userId: string, user: User): WorkspaceSnapshot {
-  try {
-    const raw = localStorage.getItem(WORKSPACE_KEY(userId));
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed?.state) {
-        const defaults = defaultWorkspace(user);
-        const cutoff = Date.now() - TTL_90_DAYS_MS;
-        return {
-          ...defaults,
-          ...parsed.state,
-          settings: {
-            ...defaults.settings,
-            ...parsed.state.settings,
-            restaurantToken: parsed.state.settings?.restaurantToken || defaults.settings.restaurantToken,
-          },
-          // Prune records older than 90 days to keep localStorage lean
-          orders:   (parsed.state.orders   ?? []).filter((o: Order)   => new Date(o.createdAt).getTime() > cutoff),
-          receipts: (parsed.state.receipts ?? []).filter((r: Receipt) => new Date(r.createdAt).getTime() > cutoff),
-          reservations: (parsed.state.reservations ?? []).filter(
-            (r: StockReservation) => r.expiresAt > Date.now(),
-          ),
-          ingredients:   parsed.state.ingredients   ?? defaults.ingredients,
-          kitchenEvents:    (parsed.state.kitchenEvents ?? []).filter((e: KitchenEvent) => new Date(e.createdAt).getTime() > cutoff),
-          decorations:      parsed.state.decorations      ?? [],
-          calendarEvents:   parsed.state.calendarEvents   ?? [],
-          eventPackages:    parsed.state.eventPackages    ?? [],
-          calendarSettings: parsed.state.calendarSettings
-            ? { ...DEFAULT_CALENDAR_SETTINGS, ...parsed.state.calendarSettings }
-            : DEFAULT_CALENDAR_SETTINGS,
-          employees:        parsed.state.employees        ?? [],
-          shifts:           parsed.state.shifts           ?? [],
-        };
-      }
-    }
-  } catch { /* fall through */ }
-  return defaultWorkspace(user);
-}
-
-function saveWorkspaceStateLocal(userId: string, state: WorkspaceSnapshot) {
-  try {
-    localStorage.setItem(WORKSPACE_KEY(userId), JSON.stringify({ state, version: 1 }));
-  } catch { /* ignore quota errors */ }
+function usesSupabasePersistence(): boolean {
+  return isSupabaseEnabled() && _activeUserId !== DEMO_USER.id;
 }
 
 // ─── State Shape ──────────────────────────────────────────────────────────────
 
-export interface AppState {
+export interface AppState extends WorkspaceSnapshot {
   _hasHydrated: boolean;
 
   user: User | null;
   isAuthenticated: boolean;
 
-  menuItems: MenuItem[];
-  categories: string[];
-  tables: Table[];
-  orders: Order[];
-  receipts: Receipt[];
-  settings: BusinessSettings;
-  /** Top-level stations slice — runtime source of truth. settings.stations mirrors this for persistence. */
-  stations: Station[];
-  nextOrderNumber: number;
-  reservations: StockReservation[];
-  ingredients: Ingredient[];
-  kitchenEvents: KitchenEvent[];
-  decorations: MapDecoration[];
-  calendarEvents: CalendarEvent[];
-  eventPackages: EventPackage[];
-  calendarSettings: CalendarSettings;
-  employees: Employee[];
-  shifts: Shift[];
+  hydrateWorkspace: (user: User, workspace: WorkspaceSnapshot, source?: 'local' | 'supabase') => void;
+  restoreLocalSession: () => boolean;
+  resetWorkspace: () => void;
+  /** Public pages (menu, portal, station): load one restaurant's customer-facing data. */
+  hydrateCustomerContext: (data: { settings: BusinessSettings; menuItems: MenuItem[]; tables: Table[] }) => void;
+  applyRemoteOrder: (order: Order) => void;
+  applyRemoteMenuItem: (item: MenuItem) => void;
+  applyRemoteTable: (table: Table) => void;
 
   login:  (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
@@ -261,23 +128,48 @@ export const useStore = create<AppState>()((set, get) => ({
   _hasHydrated:    false,
   user:            null,
   isAuthenticated: false,
-  menuItems:       [],
-  categories:      [],
-  tables:          [],
-  orders:          [],
-  receipts:        [],
-  settings:        DEFAULT_SETTINGS,
-  stations:        [],
-  nextOrderNumber:  1001,
-  reservations:     [],
-  ingredients:      [],
-  kitchenEvents:    [],
-  decorations:      [],
-  calendarEvents:   [],
-  eventPackages:    [],
-  calendarSettings: DEFAULT_CALENDAR_SETTINGS,
-  employees:        [],
-  shifts:           [],
+  ...emptyWorkspace(),
+
+  hydrateWorkspace(user, workspace, source = 'supabase') {
+    _activeUserId = source === 'local' ? user.id : null;
+    set({ ...normalizeWorkspace(workspace), user, isAuthenticated: true, _hasHydrated: true });
+  },
+
+  restoreLocalSession() {
+    try {
+      const raw = localStorage.getItem(AUTH_KEY);
+      const auth = raw ? JSON.parse(raw) : null;
+      if (auth?.user?.id && auth.isAuthenticated) {
+        get().hydrateWorkspace(auth.user, loadWorkspaceStateLocal(auth.user.id, auth.user), 'local');
+        return true;
+      }
+    } catch { /* Invalid authentication data must not expose a prior workspace. */ }
+    get().resetWorkspace();
+    return false;
+  },
+
+  resetWorkspace() {
+    _activeUserId = null;
+    set({ ...emptyWorkspace(), user: null, isAuthenticated: false, _hasHydrated: true });
+  },
+
+  hydrateCustomerContext({ settings, menuItems, tables }) {
+    // Public context never carries station credentials or owner-only fields.
+    set({ settings: { ...settings, stations: [] }, menuItems, tables, stations: [] });
+  },
+
+  applyRemoteOrder(order) {
+    set(s => ({ orders: s.orders.some(o => o.id === order.id)
+      ? s.orders.map(o => o.id === order.id ? order : o) : [order, ...s.orders] }));
+  },
+  applyRemoteMenuItem(item) {
+    set(s => ({ menuItems: s.menuItems.some(m => m.id === item.id)
+      ? s.menuItems.map(m => m.id === item.id ? item : m) : [...s.menuItems, item] }));
+  },
+  applyRemoteTable(table) {
+    set(s => ({ tables: s.tables.some(t => t.id === table.id)
+      ? s.tables.map(t => t.id === table.id ? table : t) : [...s.tables, table] }));
+  },
 
   // ── Auth ────────────────────────────────────────────────────────────────────
 
@@ -287,7 +179,7 @@ export const useStore = create<AppState>()((set, get) => ({
       _activeUserId = DEMO_USER.id;
       localStorage.setItem(AUTH_KEY, JSON.stringify({ user: DEMO_USER, isAuthenticated: true }));
       const workspace = loadWorkspaceStateLocal(DEMO_USER.id, DEMO_USER);
-      set({ user: DEMO_USER, isAuthenticated: true, _hasHydrated: true, ...workspace, stations: workspace.settings.stations ?? [] });
+      get().hydrateWorkspace(DEMO_USER, workspace, 'local');
       return { success: true };
     }
 
@@ -314,14 +206,7 @@ export const useStore = create<AppState>()((set, get) => ({
       const { loadWorkspaceFromSupabase } = await import('./hydration');
       const workspace = await loadWorkspaceFromSupabase(user.id, user);
 
-      set({ user, isAuthenticated: true, _hasHydrated: true, ...workspace, stations: workspace.settings.stations ?? [] });
-
-      // Silent background tasks: local→cloud backfill (only if cloud is empty)
-      // and base64 image/logo migration. Fail-soft and non-blocking — the owner
-      // never waits on these. See store/autoMigrations.ts for details.
-      void import('./autoMigrations').then(({ runBackgroundMigrations }) =>
-        runBackgroundMigrations(user.id, user),
-      );
+      get().hydrateWorkspace(user, workspace);
 
       return { success: true };
     }
@@ -341,24 +226,18 @@ export const useStore = create<AppState>()((set, get) => ({
     _activeUserId = foundUser.id;
     localStorage.setItem(AUTH_KEY, JSON.stringify({ user: foundUser, isAuthenticated: true }));
     const workspace = loadWorkspaceStateLocal(foundUser.id, foundUser);
-    set({ user: foundUser, isAuthenticated: true, _hasHydrated: true, ...workspace, stations: workspace.settings.stations ?? [] });
+    get().hydrateWorkspace(foundUser, workspace, 'local');
     return { success: true };
   },
 
   async logout() {
-    if (isSupabaseEnabled()) {
+    const cloudSession = isSupabaseEnabled() && get().user?.id !== DEMO_USER.id;
+    localStorage.removeItem(AUTH_KEY);
+    get().resetWorkspace();
+    if (cloudSession) {
       const { supabase } = await import('@/lib/supabase/client');
       await supabase?.auth.signOut();
-    } else {
-      _activeUserId = null;
-      localStorage.removeItem(AUTH_KEY);
     }
-    set({
-      user: null, isAuthenticated: false,
-      menuItems: [], categories: [], tables: [], orders: [], receipts: [],
-      settings: DEFAULT_SETTINGS, stations: [], nextOrderNumber: 1001, reservations: [],
-      ingredients: [], kitchenEvents: [], decorations: [],
-    });
   },
 
   async signup({ email, password, name, businessName }) {
@@ -395,7 +274,7 @@ export const useStore = create<AppState>()((set, get) => ({
       await Promise.all(workspace.menuItems.map(item => insertMenuItem(item, user.id)));
       await Promise.all(workspace.tables.map(table => insertTable(table, user.id)));
 
-      set({ user, isAuthenticated: true, _hasHydrated: true, ...workspace, stations: workspace.settings.stations ?? [] });
+      get().hydrateWorkspace(user, workspace);
       return { success: true };
     }
 
@@ -414,7 +293,7 @@ export const useStore = create<AppState>()((set, get) => ({
     _activeUserId = newUser.id;
     localStorage.setItem(AUTH_KEY, JSON.stringify({ user: newUser, isAuthenticated: true }));
     const workspace = defaultWorkspace(newUser);
-    set({ user: newUser, isAuthenticated: true, _hasHydrated: true, ...workspace, stations: workspace.settings.stations ?? [] });
+    get().hydrateWorkspace(newUser, workspace, 'local');
     return { success: true };
   },
 
@@ -432,7 +311,7 @@ export const useStore = create<AppState>()((set, get) => ({
     };
     set(s => ({ menuItems: [...s.menuItems, item] }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistNewMenuItem(item, user.id).catch((err: unknown) =>
         toast.error(`Failed to save menu item: ${err instanceof Error ? err.message : String(err)}`));
     }
@@ -446,7 +325,7 @@ export const useStore = create<AppState>()((set, get) => ({
         i.id === id ? { ...i, ...updates, updatedAt: now() } : i),
     }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistMenuItemUpdate(id, updates).catch(() => {
         if (prev) set(s => ({ menuItems: s.menuItems.map(i => i.id === id ? prev : i) }));
         toast.error('Failed to update menu item.');
@@ -461,7 +340,7 @@ export const useStore = create<AppState>()((set, get) => ({
         i.id === id ? { ...i, status: 'archived' as MenuItemStatus, updatedAt: now() } : i),
     }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistMenuItemUpdate(id, { status: 'archived' }).catch(() => {
         if (prev) set(s => ({ menuItems: s.menuItems.map(i => i.id === id ? prev : i) }));
         toast.error('Failed to archive menu item.');
@@ -476,7 +355,7 @@ export const useStore = create<AppState>()((set, get) => ({
         i.id === id ? { ...i, status, updatedAt: now() } : i),
     }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistMenuItemUpdate(id, { status }).catch(() => {
         if (prev) set(s => ({ menuItems: s.menuItems.map(i => i.id === id ? prev : i) }));
         toast.error('Failed to update item status.');
@@ -492,7 +371,7 @@ export const useStore = create<AppState>()((set, get) => ({
       }),
     }));
     _persistLocal(get);
-    if (isSupabaseEnabled()) {
+    if (usesSupabasePersistence()) {
       bridge.persistMenuItemReorder(orderedIds.map((id, i) => ({ id, sortOrder: i + 1 })))
         .catch(() => toast.error('Failed to save order to server.'));
     }
@@ -506,7 +385,7 @@ export const useStore = create<AppState>()((set, get) => ({
       return { categories: [...s.categories, trimmed] };
     });
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       const { categories, user } = get();
       import('@/lib/supabase/queries/settings').then(({ saveCategories }) =>
         saveCategories(user!.id, categories).catch(() =>
@@ -517,7 +396,7 @@ export const useStore = create<AppState>()((set, get) => ({
   deleteCategory(name) {
     set(s => ({ categories: s.categories.filter(c => c !== name) }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       const { categories, user } = get();
       import('@/lib/supabase/queries/settings').then(({ saveCategories }) =>
         saveCategories(user!.id, categories).catch(() =>
@@ -542,7 +421,7 @@ export const useStore = create<AppState>()((set, get) => ({
     };
     set(s => ({ tables: [...s.tables, table] }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistNewTable(table, get().user!.id).catch((err: unknown) =>
         toast.error(`Failed to save table: ${err instanceof Error ? err.message : String(err)}`));
     }
@@ -553,7 +432,7 @@ export const useStore = create<AppState>()((set, get) => ({
     const prev = get().tables.find(t => t.id === id);
     set(s => ({ tables: s.tables.map(t => t.id === id ? { ...t, ...updates } : t) }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistTableUpdate(id, updates).catch(() => {
         if (prev) set(s => ({ tables: s.tables.map(t => t.id === id ? prev : t) }));
         toast.error('Failed to update table.');
@@ -565,7 +444,7 @@ export const useStore = create<AppState>()((set, get) => ({
     const prev = get().tables.find(t => t.id === id);
     set(s => ({ tables: s.tables.filter(t => t.id !== id) }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistDeleteTable(id).catch(() => {
         if (prev) set(s => ({ tables: [...s.tables, prev] }));
         toast.error('Failed to delete table.');
@@ -581,7 +460,7 @@ export const useStore = create<AppState>()((set, get) => ({
     };
     set(s => ({ decorations: [...s.decorations, dec] }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistNewDecoration(dec, get().user!.id).catch((err: unknown) =>
         toast.error(`Failed to save decoration: ${err instanceof Error ? err.message : String(err)}`));
     }
@@ -591,7 +470,7 @@ export const useStore = create<AppState>()((set, get) => ({
   updateDecoration(id, updates) {
     set(s => ({ decorations: s.decorations.map(d => d.id === id ? { ...d, ...updates } : d) }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistDecorationUpdate(id, updates).catch(() =>
         toast.error('Failed to update decoration.'));
     }
@@ -601,7 +480,7 @@ export const useStore = create<AppState>()((set, get) => ({
     const prev = get().decorations.find(d => d.id === id);
     set(s => ({ decorations: s.decorations.filter(d => d.id !== id) }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistDeleteDecoration(id).catch(() => {
         if (prev) set(s => ({ decorations: [...s.decorations, prev] }));
         toast.error('Failed to delete decoration.');
@@ -613,7 +492,7 @@ export const useStore = create<AppState>()((set, get) => ({
     const prev = get().tables.find(t => t.id === id);
     set(s => ({ tables: s.tables.map(t => t.id === id ? { ...t, status } : t) }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistTableUpdate(id, { status }).catch(() => {
         if (prev) set(s => ({ tables: s.tables.map(t => t.id === id ? prev : t) }));
         toast.error('Failed to update table status.');
@@ -632,7 +511,7 @@ export const useStore = create<AppState>()((set, get) => ({
     }));
     _persistLocal(get);
     const item = get().menuItems.find(m => m.id === itemId);
-    if (isSupabaseEnabled() && get().user?.id && item?.stock !== null) {
+    if (usesSupabasePersistence() && get().user?.id && item?.stock !== null) {
       bridge.persistMenuItemUpdate(itemId, { stock: item?.stock }).catch(() =>
         toast.error('Failed to sync stock.'));
     }
@@ -644,7 +523,7 @@ export const useStore = create<AppState>()((set, get) => ({
         i.id === itemId ? { ...i, stock: Math.max(0, stock), updatedAt: now() } : i),
     }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistMenuItemUpdate(itemId, { stock: Math.max(0, stock) }).catch(() =>
         toast.error('Failed to sync stock.'));
     }
@@ -658,7 +537,7 @@ export const useStore = create<AppState>()((set, get) => ({
     }));
     _persistLocal(get);
     const item = get().menuItems.find(m => m.id === itemId);
-    if (isSupabaseEnabled() && get().user?.id && item?.maxStock !== null) {
+    if (usesSupabasePersistence() && get().user?.id && item?.maxStock !== null) {
       bridge.persistMenuItemUpdate(itemId, { stock: item?.maxStock }).catch(() =>
         toast.error('Failed to sync stock.'));
     }
@@ -678,7 +557,7 @@ export const useStore = create<AppState>()((set, get) => ({
     }));
     _persistLocal(get);
     const updated = get().orders.find(o => o.id === orderId);
-    if (isSupabaseEnabled() && get().user?.id && updated) {
+    if (usesSupabasePersistence() && get().user?.id && updated) {
       bridge.persistOrderUpdate(orderId, { status: updated.status }).catch(() => {
         if (prev) set(s => ({ orders: s.orders.map(o => o.id === orderId ? prev : o) }));
         toast.error('Failed to update order status.');
@@ -697,7 +576,7 @@ export const useStore = create<AppState>()((set, get) => ({
     const table = get().tables.find(t => t.id === order.tableId);
     if (table?.status === 'occupied') get().setTableStatus(order.tableId, 'available');
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistOrderUpdate(orderId, { status: 'cancelled' }).catch(() =>
         toast.error('Failed to cancel order on server.'));
     }
@@ -711,7 +590,7 @@ export const useStore = create<AppState>()((set, get) => ({
           ? { ...o, status: 'refunded' as OrderStatus, updatedAt: now() } : o),
     }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistOrderUpdate(orderId, { status: 'refunded' }).catch(() => {
         if (prev) set(s => ({ orders: s.orders.map(o => o.id === orderId ? prev : o) }));
         toast.error('Failed to mark order as refunded.');
@@ -728,7 +607,7 @@ export const useStore = create<AppState>()((set, get) => ({
     }));
     _persistLocal(get);
     const order = get().orders.find(o => o.id === orderId);
-    if (isSupabaseEnabled() && get().user?.id && order) {
+    if (usesSupabasePersistence() && get().user?.id && order) {
       bridge.persistOrderUpdate(orderId, { prepTimeAdjustment: order.prepTimeAdjustment }).catch(() =>
         toast.error('Failed to sync prep time.'));
     }
@@ -743,7 +622,7 @@ export const useStore = create<AppState>()((set, get) => ({
     set(s => ({ ingredients: [...s.ingredients, ingredient] }));
     _persistLocal(get);
     const { user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistNewIngredient(ingredient, user.id).catch(() =>
         toast.error('Failed to save ingredient.'));
     }
@@ -756,7 +635,7 @@ export const useStore = create<AppState>()((set, get) => ({
         i.id === id ? { ...i, ...updates, updatedAt: now() } : i),
     }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistIngredientUpdate(id, updates).catch(() =>
         toast.error('Failed to update ingredient.'));
     }
@@ -765,7 +644,7 @@ export const useStore = create<AppState>()((set, get) => ({
   deleteIngredient(id) {
     set(s => ({ ingredients: s.ingredients.filter(i => i.id !== id) }));
     _persistLocal(get);
-    if (isSupabaseEnabled() && get().user?.id) {
+    if (usesSupabasePersistence() && get().user?.id) {
       bridge.persistDeleteIngredient(id).catch(() =>
         toast.error('Failed to delete ingredient.'));
     }
@@ -781,7 +660,7 @@ export const useStore = create<AppState>()((set, get) => ({
     });
     _persistLocal(get);
     const { settings, user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistSettings(settings, user.id).catch(() =>
         toast.error('Failed to save station.'));
     }
@@ -796,7 +675,7 @@ export const useStore = create<AppState>()((set, get) => ({
     });
     _persistLocal(get);
     const { settings, user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistSettings(settings, user.id).catch(() =>
         toast.error('Failed to update station.'));
     }
@@ -809,7 +688,7 @@ export const useStore = create<AppState>()((set, get) => ({
     });
     _persistLocal(get);
     const { settings, user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistSettings(settings, user.id).catch(() =>
         toast.error('Failed to delete station.'));
     }
@@ -822,7 +701,7 @@ export const useStore = create<AppState>()((set, get) => ({
     set(s => ({ kitchenEvents: [event, ...s.kitchenEvents].slice(0, 500) }));
     _persistLocal(get);
     const { user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistKitchenEvent(event, user.id).catch(() => {/* best-effort, non-critical */});
     }
   },
@@ -831,7 +710,7 @@ export const useStore = create<AppState>()((set, get) => ({
     set(s => ({ settings: { ...s.settings, ...updates } }));
     _persistLocal(get);
     const { settings, user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistSettings(settings, user.id).catch(() =>
         toast.error('Failed to save settings.'));
     }
@@ -897,7 +776,7 @@ export const useStore = create<AppState>()((set, get) => ({
     _persistLocal(get);
 
     const { user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistNewReservation(reservation, user.id).catch(() => {/* best-effort */});
     }
     return true;
@@ -907,7 +786,7 @@ export const useStore = create<AppState>()((set, get) => ({
     set(s => ({ reservations: s.reservations.filter(r => r.sessionId !== sessionId) }));
     _persistLocal(get);
     const { user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistReleaseReservation(sessionId, user.id).catch(() => {/* best-effort */});
     }
   },
@@ -916,7 +795,7 @@ export const useStore = create<AppState>()((set, get) => ({
     const { cart, sessionId, tableId, paymentMethod, notes, scheduledFor } = payload;
 
     // ── Supabase path: delegate entirely to atomic_checkout RPC ───────────────
-    if (isSupabaseEnabled()) {
+    if (usesSupabasePersistence()) {
       const { supabase } = await import('@/lib/supabase/client');
       if (!supabase) return { success: false, error: 'Supabase not configured.', unavailableItems: [] };
 
@@ -1057,7 +936,7 @@ export const useStore = create<AppState>()((set, get) => ({
   addCalendarEvent(data) {
     const event: CalendarEvent = { ...data, id: genId(), createdAt: now(), updatedAt: now() };
     set(s => ({ calendarEvents: [event, ...s.calendarEvents] }));
-    if (!get()._hasHydrated && _activeUserId && !isSupabaseEnabled()) {
+    if (!get()._hasHydrated && _activeUserId && !usesSupabasePersistence()) {
       // Public-page path (booking tab): store isn't hydrated so _persistLocal would
       // overwrite the admin's full workspace with empty arrays. Do a surgical
       // read-modify-write instead — only splice the new event into calendarEvents.
@@ -1075,7 +954,7 @@ export const useStore = create<AppState>()((set, get) => ({
       _persistLocal(get);
     }
     const { user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistNewCalendarEvent(event, user.id).catch(() =>
         toast.error('Failed to save event.'));
     }
@@ -1088,7 +967,7 @@ export const useStore = create<AppState>()((set, get) => ({
         e.id === id ? { ...e, ...updates, updatedAt: now() } : e),
     }));
     _persistLocal(get);
-    if (isSupabaseEnabled()) {
+    if (usesSupabasePersistence()) {
       bridge.persistCalendarEventUpdate(id, updates).catch(() =>
         toast.error('Failed to update event.'));
     }
@@ -1097,7 +976,7 @@ export const useStore = create<AppState>()((set, get) => ({
   deleteCalendarEvent(id) {
     set(s => ({ calendarEvents: s.calendarEvents.filter(e => e.id !== id) }));
     _persistLocal(get);
-    if (isSupabaseEnabled()) {
+    if (usesSupabasePersistence()) {
       bridge.persistDeleteCalendarEvent(id).catch(() =>
         toast.error('Failed to delete event.'));
     }
@@ -1112,7 +991,7 @@ export const useStore = create<AppState>()((set, get) => ({
           : e),
     }));
     _persistLocal(get);
-    if (isSupabaseEnabled()) {
+    if (usesSupabasePersistence()) {
       bridge.persistCalendarEventUpdate(id, { status: 'approved', approvedBy, approvedAt }).catch(() =>
         toast.error('Failed to approve event.'));
     }
@@ -1126,7 +1005,7 @@ export const useStore = create<AppState>()((set, get) => ({
           : e),
     }));
     _persistLocal(get);
-    if (isSupabaseEnabled()) {
+    if (usesSupabasePersistence()) {
       bridge.persistCalendarEventUpdate(id, { status: 'rejected', rejectionReason: reason ?? '' }).catch(() =>
         toast.error('Failed to reject event.'));
     }
@@ -1137,7 +1016,7 @@ export const useStore = create<AppState>()((set, get) => ({
     set(s => ({ eventPackages: [...s.eventPackages, pkg] }));
     _persistLocal(get);
     const { user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistNewEventPackage(pkg, user.id).catch(() =>
         toast.error('Failed to save package.'));
     }
@@ -1149,7 +1028,7 @@ export const useStore = create<AppState>()((set, get) => ({
       eventPackages: s.eventPackages.map(p => p.id === id ? { ...p, ...updates } : p),
     }));
     _persistLocal(get);
-    if (isSupabaseEnabled()) {
+    if (usesSupabasePersistence()) {
       bridge.persistEventPackageUpdate(id, updates).catch(() =>
         toast.error('Failed to update package.'));
     }
@@ -1158,7 +1037,7 @@ export const useStore = create<AppState>()((set, get) => ({
   deleteEventPackage(id) {
     set(s => ({ eventPackages: s.eventPackages.filter(p => p.id !== id) }));
     _persistLocal(get);
-    if (isSupabaseEnabled()) {
+    if (usesSupabasePersistence()) {
       bridge.persistDeleteEventPackage(id).catch(() =>
         toast.error('Failed to delete package.'));
     }
@@ -1168,7 +1047,7 @@ export const useStore = create<AppState>()((set, get) => ({
     set(s => ({ calendarSettings: { ...s.calendarSettings, ...updates } }));
     _persistLocal(get);
     const { calendarSettings, user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistCalendarSettings(calendarSettings, user.id).catch(() =>
         toast.error('Failed to save calendar settings.'));
     }
@@ -1181,7 +1060,7 @@ export const useStore = create<AppState>()((set, get) => ({
     set(s => ({ employees: [...s.employees, emp] }));
     _persistLocal(get);
     const { user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistNewEmployee(emp, user.id).catch(() =>
         toast.error('Failed to save employee.'));
     }
@@ -1191,7 +1070,7 @@ export const useStore = create<AppState>()((set, get) => ({
   updateEmployee(id, updates) {
     set(s => ({ employees: s.employees.map(e => e.id === id ? { ...e, ...updates } : e) }));
     _persistLocal(get);
-    if (isSupabaseEnabled()) {
+    if (usesSupabasePersistence()) {
       bridge.persistEmployeeUpdate(id, updates).catch(() =>
         toast.error('Failed to update employee.'));
     }
@@ -1207,7 +1086,7 @@ export const useStore = create<AppState>()((set, get) => ({
       })),
     }));
     _persistLocal(get);
-    if (isSupabaseEnabled()) {
+    if (usesSupabasePersistence()) {
       bridge.persistDeleteEmployee(id).catch(() =>
         toast.error('Failed to delete employee.'));
     }
@@ -1220,7 +1099,7 @@ export const useStore = create<AppState>()((set, get) => ({
     set(s => ({ shifts: [...s.shifts, shift] }));
     _persistLocal(get);
     const { user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistNewShift(shift, user.id).catch(() =>
         toast.error('Failed to save shift.'));
     }
@@ -1230,7 +1109,7 @@ export const useStore = create<AppState>()((set, get) => ({
   updateShift(id, updates) {
     set(s => ({ shifts: s.shifts.map(sh => sh.id === id ? { ...sh, ...updates } : sh) }));
     _persistLocal(get);
-    if (isSupabaseEnabled()) {
+    if (usesSupabasePersistence()) {
       bridge.persistShiftUpdate(id, updates).catch(() =>
         toast.error('Failed to update shift.'));
     }
@@ -1239,7 +1118,7 @@ export const useStore = create<AppState>()((set, get) => ({
   deleteShift(id) {
     set(s => ({ shifts: s.shifts.filter(sh => sh.id !== id) }));
     _persistLocal(get);
-    if (isSupabaseEnabled()) {
+    if (usesSupabasePersistence()) {
       bridge.persistDeleteShift(id).catch(() =>
         toast.error('Failed to delete shift.'));
     }
@@ -1281,7 +1160,7 @@ export const useStore = create<AppState>()((set, get) => ({
     _persistLocal(get);
 
     const { user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       for (const shift of newShifts) {
         bridge.persistNewShift(shift, user.id).catch(() =>
           toast.error('Failed to save shift.'));
@@ -1295,7 +1174,7 @@ export const useStore = create<AppState>()((set, get) => ({
     set(s => ({ calendarSettings: { ...s.calendarSettings, ...updates } }));
     _persistLocal(get);
     const { calendarSettings, user } = get();
-    if (isSupabaseEnabled() && user?.id) {
+    if (usesSupabasePersistence() && user?.id) {
       bridge.persistCalendarSettings(calendarSettings, user.id).catch(() =>
         toast.error('Failed to save week template.'));
     }
@@ -1435,11 +1314,9 @@ function _restoreStock(
 
 /** Persist workspace snapshot to localStorage (used only when Supabase is disabled). */
 function _persistLocal(get: () => AppState) {
-  if (isSupabaseEnabled() || !_activeUserId) return;
-  const { menuItems, categories, tables, orders, receipts, settings, stations, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations, calendarEvents, eventPackages, calendarSettings, employees, shifts } = get();
-  // Keep settings.stations in sync with the top-level stations slice before persisting
-  const syncedSettings = { ...settings, stations };
-  saveWorkspaceStateLocal(_activeUserId, { menuItems, categories, tables, orders, receipts, settings: syncedSettings, nextOrderNumber, reservations, ingredients, kitchenEvents, decorations, calendarEvents, eventPackages, calendarSettings, employees, shifts });
+  if (usesSupabasePersistence() || !_activeUserId) return;
+  try { saveWorkspaceStateLocal(_activeUserId, get()); }
+  catch { toast.error('Local storage is full. Your latest changes could not be saved.'); }
 }
 
 // ─── Cross-tab sync (local mode only) ────────────────────────────────────────
@@ -1448,7 +1325,7 @@ function _persistLocal(get: () => AppState) {
 // a booking — no page refresh needed.
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
-    if (isSupabaseEnabled() || !_activeUserId) return;
+    if (usesSupabasePersistence() || !_activeUserId) return;
     if (e.key !== WORKSPACE_KEY(_activeUserId) || !e.newValue) return;
     try {
       const parsed = JSON.parse(e.newValue);
@@ -1467,7 +1344,7 @@ if (typeof window !== 'undefined') {
       }
       if (!user) return;
       const fresh = loadWorkspaceStateLocal(_activeUserId, user);
-      useStore.setState(fresh);
+      useStore.getState().hydrateWorkspace(user, fresh, 'local');
     } catch { /* ignore */ }
   });
 }
@@ -1480,7 +1357,7 @@ if (typeof window !== 'undefined') {
  * BookingPage — so they always see the latest admin-saved values.
  */
 export function getPersistedSettings(): BusinessSettings | null {
-  if (isSupabaseEnabled() || !_activeUserId) return null;
+  if (usesSupabasePersistence() || !_activeUserId) return null;
   try {
     const raw = localStorage.getItem(WORKSPACE_KEY(_activeUserId));
     if (raw) {

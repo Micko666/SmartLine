@@ -24,24 +24,8 @@ import type {
 } from '@/domain/types';
 import { SEED_CATEGORIES, DEFAULT_SETTINGS } from '@/domain/initialData';
 
-export type WorkspaceSnapshot = {
-  menuItems: MenuItem[];
-  categories: string[];
-  tables: Table[];
-  orders: Order[];
-  receipts: Receipt[];
-  settings: BusinessSettings;
-  nextOrderNumber: number;
-  reservations: StockReservation[];
-  ingredients: Ingredient[];
-  kitchenEvents: KitchenEvent[];
-  decorations: MapDecoration[];
-  calendarEvents: CalendarEvent[];
-  eventPackages: EventPackage[];
-  calendarSettings: CalendarSettings;
-  employees: Employee[];
-  shifts: Shift[];
-};
+import { DEFAULT_CALENDAR_SETTINGS, normalizeWorkspace, type WorkspaceSnapshot } from './workspace';
+export type { WorkspaceSnapshot } from './workspace';
 
 export async function loadWorkspaceFromSupabase(
   userId: string,
@@ -83,23 +67,6 @@ export async function loadWorkspaceFromSupabase(
     await upsertSettings(finalSettings, userId, nextOrderNumber).catch(() => {/* best-effort */});
   }
 
-  const defaultCalendarSettings: CalendarSettings = {
-    maxEventsPerDay: 10,
-    requireApproval: true,
-    advanceBookingDays: 90,
-    bookingMessage: '',
-    workingDays: [
-      { dayOfWeek: 1, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
-      { dayOfWeek: 2, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
-      { dayOfWeek: 3, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
-      { dayOfWeek: 4, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
-      { dayOfWeek: 5, isOpen: true,  openTime: '09:00', closeTime: '23:00' },
-      { dayOfWeek: 6, isOpen: true,  openTime: '10:00', closeTime: '23:00' },
-      { dayOfWeek: 0, isOpen: false, openTime: '10:00', closeTime: '20:00' },
-    ],
-    workingExceptions: [],
-  };
-
   // Merge stored categories (user-created) with any categories already in use
   // by menu items, then fall back to seed defaults so the list is never empty.
   // Stored categories come from the `categories` JSONB column (migration 010).
@@ -108,13 +75,14 @@ export async function loadWorkspaceFromSupabase(
     ...new Set([...storedCategories, ...itemCategories, ...SEED_CATEGORIES]),
   ];
 
-  return {
+  return normalizeWorkspace({
     menuItems,
     categories: mergedCategories,
     tables,
     orders,
     receipts,
     settings: finalSettings,
+    stations: finalSettings.stations ?? [],
     nextOrderNumber,
     reservations: reservations.filter(r => r.expiresAt > Date.now()),
     ingredients,
@@ -125,10 +93,10 @@ export async function loadWorkspaceFromSupabase(
     // Treat missing OR empty-object calendarSettings as absent — use defaults
     calendarSettings: (calendarSettingsRaw && (calendarSettingsRaw as CalendarSettings).workingDays?.length)
       ? calendarSettingsRaw
-      : defaultCalendarSettings,
+      : DEFAULT_CALENDAR_SETTINGS,
     employees,
     shifts,
-  };
+  });
 }
 
 /**
