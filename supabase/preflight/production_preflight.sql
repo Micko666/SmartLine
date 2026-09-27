@@ -1,4 +1,4 @@
--- Read-only preflight for migrations 015-023 on an existing database.
+-- Read-only preflight for migrations 015-024 on an existing database.
 -- Every value must be 0 (except informational counts marked "info").
 -- Last run against production: 2026-09-27, all zero.
 SELECT
@@ -13,4 +13,8 @@ SELECT
      jsonb_array_elements(CASE WHEN jsonb_typeof(bs.stations) = 'array' THEN bs.stations ELSE '[]'::jsonb END) s
    WHERE NOT (s->>'id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'))                             AS non_uuid_station_ids,    -- 018 backfill keeps ids
   (SELECT count(*) FROM business_settings WHERE timezone IS NULL OR timezone = '' OR timezone NOT IN (SELECT name FROM pg_timezone_names)) AS invalid_timezones,
-  (SELECT count(*) FROM orders WHERE status IN ('paid','preparing','ready'))                                             AS active_orders_info;      -- deploy when 0 if possible
+  (SELECT count(*) FROM orders WHERE status IN ('paid','preparing','ready'))                                             AS active_orders_info,      -- deploy when 0 if possible
+  (SELECT count(*) FROM orders WHERE table_id IN ('takeaway','delivery'))                                                AS channel_backfill_info,   -- 015 sets order_channel (info)
+  (SELECT count(*) FROM business_settings bs,
+     jsonb_array_elements(CASE WHEN jsonb_typeof(bs.stations) = 'array' THEN bs.stations ELSE '[]'::jsonb END) s
+   WHERE s->'permissions'->'visibleStatuses' ? 'paid')                                                                    AS station_paid_status_info; -- 024 maps to placed (info)

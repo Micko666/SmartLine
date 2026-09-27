@@ -13,13 +13,14 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
-import { createTestDb, type TestDb } from './support/db';
+import { basename, join, relative, resolve } from 'node:path';
+import { createTestDb, migrationFiles, type TestDb } from './support/db';
 import { contractViolations, extractRpcCalls, extractTableOps, tableViolations } from './support/contract';
 
 const NEW_SRC = resolve(__dirname, '../../src');
 const OLD_SRC = process.env.SMARTLINE_OLD_SRC ? resolve(process.env.SMARTLINE_OLD_SRC) : '';
 const PROD_PRE = [resolve(__dirname, 'fixtures/production-pre-015.sql')];
+const UPGRADE = migrationFiles().filter(f => f >= '015').map(f => resolve(__dirname, '../migrations', f));
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap(name => {
@@ -73,4 +74,28 @@ describe('deployment compatibility matrix', () => {
     matrix['old-fe/new-db'] = await violations(join(OLD_SRC, 'src'), newDb);
     expect(matrix['old-fe/new-db'].length).toBeGreaterThan(0);
   });
+});
+
+/**
+ * Partial-upgrade states: production pre-state + 015..N. Shows what each
+ * frontend can do if migration N succeeded and N+1 failed (each file is one
+ * transaction, so a failed file leaves the database exactly at state N).
+ */
+describe('intermediate upgrade states (N applied, N+1 failed)', () => {
+  it('new frontend is fully compatible only after 024; counts per state are recorded', async () => {
+    const steps: Record<string, { newFe: number; oldFe?: number }> = {};
+    for (let n = 1; n <= UPGRADE.length; n++) {
+      const db = await createTestDb([...PROD_PRE, ...UPGRADE.slice(0, n)]);
+      try {
+        const label = basename(UPGRADE[n - 1]).slice(0, 3);
+        steps[label] = { newFe: (await violations(NEW_SRC, db)).length };
+        if (OLD_SRC) steps[label].oldFe = (await violations(join(OLD_SRC, 'src'), db)).length;
+      } finally { await db.close(); }
+    }
+    matrix['intermediate'] = Object.entries(steps).map(([k, v]) => `${k}: new-fe ${v.newFe} violations${v.oldFe === undefined ? '' : `, old-fe ${v.oldFe} violations`}`);
+    const labels = Object.keys(steps);
+    expect(labels).toHaveLength(UPGRADE.length);
+    expect(steps[labels[labels.length - 1]].newFe).toBe(0);
+    expect(labels.slice(0, -1).every(l => steps[l].newFe > 0)).toBe(true);
+  }, 300_000);
 });
