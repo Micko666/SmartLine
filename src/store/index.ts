@@ -44,6 +44,8 @@ export interface AppState extends WorkspaceSnapshot {
   resetWorkspace: () => void;
   /** Public pages (menu, portal, station): load one restaurant's customer-facing data. */
   hydrateCustomerContext: (data: { settings: BusinessSettings; menuItems: MenuItem[]; tables: Table[] }) => void;
+  /** Station devices: floor map + menu data from the session-gated station_get_context RPC. */
+  hydrateStationContext: (data: { restaurantName: string; menuItems: MenuItem[]; tables: Table[]; decorations: MapDecoration[] }) => void;
   applyRemoteOrder: (order: Order) => void;
   applyRemoteMenuItem: (item: MenuItem) => void;
   applyRemoteTable: (table: Table) => void;
@@ -163,6 +165,10 @@ export const useStore = create<AppState>()((set, get) => ({
   hydrateCustomerContext({ settings, menuItems, tables }) {
     // Public context never carries station credentials or owner-only fields.
     set({ settings: { ...settings, stations: [] }, menuItems, tables, stations: [] });
+  },
+
+  hydrateStationContext({ restaurantName, menuItems, tables, decorations }) {
+    set(s => ({ menuItems, tables, decorations, settings: { ...s.settings, businessName: restaurantName, stations: [] }, stations: [] }));
   },
 
   applyRemoteOrder(order) {

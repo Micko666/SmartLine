@@ -14,8 +14,6 @@ import type { Station, Order, OrderStatus } from '@/domain/types';
 
 interface Props {
   station: Station;
-  restaurantToken: string;
-  userId: string;
   restaurantName: string;
   onLock: () => void;
 }
@@ -386,8 +384,8 @@ function KitchenOrderCard({
 
 // ─── KitchenStation ───────────────────────────────────────────────────────────
 
-export default function KitchenStation({ station, restaurantToken, userId, restaurantName, onLock }: Props) {
-  const { orders, online, advanceOrder, adjustPrepTime, logKitchenEvent, remakeOrder } = useStationOrders(restaurantToken, userId, station.id);
+export default function KitchenStation({ station, restaurantName, onLock }: Props) {
+  const { orders, online, advanceOrder, adjustPrepTime, logKitchenEvent, remakeOrder } = useStationOrders(station, onLock);
   const menuItems = useStore(s => s.menuItems);
   const [advancing, setAdvancing] = useState<Set<string>>(new Set());
   const [mobileTab, setMobileTab] = useState<OrderStatus>('paid');

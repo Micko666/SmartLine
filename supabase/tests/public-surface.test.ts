@@ -151,7 +151,7 @@ describe('public data minimization', () => {
 });
 
 describe('privileges (SECURITY DEFINER hardening)', () => {
-  const PUBLIC_API = ['atomic_checkout', 'get_customer_menu', 'get_booking_data', 'submit_booking', 'lookup_booking_status', 'get_roster_data', 'get_order_status', 'get_receipt_by_id', 'station_public_config', 'station_login', 'station_logout', 'station_get_orders', 'station_advance_order', 'station_adjust_prep_time', 'station_log_kitchen_event', 'station_set_table_status'];
+  const PUBLIC_API = ['atomic_checkout', 'get_customer_menu', 'get_booking_data', 'submit_booking', 'lookup_booking_status', 'get_roster_data', 'get_order_status', 'get_receipt_by_id', 'station_public_config', 'station_login', 'station_logout', 'station_get_orders', 'station_advance_order', 'station_adjust_prep_time', 'station_log_kitchen_event', 'station_set_table_status', 'station_get_context'];
   const OWNER_API = ['advance_order', 'cancel_order', 'adjust_stock', 'patch_settings', 'list_stations', 'upsert_station', 'delete_station'];
 
   it('anon can execute exactly the public allow-list', async () => {

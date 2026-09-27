@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Lock, Wifi, WifiOff } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { Station } from '@/domain/types';
-import { closeSession } from '@/domain/stations';
 
 interface StationLayoutProps {
   station: Station;
@@ -24,9 +23,9 @@ export default function StationLayout({
   const [lockConfirm, setLockConfirm] = useState(false);
 
   function handleLock() {
-    if (!station.pin) { onLock(); return; }
+    // Locking ends the device session (server-side in Supabase mode, see StationGate).
+    if (!(station.hasPin ?? !!station.pin)) { onLock(); return; }
     if (lockConfirm) {
-      closeSession(station.id);
       onLock();
     } else {
       setLockConfirm(true);

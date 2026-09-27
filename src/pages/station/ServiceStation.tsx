@@ -14,8 +14,6 @@ import type { Station, Order, OrderStatus, Table } from '@/domain/types';
 
 interface Props {
   station: Station;
-  restaurantToken: string;
-  userId: string;
   restaurantName: string;
   onLock: () => void;
 }
@@ -76,13 +74,12 @@ function OrderListRow({ order, onClick }: { order: Order; onClick: () => void })
 
 // ─── ServiceStation ───────────────────────────────────────────────────────────
 
-export default function ServiceStation({ station, restaurantToken, userId, restaurantName, onLock }: Props) {
-  const { orders, online, advanceOrder } = useStationOrders(restaurantToken, userId, station.id);
-  const { tables, decorations, menuItems, setTableStatus } = useStore(useShallow(s => ({
+export default function ServiceStation({ station, restaurantName, onLock }: Props) {
+  const { orders, online, advanceOrder, setTableStatus } = useStationOrders(station, onLock);
+  const { tables, decorations, menuItems } = useStore(useShallow(s => ({
     tables:         s.tables,
     decorations:    s.decorations,
     menuItems:      s.menuItems,
-    setTableStatus: s.setTableStatus,
   })));
 
   const [advancing, setAdvancing] = useState<Set<string>>(new Set());

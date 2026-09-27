@@ -25,8 +25,6 @@ import type { Station, Order, OrderStatus, OrderItem, Table } from '@/domain/typ
 
 interface Props {
   station: Station;
-  restaurantToken: string;
-  userId: string;
   restaurantName: string;
   onLock: () => void;
 }
@@ -113,15 +111,14 @@ function BarOrderRow({
 
 // ─── BarStation ───────────────────────────────────────────────────────────────
 
-export default function BarStation({ station, restaurantToken, userId, restaurantName, onLock }: Props) {
-  const { orders, online, advanceOrder } = useStationOrders(restaurantToken, userId, station.id);
+export default function BarStation({ station, restaurantName, onLock }: Props) {
+  const { orders, online, advanceOrder, setTableStatus } = useStationOrders(station, onLock);
   const [advancing, setAdvancing] = useState<Set<string>>(new Set());
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
 
-  const { tables, menuItems, setTableStatus } = useStore(useShallow(s => ({
+  const { tables, menuItems } = useStore(useShallow(s => ({
     tables:         s.tables,
     menuItems:      s.menuItems,
-    setTableStatus: s.setTableStatus,
   })));
 
   const { filterCategories, categoryMode } = station.permissions;

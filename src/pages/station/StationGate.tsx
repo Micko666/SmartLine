@@ -2,27 +2,29 @@
  * StationGate — PIN entry screen for station devices.
  * Accessed via /station/:restaurantToken/:stationId
  *
- * Auth model:
- *  - Resolves station config from public.ts (restaurantToken lookup)
- *  - If no PIN set, unlocks immediately
- *  - If PIN set, shows numpad; on success writes a 12-hour localStorage session
- *  - On valid session skip PIN and render the station view directly
+ * Supabase mode (server-verified):
+ *  - station_public_config returns name/role/permissions/hasPin (never the PIN)
+ *  - the PIN is sent once to station_login, which returns an opaque session
+ *    token (12 h); every station RPC requires it and checks permissions
+ *  - a stored, still-valid session skips the PIN; lock = server-side logout
+ * Local/demo mode: station config comes from this browser's workspace and the
+ *  PIN is compared locally (demo only — see docs/stabilization-execution.md).
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Delete, ChefHat, Waves, UtensilsCrossed, Sliders } from 'lucide-react';
-import { fetchRestaurantByToken } from '@/lib/supabase/queries/public';
-import { isSessionValid, openSession, normalizeStation } from '@/domain/stations';
+import { closeSession, isSessionValid, openSession, normalizeStation } from '@/domain/stations';
 import { useStore } from '@/store';
 import type { Station, StationRole } from '@/domain/types';
 import { isSupabaseEnabled } from '@/store/flags';
+import * as stationService from '@/services/stationService';
 import KitchenStation from './KitchenStation';
 import ServiceStation from './ServiceStation';
 import BarStation from './BarStation';
 
 // ─── Component registry — exhaustive; add new roles here ─────────────────────
-type StationProps = { station: Station; restaurantToken: string; userId: string; restaurantName: string; onLock: () => void };
+type StationProps = { station: Station; restaurantName: string; onLock: () => void };
 const STATION_VIEWS: Record<StationRole, React.ComponentType<StationProps>> = {
   kitchen: KitchenStation,
   bar:     BarStation,
@@ -80,11 +82,11 @@ function Numpad({
 
 export default function StationGate() {
   const { restaurantToken, stationId } = useParams<{ restaurantToken: string; stationId: string }>();
+  const remote = isSupabaseEnabled();
 
   const [loading, setLoading] = useState(true);
   const [station, setStation] = useState<Station | null>(null);
   const [restaurantName, setRestaurantName] = useState('');
-  const [userId, setUserId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [unlocked, setUnlocked] = useState(false);
 
@@ -92,6 +94,43 @@ export default function StationGate() {
   const [pin, setPin] = useState('');
   const [shake, setShake] = useState(false);
   const [wrongAttempts, setWrongAttempts] = useState(0);
+  const [pinError, setPinError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  /** Supabase: load floor/menu context with the stored session; false if it is gone. */
+  const enterWithSession = useCallback(async (): Promise<boolean> => {
+    if (!stationId) return false;
+    const session = stationService.loadStationSession(stationId);
+    if (!session) return false;
+    try {
+      const ctx = await stationService.fetchStationContext(session.token);
+      useStore.getState().hydrateStationContext(ctx);
+      setStation(ctx.station);
+      setRestaurantName(ctx.restaurantName);
+      setUnlocked(true);
+      return true;
+    } catch {
+      stationService.clearStationSession(stationId);
+      return false;
+    }
+  }, [stationId]);
+
+  const login = useCallback(async (value: string | null) => {
+    if (!restaurantToken || !stationId) return;
+    setSubmitting(true);
+    try {
+      await stationService.loginStation(restaurantToken, stationId, value);
+      if (!(await enterWithSession())) throw new Error('Could not open the station.');
+      setPinError('');
+    } catch (err) {
+      setPinError(err instanceof Error ? err.message : 'Login failed');
+      setShake(true);
+      setWrongAttempts(n => n + 1);
+      setTimeout(() => { setPin(''); setShake(false); }, 600);
+    } finally {
+      setSubmitting(false);
+    }
+  }, [restaurantToken, stationId, enterWithSession]);
 
   useEffect(() => {
     if (!restaurantToken || !stationId) {
@@ -102,43 +141,23 @@ export default function StationGate() {
 
     (async () => {
       try {
-        let res = await fetchRestaurantByToken(restaurantToken);
-
-        // localStorage fallback — when Supabase is not configured, resolve the
-        // restaurant from the currently loaded Zustand store (same device / demo mode).
-        if (!res && !isSupabaseEnabled()) {
-          const state = useStore.getState();
-          if (state.settings?.restaurantToken === restaurantToken && state.user) {
-            res = {
-              userId:    state.user.id,
-              settings:  state.settings,
-              menuItems: state.menuItems,
-              tables:    state.tables,
-            };
-          }
+        if (remote) {
+          const config = await stationService.fetchStationConfig(restaurantToken, stationId).catch(() => null);
+          if (!config) { setError('Station not found.'); return; }
+          setStation(config.station);
+          setRestaurantName(config.restaurantName);
+          if (await enterWithSession()) return;
+          if (!config.station.hasPin) await login(null);
+          return;
         }
 
-        if (!res) { setError('Restaurant not found.'); setLoading(false); return; }
-
-        const found = (res.settings?.stations ?? []).find((s: Station) => s.id === stationId);
-        if (!found) { setError('Station not found.'); setLoading(false); return; }
-
-        // Inject restaurant data into the store so station views (BarStation,
-        // ServiceStation, KitchenStation) can read menuItems, tables, settings
-        // without requiring an admin login on the device.
-        useStore.setState({
-          menuItems: res.menuItems,
-          tables:    res.tables,
-          settings:  res.settings,
-          stations:  res.settings?.stations ?? [],
-        });
-
-        // Normalize fills in any permission fields missing from older station records
+        // Local/demo mode: the station only exists in this browser's workspace.
+        const state = useStore.getState();
+        if (state.settings?.restaurantToken !== restaurantToken || !state.user) { setError('Restaurant not found.'); return; }
+        const found = state.stations.find(s => s.id === stationId);
+        if (!found) { setError('Station not found.'); return; }
         setStation(normalizeStation(found));
-        setRestaurantName(res.settings?.businessName ?? 'SmartLine');
-        setUserId(res.userId);
-
-        // Check existing session
+        setRestaurantName(state.settings.businessName ?? 'SmartLine');
         if (!found.pin || isSessionValid(stationId)) {
           openSession(stationId);
           setUnlocked(true);
@@ -149,7 +168,9 @@ export default function StationGate() {
         setLoading(false);
       }
     })();
-  }, [restaurantToken, stationId]);
+  // Runs once per station URL; login/enter are stable for a given URL.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restaurantToken, stationId, remote]);
 
   // Physical keyboard support for PIN entry
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -158,17 +179,26 @@ export default function StationGate() {
       setPin(prev => prev.length < 6 ? prev + e.key : prev);
     } else if (e.key === 'Backspace') {
       setPin(prev => prev.slice(0, -1));
+    } else if (e.key === 'Enter' && remote && pin.length >= 4) {
+      void login(pin);
     }
-  }, [unlocked, station]);
+  }, [unlocked, station, remote, pin, login]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  // Auto-submit when PIN length matches
+  // Local mode: compare as soon as the PIN length matches. Supabase mode: the
+  // device does not know the PIN length, so 6 digits auto-submit and shorter
+  // PINs use the Unlock button / Enter.
   useEffect(() => {
-    if (!station?.pin || pin.length < 4) return;
+    if (!station || unlocked || submitting) return;
+    if (remote) {
+      if (pin.length === 6) void login(pin);
+      return;
+    }
+    if (!station.pin || pin.length < 4) return;
     if (pin.length === station.pin.length || pin.length === 6) {
       if (pin === station.pin) {
         openSession(stationId!);
@@ -179,7 +209,15 @@ export default function StationGate() {
         setTimeout(() => { setPin(''); setShake(false); }, 600);
       }
     }
-  }, [pin, station, stationId]);
+  }, [pin, station, stationId, unlocked, submitting, remote, login]);
+
+  const lock = useCallback(() => {
+    if (!stationId) return;
+    if (remote) void stationService.logoutStation(stationId);
+    else closeSession(stationId);
+    setPin('');
+    setUnlocked(false);
+  }, [remote, stationId]);
 
   // ── Loading ──────────────────────────────────────────────────────────────────
   if (loading) {
@@ -191,7 +229,7 @@ export default function StationGate() {
   }
 
   // ── Error ────────────────────────────────────────────────────────────────────
-  if (error || !station || !userId) {
+  if (error || !station) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-center px-4 bg-background">
         <div className="w-16 h-16 rounded-2xl bg-destructive/10 flex items-center justify-center">
@@ -205,13 +243,13 @@ export default function StationGate() {
 
   // ── Unlocked — render station view ───────────────────────────────────────────
   if (unlocked) {
-    const props = { station, restaurantToken: restaurantToken!, userId, restaurantName, onLock: () => setUnlocked(false) };
     const StationView = STATION_VIEWS[station.role];
-    return <StationView {...props} />;
+    return <StationView station={station} restaurantName={restaurantName} onLock={lock} />;
   }
 
   // ── PIN gate ─────────────────────────────────────────────────────────────────
   const Icon = ROLE_ICONS[station.role];
+  const dots = Math.max(remote ? pin.length : station.pin.length, 4);
 
   return (
     <div
@@ -234,7 +272,7 @@ export default function StationGate() {
 
       {/* Dot indicators */}
       <div className="flex gap-3">
-        {Array.from({ length: Math.max(station.pin.length, 4) }).map((_, i) => (
+        {Array.from({ length: dots }).map((_, i) => (
           <motion.div
             key={i}
             animate={{ scale: pin.length > i ? 1.2 : 1 }}
@@ -258,9 +296,20 @@ export default function StationGate() {
         </motion.div>
       </AnimatePresence>
 
+      {remote && (
+        <button
+          type="button"
+          onClick={() => void login(pin)}
+          disabled={pin.length < 4 || submitting}
+          className="h-11 px-8 rounded-2xl bg-primary text-primary-foreground font-semibold disabled:opacity-40"
+        >
+          {submitting ? 'Checking…' : 'Unlock'}
+        </button>
+      )}
+
       {wrongAttempts > 0 && (
-        <p className="text-sm text-destructive font-medium">
-          Incorrect PIN{wrongAttempts > 2 ? ` (${wrongAttempts} attempts)` : ''}
+        <p className="text-sm text-destructive font-medium" role="alert">
+          {pinError || 'Incorrect PIN'}{wrongAttempts > 2 ? ` (${wrongAttempts} attempts)` : ''}
         </p>
       )}
 

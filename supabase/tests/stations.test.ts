@@ -86,7 +86,16 @@ describe('station operations require a session and server-side permissions', () 
       expect((await db.rpc<Res>('anon', 'station_adjust_prep_time', { p_session_token: token, p_order_id: id, p_delta_minutes: 5 })).ok).toBe(false);
       expect((await db.rpc<Res>('anon', 'station_log_kitchen_event', { p_session_token: token, p_order_id: id, p_type: 'note', p_notes: 'x' })).ok).toBe(false);
       expect((await db.rpc<Res>('anon', 'station_set_table_status', { p_session_token: token, p_table_id: t.tableId, p_status: 'available' })).ok).toBe(false);
+      expect((await db.rpc<Res>('anon', 'station_get_context', { p_session_token: token })).ok).toBe(false);
     }
+  });
+
+  it('station context returns floor/menu data for the session tenant only, without PINs', async () => {
+    const token = (await login(serviceId, '5678')).sessionToken;
+    const ctx = await db.rpc<{ ok: boolean; tables: Array<{ id: string }>; menuItems: unknown[] }>('anon', 'station_get_context', { p_session_token: token });
+    expect(ctx.ok).toBe(true);
+    expect(ctx.tables.map(x => x.id)).toEqual([t.tableId]);
+    expect(JSON.stringify(ctx)).not.toMatch(/pin_hash|"pin"|cost_per_serving|recipe/);
   });
 
   it('kitchen: may advance, may not cancel or change tables; invalid transitions rejected', async () => {

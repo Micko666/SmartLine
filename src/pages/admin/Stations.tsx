@@ -40,7 +40,12 @@ const ALL_STATUSES: OrderStatus[] = ['paid', 'preparing', 'ready', 'completed', 
 interface FormState {
   name: string;
   role: StationRole;
+  /** New PIN to set. Blank keeps the current PIN (PINs are never read back). */
   pin: string;
+  /** Editing a PIN-protected station: remove its PIN on save. */
+  removePin: boolean;
+  /** Whether the station being edited currently has a PIN. */
+  hasPin: boolean;
   color: string;
   canAdvanceOrders: boolean;
   canCancelOrders: boolean;
@@ -62,6 +67,8 @@ function defaultForm(role: StationRole = 'kitchen'): FormState {
     name: '',
     role,
     pin: '',
+    removePin: false,
+    hasPin: false,
     color: preset.color,
     canAdvanceOrders: preset.permissions.canAdvanceOrders,
     canCancelOrders: preset.permissions.canCancelOrders,
@@ -83,7 +90,9 @@ function stationToForm(s: Station): FormState {
   return {
     name: s.name,
     role: s.role,
-    pin: s.pin,
+    pin: '',
+    removePin: false,
+    hasPin: s.hasPin ?? !!s.pin,
     color: s.color,
     canAdvanceOrders:      p.canAdvanceOrders,
     canCancelOrders:       p.canCancelOrders,
@@ -220,7 +229,7 @@ function StationForm({
 
       {/* PIN */}
       <div className="space-y-1.5">
-        <Label>PIN (4–6 digits, leave blank for no lock)</Label>
+        <Label>{form.hasPin ? 'New PIN (4–6 digits, leave blank to keep the current PIN)' : 'PIN (4–6 digits, leave blank for no lock)'}</Label>
         <div className="relative">
           <Input
             type={showPin ? 'text' : 'password'}
@@ -228,8 +237,9 @@ function StationForm({
             inputMode="numeric"
             maxLength={6}
             value={form.pin}
-            onChange={e => onChange({ ...form, pin: e.target.value.replace(/\D/g, '') })}
+            onChange={e => onChange({ ...form, pin: e.target.value.replace(/\D/g, ''), removePin: false })}
             className="pr-10"
+            disabled={form.removePin}
           />
           <button
             type="button"
@@ -239,6 +249,16 @@ function StationForm({
             {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
           </button>
         </div>
+        {form.hasPin && (
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={form.removePin}
+              onChange={e => onChange({ ...form, removePin: e.target.checked, pin: '' })}
+            />
+            Remove PIN (anyone with the station link can open it)
+          </label>
+        )}
       </div>
 
       {/* ── Kitchen-specific capabilities ── */}
@@ -503,7 +523,7 @@ function StationCard({
             {p.categoryMode}: {p.filterCategories.join(', ')}
           </span>
         )}
-        {station.pin ? (
+        {(station.hasPin ?? !!station.pin) ? (
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">PIN locked</span>
         ) : (
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 font-medium">No PIN</span>
@@ -563,7 +583,7 @@ export default function Stations() {
     setDialogOpen(true);
   }
 
-  function handleSave() {
+  async function handleSave() {
     const name = form.name.trim();
     if (!name) { toast.error('Station name is required'); return; }
     if (form.pin && (form.pin.length < 4 || form.pin.length > 6)) {
@@ -586,12 +606,13 @@ export default function Stations() {
     };
 
     if (editTarget) {
-      updateStation(editTarget.id, { name, role: form.role, pin: form.pin, color: form.color, permissions });
-      toast.success('Station updated');
+      const ok = await updateStation(editTarget.id, { name, role: form.role, pin: form.pin || undefined, removePin: form.removePin, color: form.color, permissions });
+      if (ok) toast.success('Station updated');
+      else return;
     } else {
       const station = buildStation({ name, role: form.role, pin: form.pin, color: form.color, permissions });
-      addStation(station);
-      toast.success('Station created');
+      if (await addStation(station)) toast.success('Station created');
+      else return;
     }
     setDialogOpen(false);
   }
