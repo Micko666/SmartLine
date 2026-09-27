@@ -1,33 +1,30 @@
 /**
- * Unified realtime coordinator — single Supabase channel for the admin dashboard.
- *
- * Replaces the separate useOrdersSubscription + useMenuSubscription hooks that
- * were each managing their own channel lifecycle with no shared error state or
- * reconnection strategy.
- *
- * One channel. One cleanup path. All store updates flow through one place.
+ * Unified realtime coordinator — single Supabase channel for the admin
+ * dashboard (authenticated owner; RLS limits events to the owner's rows).
  *
  * Handles:
- *   - orders INSERT/UPDATE      → patch Zustand orders slice
- *   - kitchen_events INSERT     → prepend to kitchenEvents slice (cap 500)
- *   - menu_items UPDATE         → patch stock/status in menuItems slice
+ *   - orders INSERT/UPDATE        → applyRemoteOrder
+ *   - kitchen_events INSERT       → applyRemoteKitchenEvent
+ *   - menu_items UPDATE           → applyRemoteMenuItem
+ *   - tables UPDATE               → applyRemoteTable (station/table changes)
+ *   - calendar_events INSERT/UPDATE → applyRemoteCalendarEvent
  *
- * On tab-regain (visibilitychange): targeted re-fetch of active orders only
- * (paid/preparing/ready, limit 100) to catch any missed events without a full
- * table scan.
+ * On tab-regain (visibilitychange): re-fetch active orders AND every order the
+ * store still believes is active, then merge by id — so an order completed
+ * while the tab was hidden is updated instead of disappearing.
  *
- * Mount once in DashboardLayout. Unmounts cleanly on logout / route change.
+ * All writes go through store actions; this hook never calls setState.
+ * Mount once in DashboardLayout.
  */
 import { useEffect, useRef } from 'react';
 import { useStore } from '@/store';
 import { isSupabaseEnabled } from '@/store/flags';
+import { isActiveOrder } from '@/domain/orderMachine';
 import { supabase } from '../client';
-import { mapOrderRow, mapKitchenEventRow, mapCalendarEventRow } from '../mappers';
-import type { OrderStatus } from '@/domain/types';
+import { mapOrderRow, mapKitchenEventRow, mapCalendarEventRow, mapMenuItemRow, mapTableRow } from '../mappers';
 
 type Channel = ReturnType<NonNullable<typeof supabase>['channel']>;
-
-const ACTIVE_STATUSES: OrderStatus[] = ['paid', 'preparing', 'ready'];
+type Row = Record<string, unknown>;
 
 export function useRealtimeCoordinator() {
   const userId = useStore(s => s.user?.id);
@@ -35,123 +32,51 @@ export function useRealtimeCoordinator() {
 
   useEffect(() => {
     if (!isSupabaseEnabled() || !supabase || !userId) return;
+    const client = supabase;
+    const store = () => useStore.getState();
+    const filter = `user_id=eq.${userId}`;
 
-    // Remove any stale channel from a previous render cycle
     if (channelRef.current) {
-      supabase.removeChannel(channelRef.current);
+      client.removeChannel(channelRef.current);
       channelRef.current = null;
     }
 
-    channelRef.current = supabase
+    channelRef.current = client
       .channel(`admin:${userId}`)
-
-      // ── Orders ─────────────────────────────────────────────────────────────
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'orders', filter: `user_id=eq.${userId}` },
-        (payload) => {
-          const newOrder = mapOrderRow(payload.new as Record<string, unknown>);
-          useStore.setState(s => {
-            if (s.orders.some(o => o.id === newOrder.id)) return s;
-            return { orders: [newOrder, ...s.orders] };
-          });
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'orders', filter: `user_id=eq.${userId}` },
-        (payload) => {
-          const updated = mapOrderRow(payload.new as Record<string, unknown>);
-          useStore.setState(s => ({
-            orders: s.orders.map(o => o.id === updated.id ? updated : o),
-          }));
-        },
-      )
-
-      // ── Kitchen events ──────────────────────────────────────────────────────
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'kitchen_events', filter: `user_id=eq.${userId}` },
-        (payload) => {
-          const event = mapKitchenEventRow(payload.new as Record<string, unknown>);
-          useStore.setState(s => {
-            if (s.kitchenEvents.some(e => e.id === event.id)) return s;
-            return { kitchenEvents: [event, ...s.kitchenEvents].slice(0, 500) };
-          });
-        },
-      )
-
-      // ── Menu items (stock / status changes) ────────────────────────────────
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'menu_items', filter: `user_id=eq.${userId}` },
-        (payload) => {
-          const row = payload.new as Record<string, unknown>;
-          useStore.setState(s => ({
-            menuItems: s.menuItems.map(item =>
-              item.id === row.id
-                ? {
-                    ...item,
-                    stock:     row.stock != null ? Number(row.stock) : null,
-                    status:    (row.status as typeof item.status) ?? item.status,
-                    updatedAt: row.updated_at as string,
-                  }
-                : item,
-            ),
-          }));
-        },
-      )
-
-      // ── Calendar events (customer booking requests land here) ──────────────
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'calendar_events', filter: `user_id=eq.${userId}` },
-        (payload) => {
-          const newEvent = mapCalendarEventRow(payload.new as Record<string, unknown>);
-          useStore.setState(s => {
-            if (s.calendarEvents.some(e => e.id === newEvent.id)) return s;
-            return { calendarEvents: [newEvent, ...s.calendarEvents] };
-          });
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'calendar_events', filter: `user_id=eq.${userId}` },
-        (payload) => {
-          const updated = mapCalendarEventRow(payload.new as Record<string, unknown>);
-          useStore.setState(s => ({
-            calendarEvents: s.calendarEvents.map(e => e.id === updated.id ? updated : e),
-          }));
-        },
-      )
-
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders', filter },
+        payload => store().applyRemoteOrder(mapOrderRow(payload.new as Row)))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter },
+        payload => store().applyRemoteOrder(mapOrderRow(payload.new as Row)))
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'kitchen_events', filter },
+        payload => store().applyRemoteKitchenEvent(mapKitchenEventRow(payload.new as Row)))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'menu_items', filter },
+        payload => store().applyRemoteMenuItem(mapMenuItemRow(payload.new as Row)))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tables', filter },
+        payload => store().applyRemoteTable(mapTableRow(payload.new as Row)))
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'calendar_events', filter },
+        payload => store().applyRemoteCalendarEvent(mapCalendarEventRow(payload.new as Row)))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'calendar_events', filter },
+        payload => store().applyRemoteCalendarEvent(mapCalendarEventRow(payload.new as Row)))
       .subscribe();
 
-    // Tab-regain: fetch only active orders to catch any missed realtime events.
-    // Merges with historical orders already in the store.
     async function onVisible() {
-      if (document.visibilityState !== 'visible' || !supabase) return;
-      const { data } = await supabase
-        .from('orders')
-        .select('*')
-        .eq('user_id', userId)
-        .in('status', ACTIVE_STATUSES)
-        .order('created_at', { ascending: false })
-        .limit(100);
-      if (!data) return;
-      const freshActive = (data as Record<string, unknown>[]).map(mapOrderRow);
-      useStore.setState(s => {
-        const historical = s.orders.filter(
-          o => !ACTIVE_STATUSES.includes(o.status as OrderStatus),
-        );
-        return { orders: [...freshActive, ...historical] };
-      });
+      if (document.visibilityState !== 'visible') return;
+      const staleActiveIds = store().orders.filter(o => isActiveOrder(o.status)).map(o => o.id);
+      const [active, stale] = await Promise.all([
+        client.from('orders').select('*').eq('user_id', userId).in('status', ['paid', 'preparing', 'ready'])
+          .order('created_at', { ascending: false }).limit(500),
+        staleActiveIds.length
+          ? client.from('orders').select('*').eq('user_id', userId).in('id', staleActiveIds)
+          : Promise.resolve({ data: [] as Row[] }),
+      ]);
+      const rows = [...((active.data ?? []) as Row[]), ...((stale.data ?? []) as Row[])];
+      if (rows.length) store().mergeRemoteOrders(rows.map(mapOrderRow));
     }
     document.addEventListener('visibilitychange', onVisible);
 
     return () => {
-      if (channelRef.current && supabase) {
-        supabase.removeChannel(channelRef.current);
+      if (channelRef.current) {
+        client.removeChannel(channelRef.current);
         channelRef.current = null;
       }
       document.removeEventListener('visibilitychange', onVisible);

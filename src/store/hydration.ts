@@ -101,30 +101,3 @@ export async function loadWorkspaceFromSupabase(
     shifts,
   });
 }
-
-/**
- * One-time migration: push all local store data to Supabase.
- * Called on login when Supabase returns an empty workspace (no menu items,
- * no tables) but the current local store has data — meaning the user was
- * working in local mode before connecting Supabase.
- *
- */
-export async function pushLocalToSupabase(
-  local: {
-    menuItems: MenuItem[];
-    tables: Table[];
-    employees: Employee[];
-    shifts: Shift[];
-    settings: BusinessSettings;
-    calendarSettings: CalendarSettings;
-    nextOrderNumber: number;
-  },
-  userId: string,
-): Promise<void> {
-  await upsertSettings(local.settings, userId, local.nextOrderNumber).catch(() => {});
-  await upsertCalendarSettings(local.calendarSettings, userId).catch(() => {});
-  await Promise.all(local.menuItems.map(item => insertMenuItem(item, userId).catch(() => {})));
-  await Promise.all(local.tables.map(table => insertTable(table, userId).catch(() => {})));
-  await Promise.all(local.employees.map(emp => insertEmployee(emp, userId).catch(() => {})));
-  await Promise.all(local.shifts.map(shift => insertShift(shift, userId).catch(() => {})));
-}

@@ -14,6 +14,7 @@ import { AUTH_KEY, WORKSPACE_KEY, defaultWorkspace, emptyWorkspace, normalizeWor
 import { advance, isActiveOrder, isRevenueOrder } from '../domain/orderMachine';
 import { evaluateCheckout, groupModifierSelections } from '../domain/ordering/cart';
 import { applyTransition } from '../domain/ordering/orderOperations';
+import { mergeOrders } from '../domain/ordering/orderMerge';
 import * as workspaceService from '../services/workspaceService';
 import { normalizeStation } from '../domain/stations';
 import { isSupabaseEnabled } from './flags';
@@ -47,6 +48,10 @@ export interface AppState extends WorkspaceSnapshot {
   /** Station devices: floor map + menu data from the session-gated station_get_context RPC. */
   hydrateStationContext: (data: { restaurantName: string; menuItems: MenuItem[]; tables: Table[]; decorations: MapDecoration[] }) => void;
   applyRemoteOrder: (order: Order) => void;
+  /** Merge authoritative rows by id (visibility refresh); never drops unseen orders. */
+  mergeRemoteOrders: (orders: Order[]) => void;
+  applyRemoteKitchenEvent: (event: KitchenEvent) => void;
+  applyRemoteCalendarEvent: (event: CalendarEvent) => void;
   applyRemoteMenuItem: (item: MenuItem) => void;
   applyRemoteTable: (table: Table) => void;
 
@@ -174,6 +179,16 @@ export const useStore = create<AppState>()((set, get) => ({
   applyRemoteOrder(order) {
     set(s => ({ orders: s.orders.some(o => o.id === order.id)
       ? s.orders.map(o => o.id === order.id ? order : o) : [order, ...s.orders] }));
+  },
+  mergeRemoteOrders(orders) {
+    set(s => ({ orders: mergeOrders(s.orders, orders) }));
+  },
+  applyRemoteKitchenEvent(event) {
+    set(s => (s.kitchenEvents.some(e => e.id === event.id) ? s : { kitchenEvents: [event, ...s.kitchenEvents].slice(0, 500) }));
+  },
+  applyRemoteCalendarEvent(event) {
+    set(s => ({ calendarEvents: s.calendarEvents.some(e => e.id === event.id)
+      ? s.calendarEvents.map(e => e.id === event.id ? event : e) : [event, ...s.calendarEvents] }));
   },
   applyRemoteMenuItem(item) {
     set(s => ({ menuItems: s.menuItems.some(m => m.id === item.id)
