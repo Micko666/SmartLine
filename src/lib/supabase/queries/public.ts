@@ -6,8 +6,8 @@ import { supabase } from '../client';
 import { mapMenuItemRow, mapSettingsRow, mapTableRow, mapEventPackageRow, mapEmployeeRow, mapShiftRow } from '../mappers';
 import type { MenuItem, BusinessSettings, Table, CalendarSettings, EventPackage, CalendarEvent, Employee, Shift } from '@/domain/types';
 
+/** Customer-facing restaurant data (get_customer_menu, migration 019): no owner id, no stations. */
 export interface PublicRestaurantData {
-  userId: string;
   settings: BusinessSettings;
   menuItems: MenuItem[];
   tables: Table[];
@@ -31,7 +31,6 @@ export async function fetchRestaurantByToken(
 
   const result = data as {
     ok: boolean;
-    userId: string;
     settings: Record<string, unknown>;
     menuItems: Record<string, unknown>[];
     tables: Record<string, unknown>[];
@@ -40,7 +39,6 @@ export async function fetchRestaurantByToken(
   if (!result.ok) return null;
 
   return {
-    userId:    result.userId,
     settings:  mapSettingsRow(result.settings),
     menuItems: (result.menuItems ?? []).map(mapMenuItemRow),
     tables:    (result.tables ?? []).map(mapTableRow),
