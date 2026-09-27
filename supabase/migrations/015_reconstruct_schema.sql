@@ -6,21 +6,30 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 CREATE TABLE IF NOT EXISTS ingredients (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE,
  name text NOT NULL, unit text NOT NULL DEFAULT 'g', cost_per_unit numeric NOT NULL DEFAULT 0,
- stock numeric, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now()
+ stock numeric, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS kitchen_events (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE,
  order_id text NOT NULL, order_number int NOT NULL DEFAULT 0,
  type text NOT NULL CHECK(type IN ('waste','remake','delay','note')), notes text NOT NULL DEFAULT '',
  menu_item_id text, menu_item_name text, quantity numeric, estimated_cost numeric,
- station_id text, created_at timestamptz DEFAULT now()
+ station_id text, created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS map_decorations (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE,
- type text NOT NULL, x double precision, y double precision, w double precision, h double precision,
- floor text, rotation int DEFAULT 0, created_at timestamptz DEFAULT now()
+ type text NOT NULL, x double precision NOT NULL DEFAULT 0, y double precision NOT NULL DEFAULT 0,
+ w double precision NOT NULL DEFAULT 48, h double precision NOT NULL DEFAULT 48,
+ floor text, rotation int NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE kitchen_events ADD COLUMN IF NOT EXISTS station_id text;
+-- Floor-map columns: production received float8 + NOT NULL through untracked
+-- migrations (0413xxxx). On production these statements are no-ops.
+ALTER TABLE tables ALTER COLUMN x TYPE double precision, ALTER COLUMN y TYPE double precision,
+ ALTER COLUMN size_scale TYPE double precision;
+UPDATE tables SET shape=COALESCE(shape,'square'), rotation=COALESCE(rotation,0), size_scale=COALESCE(size_scale,1)
+ WHERE shape IS NULL OR rotation IS NULL OR size_scale IS NULL;
+ALTER TABLE tables ALTER COLUMN shape SET NOT NULL, ALTER COLUMN rotation SET NOT NULL,
+ ALTER COLUMN size_scale SET NOT NULL, ALTER COLUMN size_scale SET DEFAULT 1.0;
 DO $$ DECLARE t text; BEGIN
  FOREACH t IN ARRAY ARRAY['ingredients','kitchen_events','map_decorations'] LOOP
   EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
