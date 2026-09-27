@@ -4,79 +4,54 @@
  *
  * Flow:
  *   1. Event packages (if any configured) → pick or skip
- *   2. Calendar — pick available date
+ *   2. Calendar — pick available date (restaurant timezone)
  *   3. Time slot
  *   4. Contact & details form
- *   5. Confirmation + status lookup
+ *   5. Confirmation code + status lookup (phone + code)
+ *
+ * The server decides the booking status and validates the request; this page
+ * only mirrors the rules for UX (src/domain/booking/policy.ts).
  */
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, Clock, Users, CheckCircle, ChefHat,
   Phone, Mail, MessageSquare, Search, X,
 } from 'lucide-react';
-import { fetchRestaurantByToken, fetchBookingDataByToken, submitBookingToSupabase } from '@/lib/supabase/queries/public';
-import { useStore } from '@/store';
-import { isSupabaseEnabled } from '@/store/flags';
-import type { CalendarSettings, EventPackage, WorkingDay, CalendarEvent } from '@/domain/types';
+import type { CalendarEvent } from '@/domain/types';
+import { bookingPolicy, bookingSlots, isBookableDate } from '@/domain/booking/policy';
+import { restaurantDate } from '@/domain/time/restaurantTime';
+import {
+  loadBookingContext, lookupBooking, submitBooking,
+  type BookingContext, type BookingLookupRow,
+} from '@/services/bookingService';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const DAY_NAMES   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-function isoDate(d: Date) { return d.toISOString().slice(0, 10); }
-function today()           { return isoDate(new Date()); }
-
-function buildTimeSlots(openTime: string, closeTime: string, slotMinutes = 60): string[] {
-  const [oh, om] = openTime.split(':').map(Number);
-  const [ch, cm] = closeTime.split(':').map(Number);
-  const slots: string[] = [];
-  let cur = oh * 60 + om;
-  const end = ch * 60 + cm - slotMinutes;
-  while (cur <= end) {
-    slots.push(`${String(Math.floor(cur / 60)).padStart(2, '0')}:${String(cur % 60).padStart(2, '0')}`);
-    cur += slotMinutes;
-  }
-  return slots;
+function longDate(date: string, weekday: 'long' | 'short' = 'long') {
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday, month: weekday === 'long' ? 'long' : 'short', day: 'numeric' })
+    .format(new Date(`${date}T12:00:00Z`));
 }
 
-function normalizePhone(p: string) { return p.replace(/[\s\-().+]/g, ''); }
-
-function StatusBadge({ status }: { status: string }) {
-  if (status === 'approved') return (
-    <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-100 dark:text-green-400 dark:bg-green-900/30 px-2 py-0.5 rounded-full">
-      ✓ Confirmed
-    </span>
-  );
-  if (status === 'declined') return (
-    <span className="inline-flex items-center gap-1 text-xs font-medium text-destructive bg-destructive/10 px-2 py-0.5 rounded-full">
-      ✗ Declined
-    </span>
-  );
-  return (
-    <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-100 dark:text-amber-400 dark:bg-amber-900/30 px-2 py-0.5 rounded-full">
-      ⏳ Pending
-    </span>
-  );
-}
-
-// ─── Data interface ────────────────────────────────────────────────────────────
-
-type LeanEvent = Pick<CalendarEvent, 'id' | 'date' | 'timeSlot' | 'type' | 'status'> & {
-  customerPhone?: string;
-  customerName?: string;
+const STATUS_BADGE: Record<CalendarEvent['status'], { label: string; cls: string }> = {
+  approved:  { label: '✓ Confirmed', cls: 'text-green-700 bg-green-100 dark:text-green-400 dark:bg-green-900/30' },
+  pending:   { label: '⏳ Pending',  cls: 'text-amber-700 bg-amber-100 dark:text-amber-400 dark:bg-amber-900/30' },
+  rejected:  { label: '✗ Declined',  cls: 'text-destructive bg-destructive/10' },
+  cancelled: { label: '✗ Cancelled', cls: 'text-muted-foreground bg-muted' },
+  completed: { label: '✓ Completed', cls: 'text-muted-foreground bg-muted' },
 };
 
-interface BookingData {
-  restaurantName: string;
-  calendarSettings: CalendarSettings;
-  eventPackages: EventPackage[];
-  calendarEvents: LeanEvent[];
-  submitBooking: (data: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'>) => Promise<boolean>;
+export function StatusBadge({ status }: { status: CalendarEvent['status'] }) {
+  const badge = STATUS_BADGE[status] ?? STATUS_BADGE.pending;
+  return <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>;
 }
 
 type Step = 'packages' | 'date' | 'time' | 'form';
+
+interface Submitted { status: CalendarEvent['status']; confirmationCode: string; date: string; slot: string; guests: number }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -85,8 +60,11 @@ export default function BookingPage() {
 
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState('');
-  const [data, setData]               = useState<BookingData | null>(null);
-  const [submitted, setSubmitted]     = useState(false);
+  const [data, setData]               = useState<BookingContext | null>(null);
+  const [submitted, setSubmitted]     = useState<Submitted | null>(null);
+  const [submitting, setSubmitting]   = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const requestId = useRef(crypto.randomUUID());
 
   const [step, setStep]               = useState<Step>('packages');
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -97,197 +75,77 @@ export default function BookingPage() {
     name: '', phone: '', email: '', guests: 2, packageId: '', notes: '',
   });
 
-  // ── Status lookup state ────────────────────────────────────────────────────
+  // ── Status lookup state (phone + confirmation code) ────────────────────────
   const [showLookup, setShowLookup]       = useState(false);
   const [lookupPhone, setLookupPhone]     = useState('');
-  const [lookupResults, setLookupResults] = useState<LeanEvent[] | null>(null);
+  const [lookupCode, setLookupCode]       = useState('');
+  const [lookupResults, setLookupResults] = useState<BookingLookupRow[] | null>(null);
 
-  // Live calendarEvents from the store — updated by the cross-tab storage listener
-  // when admin approves / rejects in another tab.
-  const storeCalendarEvents = useStore(s => s.calendarEvents);
-
-  // Auto-refresh an open lookup when admin changes a status in another tab.
-  useEffect(() => {
-    if (lookupPhone.trim() && lookupResults !== null) {
-      const merged = storeCalendarEvents.length
-        ? (storeCalendarEvents as LeanEvent[])
-        : (data?.calendarEvents ?? []);
-      runLookup(lookupPhone, merged);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeCalendarEvents]);
+  async function runLookup() {
+    if (!restaurantToken) return;
+    setLookupResults(await lookupBooking(restaurantToken, lookupPhone.trim(), lookupCode.trim()));
+  }
 
   // ── Load ───────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!restaurantToken) { setError('Invalid booking link.'); setLoading(false); return; }
-    (async () => {
-      try {
-        let res = await fetchRestaurantByToken(restaurantToken);
-        if (!res) {
-          const state = useStore.getState();
-          if (state.settings?.restaurantToken === restaurantToken) {
-            res = { userId: state.user?.id ?? '', settings: state.settings, menuItems: state.menuItems, tables: state.tables };
-          }
-        }
-        if (!res) { setError('Restaurant not found.'); setLoading(false); return; }
-
-        const storeState = useStore.getState();
-        const isLocal = !isSupabaseEnabled() || storeState.settings?.restaurantToken === restaurantToken;
-
-        let calSettings: CalendarSettings;
-        let evtPackages: EventPackage[];
-        let calEvents: LeanEvent[];
-
-        if (isLocal) {
-          calSettings = storeState.calendarSettings;
-          evtPackages = storeState.eventPackages.filter(p => p.active);
-          calEvents   = storeState.calendarEvents.map(e => ({
-            id: e.id, date: e.date, timeSlot: e.timeSlot, type: e.type,
-            status: e.status, customerPhone: e.customerPhone, customerName: e.customerName,
-          }));
-        } else {
-          const bd = await fetchBookingDataByToken(restaurantToken);
-          const def: CalendarSettings = {
-            maxEventsPerDay: 10, requireApproval: true, advanceBookingDays: 90,
-            bookingMessage: '',
-            workingDays: [
-              { dayOfWeek: 1, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
-              { dayOfWeek: 2, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
-              { dayOfWeek: 3, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
-              { dayOfWeek: 4, isOpen: true,  openTime: '09:00', closeTime: '22:00' },
-              { dayOfWeek: 5, isOpen: true,  openTime: '09:00', closeTime: '23:00' },
-              { dayOfWeek: 6, isOpen: true,  openTime: '10:00', closeTime: '23:00' },
-              { dayOfWeek: 0, isOpen: false, openTime: '10:00', closeTime: '20:00' },
-            ],
-            workingExceptions: [], shiftTemplates: [], weekTemplate: [],
-          };
-          const raw = bd?.calendarSettings;
-          calSettings = (raw && raw.workingDays?.length) ? raw : def;
-          evtPackages = bd?.eventPackages ?? [];
-          calEvents   = (bd?.calendarEvents ?? []).map((e: LeanEvent) => ({
-            id: e.id, date: e.date, timeSlot: e.timeSlot, type: e.type,
-            status: e.status, customerPhone: e.customerPhone, customerName: e.customerName,
-          }));
-        }
-
-        setData({
-          restaurantName:   res.settings?.businessName ?? 'SmartLine',
-          calendarSettings: calSettings,
-          eventPackages:    evtPackages,
-          calendarEvents:   calEvents,
-          submitBooking: async (eventData) => {
-            if (isLocal) { storeState.addCalendarEvent(eventData); return true; }
-            return (await submitBookingToSupabase(restaurantToken, eventData)).ok;
-          },
-        });
-
-        if (evtPackages.length === 0) setStep('date');
-      } catch {
-        setError('Failed to load booking page.');
-      } finally {
-        setLoading(false);
-      }
-    })();
+    loadBookingContext(restaurantToken)
+      .then(ctx => {
+        if (!ctx) { setError('Restaurant not found.'); return; }
+        setData(ctx);
+        if (ctx.eventPackages.length === 0) setStep('date');
+      })
+      .catch(() => setError('Failed to load booking page.'))
+      .finally(() => setLoading(false));
   }, [restaurantToken]);
+
+  const policy   = useMemo(() => bookingPolicy(data?.calendarSettings), [data]);
+  const timezone = data?.timezone ?? 'UTC';
 
   // ── Calendar helpers ───────────────────────────────────────────────────────
 
   const year        = currentDate.getFullYear();
   const month       = currentDate.getMonth();
-  const firstDay    = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const todayStr    = today();
+  const firstDay    = new Date(Date.UTC(year, month, 1)).getUTCDay();
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const todayStr    = restaurantDate(timezone);
 
-  function isAvailableDay(dateStr: string): boolean {
-    if (!data || dateStr < todayStr) return false;
-    const cs = data.calendarSettings;
-    if (cs.advanceBookingDays > 0) {
-      const max = new Date(); max.setDate(max.getDate() + cs.advanceBookingDays);
-      if (dateStr > isoDate(max)) return false;
-    }
-    const dow = new Date(dateStr).getDay() as WorkingDay['dayOfWeek'];
-    const exc = cs.workingExceptions.find(ex => ex.date === dateStr);
-    if (exc) return !exc.isClosed;
-    if (!cs.workingDays.find(w => w.dayOfWeek === dow)?.isOpen) return false;
-    if (cs.maxEventsPerDay > 0) {
-      const count = data.calendarEvents.filter(e => e.date === dateStr && (e.status === 'approved' || e.status === 'pending')).length;
-      if (count >= cs.maxEventsPerDay) return false;
-    }
-    return !data.calendarEvents.some(e => e.date === dateStr && e.type === 'closure' && e.status === 'approved');
-  }
-
-  const timeSlots = useMemo(() => {
-    if (!selectedDate || !data) return [];
-    const cs  = data.calendarSettings;
-    const dow = new Date(selectedDate).getDay() as WorkingDay['dayOfWeek'];
-    const exc = cs.workingExceptions.find(ex => ex.date === selectedDate);
-    const open  = exc?.openTime  ?? cs.workingDays.find(w => w.dayOfWeek === dow)?.openTime  ?? '09:00';
-    const close = exc?.closeTime ?? cs.workingDays.find(w => w.dayOfWeek === dow)?.closeTime ?? '22:00';
-    return buildTimeSlots(open, close);
-  }, [selectedDate, data]);
-
-  // ── Lookup ─────────────────────────────────────────────────────────────────
-
-  function runLookup(phone: string, fallbackEvents?: LeanEvent[]) {
-    const n = normalizePhone(phone.trim());
-    if (!n) { setLookupResults([]); return; }
-    // Prefer live store data (updated by cross-tab sync) over the mount-time snapshot
-    const events = (storeCalendarEvents.length ? storeCalendarEvents as LeanEvent[] : null)
-      ?? fallbackEvents
-      ?? data?.calendarEvents
-      ?? [];
-    setLookupResults(
-      events.filter(e => normalizePhone(e.customerPhone ?? '') === n)
-             .sort((a, b) => b.date.localeCompare(a.date))
-    );
-  }
+  const isAvailableDay = (dateStr: string) => !!data && isBookableDate(policy, data.busySlots, dateStr, timezone);
+  const timeSlots = useMemo(
+    () => (selectedDate && data ? bookingSlots(policy, selectedDate, timezone) : []),
+    [selectedDate, data, policy, timezone],
+  );
 
   // ── Submit ─────────────────────────────────────────────────────────────────
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!data || !selectedDate || !selectedSlot || !form.name.trim()) return;
-    const pkg    = data.eventPackages.find(p => p.id === form.packageId);
-    const status = data.calendarSettings.requireApproval ? 'pending' : 'approved';
-    const ok = await data.submitBooking({
+    if (!data || !restaurantToken || !selectedDate || !selectedSlot || !form.name.trim() || submitting) return;
+    setSubmitting(true);
+    setSubmitError('');
+    const result = await submitBooking(restaurantToken, {
+      clientRequestId: requestId.current,
       date: selectedDate, timeSlot: selectedSlot,
       type: form.packageId ? 'private_event' : 'reservation',
-      status,
-      customerName: form.name.trim(), customerPhone: form.phone.trim(),
-      customerEmail: form.email.trim(), guestCount: form.guests,
-      packageId: form.packageId || undefined, packageName: pkg?.name,
-      notes: form.notes, createdBy: 'customer',
+      customerName: form.name.trim(), customerPhone: form.phone.trim(), customerEmail: form.email.trim(),
+      guestCount: form.guests, packageId: form.packageId || null, notes: form.notes,
     });
-    if (ok) {
-      // Append to local list so the lookup finds it immediately
-      const newEvent: LeanEvent = {
-        id: crypto.randomUUID(),
-        date: selectedDate, timeSlot: selectedSlot,
-        type: form.packageId ? 'private_event' : 'reservation',
-        status,
-        customerPhone: form.phone.trim(),
-        customerName:  form.name.trim(),
-      };
-      const updatedEvents = [...data.calendarEvents, newEvent];
-      setData(d => d ? { ...d, calendarEvents: updatedEvents } : d);
-
-      // Pre-fill and run lookup with their phone
-      if (form.phone.trim()) {
-        const lp = form.phone.trim();
-        setLookupPhone(lp);
-        runLookup(lp, updatedEvents);
-      }
-      setSubmitted(true);
-    }
+    setSubmitting(false);
+    if (!result.ok) { setSubmitError(result.error); return; }
+    setSubmitted({ status: result.status, confirmationCode: result.confirmationCode, date: selectedDate, slot: selectedSlot, guests: form.guests });
+    setLookupPhone(form.phone.trim());
+    setLookupCode(result.confirmationCode);
+    requestId.current = crypto.randomUUID();
   }
 
   function reset() {
     setStep(data?.eventPackages.length ? 'packages' : 'date');
     setSelectedDate(null); setSelectedSlot(null);
     setForm({ name: '', phone: '', email: '', guests: 2, packageId: '', notes: '' });
-    setSubmitted(false);
-    setLookupPhone('');
+    setSubmitted(null);
+    setSubmitError('');
+    setLookupPhone(''); setLookupCode('');
     setLookupResults(null);
   }
 
@@ -313,6 +171,36 @@ export default function BookingPage() {
     </header>
   );
 
+  const lookupForm = (
+    <form onSubmit={e => { e.preventDefault(); void runLookup(); }} className="space-y-2">
+      <input type="tel" value={lookupPhone} onChange={e => setLookupPhone(e.target.value)}
+        className="input-field w-full text-sm" placeholder="Your phone number" aria-label="Phone number" />
+      <div className="flex gap-2">
+        <input value={lookupCode} onChange={e => setLookupCode(e.target.value.toUpperCase())} maxLength={8}
+          className="input-field flex-1 text-sm font-mono" placeholder="Confirmation code" aria-label="Confirmation code" />
+        <button type="submit" className="btn-primary px-3 shrink-0" aria-label="Look up"><Search className="w-4 h-4" /></button>
+      </div>
+    </form>
+  );
+
+  const lookupList = lookupResults !== null && (
+    lookupResults.length === 0 ? (
+      <p className="text-xs text-muted-foreground">No booking found for this phone number and code.</p>
+    ) : (
+      <div className="space-y-2">
+        {lookupResults.map(r => (
+          <div key={r.confirmationCode + r.date} className="flex items-center justify-between p-2.5 rounded-xl bg-muted/50">
+            <div className="text-xs">
+              <p className="font-medium">{longDate(r.date, 'short')}</p>
+              <p className="text-muted-foreground">{r.timeSlot}</p>
+            </div>
+            <StatusBadge status={r.status} />
+          </div>
+        ))}
+      </div>
+    )
+  );
+
   // ── Screens ────────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -335,80 +223,46 @@ export default function BookingPage() {
   }
 
   if (submitted) {
-    const needs = data.calendarSettings.requireApproval;
-    const submittedStatus = needs ? 'pending' : 'approved';
+    const pending = submitted.status === 'pending';
     return (
       <div className="min-h-screen bg-background">
         <PageHeader />
         <div className="max-w-lg mx-auto px-4 py-10 space-y-5">
-
-          {/* Success header */}
           <div className="text-center">
             <div className="w-16 h-16 rounded-2xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto mb-4">
               <CheckCircle className="w-8 h-8 text-green-600 dark:text-green-400" />
             </div>
             <h1 className="font-display text-2xl font-bold">Request received!</h1>
             <p className="text-muted-foreground mt-2 max-w-sm mx-auto text-sm">
-              {needs
+              {pending
                 ? "Your event request has been sent. We'll be in touch to confirm the details."
-                : `Your event on ${new Date(selectedDate! + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} at ${selectedSlot} is confirmed!`}
+                : `Your event on ${longDate(submitted.date)} at ${submitted.slot} is confirmed!`}
             </p>
           </div>
 
-          {/* This request */}
           <div className="glass-card p-4 flex items-center justify-between gap-4">
             <div>
-              <p className="text-sm font-medium">
-                {new Date(selectedDate! + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">{selectedSlot} · {form.guests} guests</p>
+              <p className="text-sm font-medium">{longDate(submitted.date)}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{submitted.slot} · {submitted.guests} guests</p>
             </div>
-            <StatusBadge status={submittedStatus} />
+            <StatusBadge status={submitted.status} />
           </div>
 
-          {/* Phone lookup panel */}
+          <div className="glass-card p-4 text-center">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">Your confirmation code</p>
+            <p className="font-mono text-2xl font-bold tracking-widest mt-1" data-testid="confirmation-code">{submitted.confirmationCode}</p>
+            <p className="text-xs text-muted-foreground mt-1">Keep it — you need it with your phone number to check the status.</p>
+          </div>
+
           <div className="glass-card p-4 space-y-3">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Check your requests</p>
-            <form
-              onSubmit={e => { e.preventDefault(); runLookup(lookupPhone, data.calendarEvents); }}
-              className="flex gap-2"
-            >
-              <input
-                type="tel"
-                value={lookupPhone}
-                onChange={e => setLookupPhone(e.target.value)}
-                className="input-field flex-1 text-sm"
-                placeholder="Your phone number"
-              />
-              <button type="submit" className="btn-primary px-3 shrink-0">
-                <Search className="w-4 h-4" />
-              </button>
-            </form>
-            {lookupResults !== null && (
-              lookupResults.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No requests found for this number.</p>
-              ) : (
-                <div className="space-y-2">
-                  {lookupResults.map(r => (
-                    <div key={r.id} className="flex items-center justify-between p-2.5 rounded-xl bg-muted/50">
-                      <div className="text-xs">
-                        <p className="font-medium">
-                          {new Date(r.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                        </p>
-                        <p className="text-muted-foreground">{r.timeSlot}</p>
-                      </div>
-                      <StatusBadge status={r.status} />
-                    </div>
-                  ))}
-                </div>
-              )
-            )}
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Check your request</p>
+            {lookupForm}
+            {lookupList}
           </div>
 
           <button onClick={reset} className="btn-ghost text-sm w-full">Make another request</button>
         </div>
-
-        <LookupModal data={data} showLookup={showLookup} setShowLookup={setShowLookup} runLookup={runLookup} lookupPhone={lookupPhone} setLookupPhone={setLookupPhone} lookupResults={lookupResults} setLookupResults={setLookupResults} onNewRequest={() => { setShowLookup(false); reset(); }} />
+        {showLookup && <LookupModal onClose={() => { setShowLookup(false); setLookupResults(null); }} form={lookupForm} list={lookupList} onNewRequest={() => { setShowLookup(false); reset(); }} />}
       </div>
     );
   }
@@ -417,13 +271,12 @@ export default function BookingPage() {
 
   return (
     <div className="min-h-screen bg-background">
-
       <PageHeader />
 
       <div className="max-w-lg mx-auto px-4 py-6 space-y-5">
 
-        {data.calendarSettings.bookingMessage && (
-          <p className="text-sm text-muted-foreground text-center">{data.calendarSettings.bookingMessage}</p>
+        {policy.bookingMessage && (
+          <p className="text-sm text-muted-foreground text-center">{policy.bookingMessage}</p>
         )}
 
         {/* Step indicators */}
@@ -455,7 +308,7 @@ export default function BookingPage() {
             {data.eventPackages.map(pkg => (
               <button
                 key={pkg.id}
-                onClick={() => { setForm(f => ({ ...f, packageId: pkg.id })); setStep('date'); }}
+                onClick={() => { setForm(f => ({ ...f, packageId: pkg.id, guests: Math.min(Math.max(f.guests, pkg.minGuests), pkg.maxGuests) })); setStep('date'); }}
                 className={`w-full p-4 rounded-2xl border text-left transition-all ${form.packageId === pkg.id ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border bg-card hover:border-primary/50'}`}
               >
                 <div className="flex items-start gap-3">
@@ -493,11 +346,11 @@ export default function BookingPage() {
             )}
             <div className="glass-card p-5">
               <div className="flex items-center justify-between mb-4">
-                <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()-1, 1))} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
+                <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()-1, 1))} className="p-1.5 rounded-lg hover:bg-muted transition-colors" aria-label="Previous month">
                   <ChevronLeft className="w-4 h-4" />
                 </button>
                 <span className="font-semibold text-sm">{MONTH_NAMES[month]} {year}</span>
-                <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()+1, 1))} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
+                <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth()+1, 1))} className="p-1.5 rounded-lg hover:bg-muted transition-colors" aria-label="Next month">
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
@@ -512,7 +365,7 @@ export default function BookingPage() {
                   const isToday   = ds === todayStr;
                   const selected  = ds === selectedDate;
                   return (
-                    <button key={day} disabled={!available}
+                    <button key={day} disabled={!available} data-date={ds}
                       onClick={() => { setSelectedDate(ds); setStep('time'); }}
                       className={`
                         h-10 rounded-xl text-sm font-medium transition-all
@@ -538,9 +391,7 @@ export default function BookingPage() {
         {step === 'time' && selectedDate && (
           <div className="glass-card p-5">
             <div className="flex items-center justify-between mb-4">
-              <p className="text-sm font-medium">
-                {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-              </p>
+              <p className="text-sm font-medium">{longDate(selectedDate)}</p>
               <button onClick={() => { setSelectedDate(null); setStep('date'); }} className="text-xs text-primary hover:underline">change</button>
             </div>
             {timeSlots.length === 0 ? (
@@ -566,9 +417,7 @@ export default function BookingPage() {
         {step === 'form' && selectedDate && selectedSlot && (
           <div className="glass-card p-5">
             <div className="flex items-center gap-2 p-3 rounded-xl bg-muted/50 mb-5 text-xs flex-wrap">
-              <span className="font-medium text-foreground">
-                {new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-              </span>
+              <span className="font-medium text-foreground">{longDate(selectedDate, 'short')}</span>
               <span className="text-muted-foreground">at</span>
               <span className="font-medium text-foreground">{selectedSlot}</span>
               {selectedPkg && (
@@ -582,47 +431,48 @@ export default function BookingPage() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="text-xs text-muted-foreground font-medium mb-1 block">Full name *</label>
-                <input type="text" required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                <label htmlFor="booking-name" className="text-xs text-muted-foreground font-medium mb-1 block">Full name *</label>
+                <input id="booking-name" type="text" required maxLength={120} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                   className="input-field w-full" placeholder="Your name" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-muted-foreground font-medium mb-1 block"><Phone className="w-3 h-3 inline mr-0.5" />Phone</label>
-                  <input type="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-                    className="input-field w-full" placeholder="+1 234 567 890" />
+                  <label htmlFor="booking-phone" className="text-xs text-muted-foreground font-medium mb-1 block"><Phone className="w-3 h-3 inline mr-0.5" />Phone *</label>
+                  <input id="booking-phone" type="tel" required maxLength={40} value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
+                    className="input-field w-full" placeholder="+382 67 123 456" />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground font-medium mb-1 block"><Mail className="w-3 h-3 inline mr-0.5" />Email</label>
-                  <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                  <label htmlFor="booking-email" className="text-xs text-muted-foreground font-medium mb-1 block"><Mail className="w-3 h-3 inline mr-0.5" />Email</label>
+                  <input id="booking-email" type="email" maxLength={200} value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                     className="input-field w-full" placeholder="you@example.com" />
                 </div>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground font-medium mb-1 block">Number of guests</label>
                 <div className="flex items-center gap-3">
-                  <button type="button" onClick={() => setForm(f => ({ ...f, guests: Math.max(1, f.guests - 1) }))}
+                  <button type="button" onClick={() => setForm(f => ({ ...f, guests: Math.max(selectedPkg?.minGuests ?? 1, f.guests - 1) }))}
                     className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center font-bold hover:bg-muted/80 transition-colors">−</button>
                   <span className="text-lg font-bold w-8 text-center">{form.guests}</span>
-                  <button type="button" onClick={() => setForm(f => ({ ...f, guests: f.guests + 1 }))}
+                  <button type="button" onClick={() => setForm(f => ({ ...f, guests: Math.min(selectedPkg?.maxGuests ?? 500, f.guests + 1) }))}
                     className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center font-bold hover:bg-muted/80 transition-colors">+</button>
                   <span className="text-sm text-muted-foreground"><Users className="w-3.5 h-3.5 inline" /> guests</span>
                 </div>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground font-medium mb-1 block"><MessageSquare className="w-3 h-3 inline mr-0.5" />Special requests</label>
-                <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                <textarea value={form.notes} maxLength={2000} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                   rows={3} className="input-field w-full resize-none"
                   placeholder="Dietary needs, decorations, special setup, occasion details…" />
               </div>
               <div className="pt-1">
                 <p className="text-xs text-muted-foreground mb-3">
-                  {data.calendarSettings.requireApproval
+                  {policy.requireApproval
                     ? "Your request will be reviewed and confirmed by our team. We'll be in touch shortly."
                     : 'Your event booking will be confirmed immediately.'}
                 </p>
-                <button type="submit" className="btn-primary w-full text-base py-3">
-                  Send event request
+                {submitError && <p role="alert" className="text-sm text-destructive mb-3">{submitError}</p>}
+                <button type="submit" disabled={submitting} className="btn-primary w-full text-base py-3 disabled:opacity-50">
+                  {submitting ? 'Sending…' : 'Send event request'}
                 </button>
               </div>
             </form>
@@ -631,89 +481,31 @@ export default function BookingPage() {
 
       </div>
 
-      <LookupModal data={data} showLookup={showLookup} setShowLookup={setShowLookup} runLookup={runLookup} lookupPhone={lookupPhone} setLookupPhone={setLookupPhone} lookupResults={lookupResults} setLookupResults={setLookupResults} onNewRequest={() => setShowLookup(false)} />
+      {showLookup && <LookupModal onClose={() => { setShowLookup(false); setLookupResults(null); }} form={lookupForm} list={lookupList} onNewRequest={() => setShowLookup(false)} />}
     </div>
   );
 }
 
 // ─── Lookup modal ─────────────────────────────────────────────────────────────
 
-interface LookupModalProps {
-  data: BookingData;
-  showLookup: boolean;
-  setShowLookup: (v: boolean) => void;
-  runLookup: (phone: string, events: LeanEvent[]) => void;
-  lookupPhone: string;
-  setLookupPhone: (v: string) => void;
-  lookupResults: LeanEvent[] | null;
-  setLookupResults: (v: LeanEvent[] | null) => void;
+function LookupModal({ onClose, form, list, onNewRequest }: {
+  onClose: () => void;
+  form: React.ReactNode;
+  list: React.ReactNode;
   onNewRequest: () => void;
-}
-
-function LookupModal({ data, showLookup, setShowLookup, runLookup, lookupPhone, setLookupPhone, lookupResults, setLookupResults, onNewRequest }: LookupModalProps) {
-  if (!showLookup) return null;
-
-  function close() {
-    setShowLookup(false);
-    setLookupResults(null);
-  }
-
+}) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
-      onClick={close}
-    >
-      <div
-        className="bg-card rounded-2xl w-full max-w-sm p-5 shadow-xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-4">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-card rounded-2xl w-full max-w-sm p-5 shadow-xl space-y-4" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
           <h2 className="font-display font-bold text-base">Check request status</h2>
-          <button onClick={close} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors" aria-label="Close">
             <X className="w-4 h-4" />
           </button>
         </div>
-
-        <form
-          onSubmit={e => { e.preventDefault(); runLookup(lookupPhone, data.calendarEvents); }}
-          className="flex gap-2 mb-4"
-        >
-          <input
-            type="tel"
-            value={lookupPhone}
-            onChange={e => setLookupPhone(e.target.value)}
-            className="input-field flex-1"
-            placeholder="Your phone number"
-            autoFocus
-          />
-          <button type="submit" className="btn-primary px-3 shrink-0">
-            <Search className="w-4 h-4" />
-          </button>
-        </form>
-
-        {lookupResults !== null && (
-          lookupResults.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">No requests found for this number.</p>
-          ) : (
-            <div className="space-y-2 mb-2">
-              {lookupResults.map(r => (
-                <div key={r.id} className="flex items-center justify-between p-3 rounded-xl bg-muted/50">
-                  <div className="text-sm">
-                    <p className="font-medium">
-                      {new Date(r.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                    </p>
-                    <p className="text-muted-foreground text-xs">{r.timeSlot}</p>
-                  </div>
-                  <StatusBadge status={r.status} />
-                </div>
-              ))}
-            </div>
-          )
-        )}
-
-        <button onClick={onNewRequest} className="btn-ghost text-sm w-full mt-3">
-          Make a new request →
-        </button>
+        {form}
+        {list}
+        <button onClick={onNewRequest} className="btn-ghost text-sm w-full">Make a new request →</button>
       </div>
     </div>
   );

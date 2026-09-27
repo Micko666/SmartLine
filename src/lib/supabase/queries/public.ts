@@ -50,69 +50,93 @@ export async function fetchRestaurantByToken(
 // ─── Booking page ─────────────────────────────────────────────────────────────
 
 export interface PublicBookingData {
-  calendarSettings: CalendarSettings;
+  restaurantName: string;
+  timezone: string;
+  calendarSettings: Partial<CalendarSettings>;
   eventPackages: EventPackage[];
-  /** Non-sensitive slots only (id, date, time_slot, type, status) */
-  calendarEvents: Pick<CalendarEvent, 'id' | 'date' | 'timeSlot' | 'type' | 'status'>[];
+  /** Availability only: no ids, no customer data. */
+  busySlots: Pick<CalendarEvent, 'date' | 'timeSlot' | 'type' | 'status'>[];
 }
 
-export async function fetchBookingDataByToken(
-  token: string,
-): Promise<PublicBookingData | null> {
+export async function fetchBookingDataByToken(token: string): Promise<PublicBookingData | null> {
   if (!supabase || !token) return null;
-
-  const { data, error } = await supabase.rpc('get_booking_data', {
-    p_restaurant_token: token,
-  });
-
+  const { data, error } = await supabase.rpc('get_booking_data', { p_restaurant_token: token });
   if (error || !data) return null;
-
   const result = data as {
-    ok: boolean;
-    calendarSettings: Record<string, unknown>;
-    eventPackages: Record<string, unknown>[];
-    calendarEvents: Record<string, unknown>[];
+    ok: boolean; restaurantName: string; timezone: string;
+    calendarSettings: Record<string, unknown>; eventPackages: Record<string, unknown>[]; calendarEvents: Record<string, unknown>[];
   };
-
   if (!result.ok) return null;
-
+  // The RPC returns nulls for unset policy fields; drop them so defaults apply.
+  const settings = Object.fromEntries(Object.entries(result.calendarSettings ?? {}).filter(([, v]) => v !== null)) as Partial<CalendarSettings>;
   return {
-    calendarSettings: result.calendarSettings as unknown as CalendarSettings,
+    restaurantName: result.restaurantName ?? '',
+    timezone: result.timezone || 'UTC',
+    calendarSettings: settings,
     eventPackages: (result.eventPackages ?? []).map(mapEventPackageRow),
-    calendarEvents: (result.calendarEvents ?? []).map(row => ({
-      id:        row.id as string,
-      date:      row.date as string,
-      timeSlot:  row.time_slot as string,
-      type:      row.type as CalendarEvent['type'],
-      status:    row.status as CalendarEvent['status'],
-    })) as Pick<CalendarEvent, 'id' | 'date' | 'timeSlot' | 'type' | 'status'>[],
+    busySlots: (result.calendarEvents ?? []).map(row => ({
+      date: row.date as string,
+      timeSlot: row.time_slot as string,
+      type: row.type as CalendarEvent['type'],
+      status: row.status as CalendarEvent['status'],
+    })),
   };
 }
 
-export async function submitBookingToSupabase(
-  token: string,
-  event: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt' | 'approvedBy' | 'approvedAt' | 'rejectionReason'>,
-): Promise<{ ok: boolean; eventId?: string; error?: string }> {
-  if (!supabase) return { ok: false, error: 'Supabase not configured' };
+export interface BookingSubmission {
+  clientRequestId: string;
+  date: string;
+  timeSlot: string;
+  type: 'reservation' | 'private_event';
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string;
+  guestCount: number;
+  packageId?: string | null;
+  notes: string;
+}
 
+export type BookingSubmitResult =
+  | { ok: true; eventId: string; status: CalendarEvent['status']; confirmationCode: string }
+  | { ok: false; error: string };
+
+/** The server decides status (requireApproval) and validates everything else. */
+export async function submitBookingToSupabase(token: string, b: BookingSubmission): Promise<BookingSubmitResult> {
+  if (!supabase) return { ok: false, error: 'Supabase not configured' };
   const { data, error } = await supabase.rpc('submit_booking', {
     p_restaurant_token: token,
-    p_date:             event.date,
-    p_time_slot:        event.timeSlot,
-    p_end_time:         event.endTime ?? null,
-    p_type:             event.type,
-    p_status:           event.status,
-    p_customer_name:    event.customerName,
-    p_customer_phone:   event.customerPhone,
-    p_customer_email:   event.customerEmail,
-    p_guest_count:      event.guestCount,
-    p_package_id:       event.packageId ?? null,
-    p_package_name:     event.packageName ?? null,
-    p_notes:            event.notes,
+    p_client_request_id: b.clientRequestId,
+    p_date: b.date,
+    p_time_slot: b.timeSlot,
+    p_type: b.type,
+    p_customer_name: b.customerName,
+    p_customer_phone: b.customerPhone,
+    p_customer_email: b.customerEmail,
+    p_guest_count: b.guestCount,
+    p_package_id: b.packageId || null,
+    p_notes: b.notes,
   });
-
   if (error) return { ok: false, error: error.message };
-  return data as { ok: boolean; eventId?: string; error?: string };
+  return data as BookingSubmitResult;
+}
+
+export interface BookingLookupRow {
+  date: string;
+  timeSlot: string;
+  type: CalendarEvent['type'];
+  status: CalendarEvent['status'];
+  packageName?: string;
+  guestCount?: number;
+  confirmationCode: string;
+}
+
+export async function lookupBookingStatus(token: string, phone: string, code: string): Promise<BookingLookupRow[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.rpc('lookup_booking_status', {
+    p_restaurant_token: token, p_phone: phone, p_confirmation_code: code,
+  });
+  if (error || !data) return [];
+  return ((data as { bookings?: BookingLookupRow[] }).bookings ?? []);
 }
 
 // ─── Roster page ──────────────────────────────────────────────────────────────

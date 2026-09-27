@@ -39,6 +39,7 @@ export async function fetchReceiptById(id: string): Promise<Receipt | null> {
     taxAmount:       Number(result.taxAmount ?? 0),
     total:           Number(result.total ?? 0),
     paymentMethod:   result.paymentMethod as Receipt['paymentMethod'],
+    paymentStatus:   (result.paymentStatus as Receipt['paymentStatus']) ?? undefined,
     createdAt:       result.createdAt as string,
   };
 }

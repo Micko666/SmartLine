@@ -151,3 +151,14 @@ export function normalizeStation(station: Station): Station {
     },
   };
 }
+
+/**
+ * Which station permission a status change needs — mirror of the SQL checks
+ * in `station_advance_order` (migration 018). Returns an error or null.
+ */
+export function stationTransitionError(p: StationPermissions, expected: OrderStatus, next: OrderStatus): string | null {
+  if (next === 'cancelled') return p.canCancelOrders ? null : 'Station may not cancel orders';
+  if (expected === 'ready' && next === 'preparing') return p.canReworkOrders ? null : 'Station may not send orders back';
+  if (next === 'refunded') return 'Refunds require the owner';
+  return p.canAdvanceOrders ? null : 'Station may not advance orders';
+}

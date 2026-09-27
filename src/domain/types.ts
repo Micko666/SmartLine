@@ -448,6 +448,11 @@ export interface CalendarEvent {
   // Closures (manager-only, no customer info needed)
   closureReason?: string;
 
+  /** Booking reference given to the customer; needed (with phone) for status lookup. */
+  confirmationCode?: string;
+  /** Idempotency key of a public booking submission. */
+  clientRequestId?: string;
+
   // Approval workflow
   createdBy: 'customer' | 'manager' | 'staff';
   approvedBy?: string;

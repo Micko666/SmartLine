@@ -10,7 +10,7 @@ import { ALWAYS_OPEN, BURGER_MODIFIERS, checkoutArgs, createTenant, type Tenant 
 import { evaluateCheckout, groupModifierSelections, type CheckoutInput } from '@/domain/ordering/cart';
 import { applyTransition } from '@/domain/ordering/orderOperations';
 import { DEFAULT_SETTINGS } from '@/domain/initialData';
-import type { BusinessSettings, CartItem, MenuItem, Order, OrderStatus, Table } from '@/domain/types';
+import type { BusinessSettings, CalendarEventStatus, CalendarEventType, CartItem, MenuItem, Order, OrderStatus, Table } from '@/domain/types';
 
 let db: TestDb;
 
@@ -117,5 +117,48 @@ describe('order operation parity (TypeScript applyTransition vs SQL transition_o
     expect(stock.stock).toBe(local.menuItems.find(m => m.id === t.burgerId)!.stock);
     expect(table.status).toBe(local.tables[0].status);
     expect(order.status).toBe(local.orders[0].status);
+  });
+});
+
+import { decideBooking } from '@/domain/booking/policy';
+
+describe('booking parity (TypeScript decideBooking vs SQL submit_booking)', () => {
+  const day = (n: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Podgorica' }).format(new Date(Date.now() + n * 86_400_000));
+  const weekdayAhead = (dow: number) => { for (let i = 2; i < 10; i++) { const d = day(i); if (new Date(`${d}T12:00:00Z`).getUTCDay() === dow) return d; } return day(2); };
+
+  it('agrees on accept/reject and status for a matrix of requests', async () => {
+    const settings = { maxEventsPerDay: 1, requireApproval: false, advanceBookingDays: 30 };
+    const t = await createTenant(db, 'bookparity', { calendar_settings: JSON.stringify(settings) });
+    const [{ id: pkgId }] = await db.sql<{ id: string }>(`INSERT INTO event_packages(user_id, name, min_guests, max_guests) VALUES ($1,'Party',10,20) RETURNING id`, [t.userId]);
+    const packages = [{ id: pkgId, name: 'Party', emoji: '', description: '', minGuests: 10, maxGuests: 20, duration: 2, details: '', active: true, createdAt: '' }];
+    const base = { date: weekdayAhead(3), timeSlot: '19:00', type: 'reservation', customerName: 'Guest', customerPhone: '+38267123456', customerEmail: '', guestCount: 2, packageId: null as string | null, notes: '' };
+    const requests = [
+      base,
+      { ...base, type: 'closure' },
+      { ...base, date: '2020-01-01' },
+      { ...base, date: day(45) },
+      { ...base, date: weekdayAhead(0) },
+      { ...base, timeSlot: '21:30' },
+      { ...base, timeSlot: '19:15' },
+      { ...base, guestCount: 0 },
+      { ...base, customerPhone: '12' },
+      { ...base, date: weekdayAhead(4), type: 'private_event', packageId: pkgId, guestCount: 5 },
+      { ...base, date: weekdayAhead(4), type: 'private_event', packageId: pkgId, guestCount: 12 },
+      { ...base },                                   // second on the same day -> max/day
+    ];
+    const events: Array<{ date: string; timeSlot: string; type: CalendarEventType; status: CalendarEventStatus }> = [];
+    for (const req of requests) {
+      const local = decideBooking(req, { settings, timezone: 'Europe/Podgorica', packages, events });
+      const remote = await db.rpc<{ ok: boolean; status?: string; error?: string }>('anon', 'submit_booking', {
+        p_restaurant_token: t.token, p_client_request_id: randomUUID(), p_date: req.date, p_time_slot: req.timeSlot, p_type: req.type,
+        p_customer_name: req.customerName, p_customer_phone: req.customerPhone, p_customer_email: req.customerEmail,
+        p_guest_count: req.guestCount, p_package_id: req.packageId, p_notes: req.notes,
+      });
+      expect(remote.ok, `${JSON.stringify(req)} remote=${remote.error} local=${local.ok ? '' : local.error}`).toBe(local.ok);
+      if (local.ok && remote.ok) {
+        expect(remote.status).toBe(local.status);
+        events.push({ date: req.date, timeSlot: req.timeSlot, type: req.type as CalendarEventType, status: local.status });
+      }
+    }
   });
 });

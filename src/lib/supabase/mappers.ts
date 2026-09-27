@@ -214,6 +214,7 @@ export function mapReceiptRow(row: Record<string, unknown>): Receipt {
     taxAmount:      Number(row.tax_amount ?? 0),
     total:          Number(row.total ?? 0),
     paymentMethod:  (row.payment_method as Receipt['paymentMethod']) ?? 'cash',
+    paymentStatus:  (row.payment_status as Receipt['paymentStatus']) ?? undefined,
     createdAt:      row.created_at as string,
   };
 }
@@ -310,6 +311,7 @@ export function mapCalendarEventRow(row: Record<string, unknown>): CalendarEvent
     approvedBy:      (row.approved_by as string | undefined) ?? undefined,
     approvedAt:      (row.approved_at as string | undefined) ?? undefined,
     rejectionReason: (row.rejection_reason as string | undefined) ?? undefined,
+    confirmationCode: (row.confirmation_code as string | undefined) ?? undefined,
     createdAt:       row.created_at as string,
     updatedAt:       row.updated_at as string,
   };

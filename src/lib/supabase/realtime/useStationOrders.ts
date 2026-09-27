@@ -14,6 +14,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { isSupabaseEnabled } from '@/store/flags';
 import { isActiveOrder } from '@/domain/orderMachine';
+import { stationTransitionError } from '@/domain/stations';
+import { toast } from 'sonner';
 import * as stationService from '@/services/stationService';
 import type { Order, OrderStatus, Station, TableStatus } from '@/domain/types';
 
@@ -76,7 +78,12 @@ export function useStationOrders(station: Station, onSessionLost?: () => void) {
   const transition = useCallback(async (orderId: string, next: OrderStatus, rework = false): Promise<boolean> => {
     const current = orders.find(o => o.id === orderId);
     if (!current) return false;
-    if (!remote) return useStore.getState().transitionOrder(orderId, current.status, next, rework ? `${actor}:rework` : actor);
+    if (!remote) {
+      // Same permission rules the server applies to station sessions.
+      const denied = stationTransitionError(station.permissions, current.status, next);
+      if (denied) { toast.error(denied); return false; }
+      return useStore.getState().transitionOrder(orderId, current.status, next, rework ? `${actor}:rework` : actor);
+    }
     const t = token();
     if (!t) return handleError(new Error('Station session required'));
     try {
@@ -87,7 +94,7 @@ export function useStationOrders(station: Station, onSessionLost?: () => void) {
       void refetch();
       return handleError(err);
     }
-  }, [orders, remote, actor, token, handleError, refetch]);
+  }, [orders, remote, actor, token, handleError, refetch, station.permissions]);
 
   const advanceOrder = useCallback((orderId: string, next: OrderStatus) => transition(orderId, next), [transition]);
 

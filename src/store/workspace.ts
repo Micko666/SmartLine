@@ -8,20 +8,8 @@ import { DEFAULT_SETTINGS, DEMO_USER, SEED_MENU_ITEMS, SEED_TABLES, FRESH_TABLES
 export const AUTH_KEY = 'smartline-auth';
 export const WORKSPACE_KEY = (userId: string) => `smartline-workspace-${userId}`;
 
-export const DEFAULT_CALENDAR_SETTINGS: CalendarSettings = {
-  maxEventsPerDay: 10, requireApproval: true, advanceBookingDays: 90,
-  bookingMessage: 'We look forward to hosting you! Fill in your details and we will confirm your reservation shortly.',
-  workingDays: [
-    { dayOfWeek: 0, isOpen: false, openTime: '09:00', closeTime: '22:00' },
-    { dayOfWeek: 1, isOpen: true, openTime: '09:00', closeTime: '22:00' },
-    { dayOfWeek: 2, isOpen: true, openTime: '09:00', closeTime: '22:00' },
-    { dayOfWeek: 3, isOpen: true, openTime: '09:00', closeTime: '22:00' },
-    { dayOfWeek: 4, isOpen: true, openTime: '09:00', closeTime: '22:00' },
-    { dayOfWeek: 5, isOpen: true, openTime: '09:00', closeTime: '23:00' },
-    { dayOfWeek: 6, isOpen: true, openTime: '10:00', closeTime: '23:00' },
-  ],
-  workingExceptions: [], shiftTemplates: [], weekTemplate: [],
-};
+import { DEFAULT_CALENDAR_SETTINGS } from '@/domain/booking/policy';
+export { DEFAULT_CALENDAR_SETTINGS };
 
 /** The complete persisted tenant state. Auth and actions are never deserialized. */
 export interface WorkspaceSnapshot {
