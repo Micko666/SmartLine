@@ -6,9 +6,15 @@ RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path=public AS $$
  (p_from='ready' AND p_to IN ('completed','cancelled')) OR
  (p_from='cancelled' AND p_to='refunded');
 $$;
+-- Rework (ready -> preparing) is allowed only for an actor tagged ':rework'
+-- (a station with canReworkOrders). One definition used by trigger and RPCs.
+CREATE OR REPLACE FUNCTION order_transition_allowed_by(p_from text,p_to text,p_actor text)
+RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path=public AS $$
+ SELECT order_transition_allowed(p_from,p_to) OR (p_from='ready' AND p_to='preparing' AND COALESCE(p_actor,'') LIKE '%:rework');
+$$;
 CREATE OR REPLACE FUNCTION enforce_order_transition() RETURNS trigger
 LANGUAGE plpgsql SET search_path=public AS $$ BEGIN
- IF NEW.status IS DISTINCT FROM OLD.status AND NOT order_transition_allowed(OLD.status,NEW.status) AND NOT (OLD.status='ready' AND NEW.status='preparing' AND NEW.last_actor LIKE '%:rework') THEN
+ IF NEW.status IS DISTINCT FROM OLD.status AND NOT order_transition_allowed_by(OLD.status,NEW.status,NEW.last_actor) THEN
   RAISE EXCEPTION 'Invalid order transition: % -> %',OLD.status,NEW.status;
  END IF;
  IF NEW.status IS DISTINCT FROM OLD.status THEN NEW.updated_at:=now(); END IF;
@@ -25,7 +31,7 @@ DECLARE o orders%ROWTYPE; x jsonb; BEGIN
  IF NOT FOUND THEN RAISE EXCEPTION 'Order not found'; END IF;
  IF o.status=p_new_status AND p_new_status='cancelled' THEN RETURN jsonb_build_object('ok',true,'order',to_jsonb(o)); END IF;
  IF o.status IS DISTINCT FROM p_expected_status THEN RAISE EXCEPTION 'Order changed; refresh and try again'; END IF;
- IF NOT order_transition_allowed(o.status,p_new_status) THEN RAISE EXCEPTION 'Invalid order transition'; END IF;
+ IF NOT order_transition_allowed_by(o.status,p_new_status,p_actor) THEN RAISE EXCEPTION 'Invalid order transition'; END IF;
  IF p_new_status='cancelled' AND o.stock_restored_at IS NULL THEN
   FOR x IN SELECT value FROM jsonb_array_elements(o.items) LOOP
    UPDATE menu_items SET stock=CASE WHEN stock IS NULL THEN NULL ELSE stock+(x->>'quantity')::int END,sales_count=greatest(0,COALESCE(sales_count,0)-(x->>'quantity')::int),updated_at=now() WHERE user_id=p_user_id AND id=(x->>'menuItemId')::uuid;
