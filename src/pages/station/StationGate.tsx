@@ -52,7 +52,7 @@ function Numpad({
   return (
     <div className="grid grid-cols-3 gap-3 w-56">
       {keys.map((k, i) => {
-        if (!k) return <div key={i} />;
+        if (!k) return <div key={`blank-${i}`} />;
         if (k === '⌫') {
           return (
             <button

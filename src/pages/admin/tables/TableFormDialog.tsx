@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Table } from '@/domain/types';
 import { toast } from 'sonner';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -40,7 +40,10 @@ export default function TableFormDialog({ open, onOpenChange, table, existingZon
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>{table ? 'Edit table' : 'Add table'}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>{table ? 'Edit table' : 'Add table'}</DialogTitle>
+          <DialogDescription>Name, seats, zone and floor of the table.</DialogDescription>
+        </DialogHeader>
         <div className="space-y-5 py-1">
 
           {/* Name */}

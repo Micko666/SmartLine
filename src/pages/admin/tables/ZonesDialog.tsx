@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Trash2, Pencil } from 'lucide-react';
 import { ZONE_PALETTE } from '@/domain/tables';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 
 // ─── ZonesDialog ──────────────────────────────────────────────────────────────
@@ -18,7 +18,10 @@ export default function ZonesDialog({ open, onOpenChange, zones, zoneColors, tab
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
-        <DialogHeader><DialogTitle>Manage Zones</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Manage Zones</DialogTitle>
+          <DialogDescription>Rename or remove floor-map zones.</DialogDescription>
+        </DialogHeader>
         {zones.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">No zones yet. Add a zone when creating or editing a table.</p>
         ) : (

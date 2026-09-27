@@ -6,6 +6,7 @@ import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import type { Ingredient, MenuItem } from '@/domain/types';
 import { toast } from 'sonner';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 const UNIT_OPTIONS = [
   // Weight
@@ -258,6 +259,7 @@ function IngredientForm({ ingredient, sym, onSave, onClose }: {
   onSave: (data: IngFormData, isNew: boolean) => void;
   onClose: () => void;
 }) {
+  useEscapeKey(onClose);
   const [form, setForm] = useState<IngFormData>(ingredient ? {
     name: ingredient.name, unit: ingredient.unit,
     costPerUnit: ingredient.costPerUnit, stock: ingredient.stock,
@@ -357,6 +359,7 @@ function LinkToItemsPanel({ ingredient, menuItems, sym, onLink, onClose }: {
   onLink: (itemId: string, storedQty: number) => void;
   onClose: () => void;
 }) {
+  useEscapeKey(onClose);
   const [search,      setSearch]      = useState('');
   const [expandedId,  setExpandedId]  = useState<string | null>(null);
   const [linked,      setLinked]      = useState<Set<string>>(new Set());

@@ -7,7 +7,7 @@ import BookingPage, { StatusBadge } from '@/pages/customer/BookingPage';
 import { useStore } from '@/store';
 import { useStationOrders } from '@/lib/supabase/realtime/useStationOrders';
 import { buildStation } from '@/domain/stations';
-import { DEFAULT_SETTINGS, SEED_MENU_ITEMS, SEED_TABLES } from '@/domain/initialData';
+import { DEFAULT_SETTINGS, DEMO_USER, SEED_MENU_ITEMS, SEED_TABLES } from '@/domain/initialData';
 import { DEFAULT_CALENDAR_SETTINGS } from '@/domain/booking/policy';
 import type { Order } from '@/domain/types';
 
@@ -126,5 +126,22 @@ describe('station actions (local mode) match server semantics', () => {
     await act(async () => { await useStore.getState().cancelOrder('paid1'); });
     await act(async () => { await useStore.getState().cancelOrder('paid1'); });
     await waitFor(() => expect(useStore.getState().menuItems[0].stock).toBe(3));
+  });
+});
+
+describe('station PIN screen', () => {
+  it('renders the keypad without React key or nesting warnings', async () => {
+    const { default: StationGate } = await import('@/pages/station/StationGate');
+    const station = { ...buildStation({ name: 'Kitchen', role: 'kitchen' }), pin: '1234', hasPin: true };
+    const s = useStore.getState();
+    useStore.setState({ user: s.user ?? DEMO_USER, stations: [station], settings: { ...s.settings, restaurantToken: 'demo', stations: [station] } });
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errors.push(a.map(String).join(' ')); });
+    try {
+      render(<MemoryRouter initialEntries={[`/station/demo/${station.id}`]}><Routes><Route path="/station/:restaurantToken/:stationId" element={<StationGate />} /></Routes></MemoryRouter>);
+      expect(await screen.findByRole('button', { name: '9' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: '0' })).toBeTruthy();
+    } finally { spy.mockRestore(); }
+    expect(errors.filter(e => /same key|validateDOMNesting/.test(e))).toEqual([]);
   });
 });

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Plus, Minus, X, ChefHat, Clock, Search, AlertTriangle, ClipboardList, Package, Bike } from 'lucide-react';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
+import { Plus, Minus, X, ChefHat, Clock, Search, AlertTriangle, ClipboardList, Package, Bike, ArrowLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { useStore } from '@/store';
@@ -337,8 +337,13 @@ export default function CustomerMenu() {
   //    (no table QR and no explicit ?mode=). They pick their channel here.
   if (!menuLoading && (menuError || (restaurantToken && settings.restaurantToken !== restaurantToken))) return <div role="alert" className="p-8 text-center">Menu unavailable. Please check the restaurant link and reload.</div>;
   const open = orderingOpen(settings.businessHours, settings.timezone);
-  if (!menuLoading && (settings.orderingPaused || open.open === false)) return <div className="p-8 text-center"><h1>{settings.businessName}</h1><p>{settings.orderingPaused ? settings.orderingPausedMessage || 'Orders paused' : open.open === false ? open.reason : ''}</p></div>;
-  if (!menuLoading && orderMode === 'dine-in' && (modeParam || tableParam) && !table) return <div className="p-8 text-center">Please scan the QR code on your table to dine in.</div>;
+  const portalLink = restaurantToken ? (
+    <Link to={`/order/${restaurantToken}`} className="inline-flex items-center gap-1.5 mt-4 text-sm text-primary hover:underline">
+      <ArrowLeft className="w-4 h-4" /> Back to ordering options
+    </Link>
+  ) : null;
+  if (!menuLoading && (settings.orderingPaused || open.open === false)) return <div className="p-8 text-center"><h1>{settings.businessName}</h1><p>{settings.orderingPaused ? settings.orderingPausedMessage || 'Orders paused' : open.open === false ? open.reason : ''}</p>{portalLink}</div>;
+  if (!menuLoading && orderMode === 'dine-in' && (modeParam || tableParam) && !table) return <div className="p-8 text-center"><p>Please scan the QR code on your table to dine in.</p>{portalLink}</div>;
   const needsModeSelection = !menuLoading && !tableParam && !modeParam;
   if (needsModeSelection) {
     const selectMode = (mode: OrderMode) => {
@@ -386,6 +391,12 @@ export default function CustomerMenu() {
       <div className="min-h-screen bg-background">
         <header className="sticky top-0 z-30 bg-card/90 backdrop-blur-xl border-b border-border">
           <div className="max-w-lg mx-auto px-4 h-14 flex items-center gap-3">
+            {restaurantToken && (
+              <Link to={`/order/${restaurantToken}`} aria-label="Change order type or time"
+                className="w-8 h-8 -ml-1 rounded-xl flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0">
+                <ArrowLeft className="w-4 h-4" />
+              </Link>
+            )}
             <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center shrink-0">
               {settings.logoUrl
                 ? <img src={settings.logoUrl} alt="logo" className="w-full h-full rounded-xl object-cover" />
@@ -427,6 +438,12 @@ export default function CustomerMenu() {
       {/* Header */}
       <header className="sticky top-0 z-30 bg-card/90 backdrop-blur-xl border-b border-border">
         <div className="max-w-lg mx-auto px-4 h-14 flex items-center gap-3">
+          {orderMode !== 'dine-in' && restaurantToken && (
+            <Link to={`/order/${restaurantToken}`} aria-label="Change order type or time"
+              className="w-8 h-8 -ml-1 rounded-xl flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0">
+              <ArrowLeft className="w-4 h-4" />
+            </Link>
+          )}
           <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center shrink-0">
             {settings.logoUrl ? (
               <img src={settings.logoUrl} alt="logo" className="w-full h-full rounded-xl object-cover" />

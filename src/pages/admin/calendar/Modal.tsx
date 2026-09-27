@@ -1,10 +1,12 @@
 import { X } from 'lucide-react';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 // ─── Shared Modal ─────────────────────────────────────────────────────────────
 
 export default function Modal({ title, subtitle, onClose, wide, children }: {
   title: string; subtitle?: string; onClose: () => void; wide?: boolean; children: React.ReactNode;
 }) {
+  useEscapeKey(onClose);
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-16 bg-foreground/30 backdrop-blur-sm overflow-y-auto">
       <div className={`bg-card rounded-2xl shadow-xl w-full ${wide ? 'max-w-2xl' : 'max-w-md'} mb-8`}>

@@ -4,9 +4,9 @@
  * Polls get_order_status RPC every 10 seconds.
  */
 import { useEffect, useState, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase/client';
-import { Clock, CheckCircle2, ChefHat, Utensils, Package } from 'lucide-react';
+import { Clock, CheckCircle2, ChefHat, Utensils, Package, ArrowLeft } from 'lucide-react';
 import { minutesSince } from '@/lib/time';
 
 interface OrderStatusData {
@@ -138,6 +138,7 @@ function ProgressSteps({ status }: { status: string }) {
 export default function OrderTracker() {
   const [params] = useSearchParams();
   const token = params.get('r') ?? '';
+  const navigate = useNavigate();
   const orderNumber = parseInt(params.get('n') ?? '0', 10);
 
   const [data, setData] = useState<OrderStatusData | null>(null);
@@ -282,6 +283,16 @@ export default function OrderTracker() {
             )}
           </>
         )}
+
+        {/* Always a way out: back to the receipt (history) or to the ordering portal. */}
+        <div className="flex items-center justify-center gap-4 text-sm">
+          {window.history.length > 1 && (
+            <button onClick={() => navigate(-1)} className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-foreground">
+              <ArrowLeft className="w-4 h-4" /> Back
+            </button>
+          )}
+          {token && <Link to={`/order/${token}`} className="text-primary hover:underline">Order again</Link>}
+        </div>
       </div>
     </div>
   );

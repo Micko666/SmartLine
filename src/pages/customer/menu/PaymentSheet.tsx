@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import type { CartItem, MenuItem, PaymentMethod } from '@/domain/types';
 import { formatScheduled } from '@/domain/time/restaurantTime';
 import { OrderMode, MODE_META, PAYMENT_METHODS, paymentLabel } from './shared';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 // ─── Payment Sheet ────────────────────────────────────────────────────────────
 export default function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDisplay, taxRate,
@@ -25,6 +26,7 @@ export default function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, t
   onClose: () => void;
   onPay: (method: PaymentMethod) => void;
 }) {
+  useEscapeKey(onClose);
   const [selected, setSelected] = useState<PaymentMethod>(PAYMENT_METHODS[0].id);
   const inputCls = 'w-full h-10 px-3.5 rounded-xl border border-input bg-muted/50 text-sm focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-primary transition-colors';
   const availableMethods = PAYMENT_METHODS;

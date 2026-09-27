@@ -2,6 +2,7 @@ import { ShoppingBag, Plus, Minus, X, Clock, AlertTriangle } from 'lucide-react'
 import { motion } from 'framer-motion';
 import type { CartItem, MenuItem, Order } from '@/domain/types';
 import { ORDER_STATUS_CSS, ORDER_STATUS_LABELS } from '@/domain/orderMachine';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 // ─── Cart Sheet ───────────────────────────────────────────────────────────────
 export default function CartSheet({ cart, menuItems, sym, cartTotal, taxAmount, cartTotalWithTax, estimatedWait, taxDisplay, taxRate, issues, sessionOrders, onUpdateQty, onRemove, onClose, onProceed }: {
@@ -14,6 +15,7 @@ export default function CartSheet({ cart, menuItems, sym, cartTotal, taxAmount, 
   onClose: () => void;
   onProceed: () => void;
 }) {
+  useEscapeKey(onClose);
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 bg-foreground/30 backdrop-blur-sm" onClick={onClose}

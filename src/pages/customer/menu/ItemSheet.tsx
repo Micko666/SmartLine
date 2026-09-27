@@ -3,6 +3,7 @@ import { Plus, X, Clock } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { CartItemModifier, MenuItem } from '@/domain/types';
 import { DIETARY_EMOJI, DIETARY_STYLE, ALLERGEN_EMOJI } from './shared';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 // ─── Item Detail Sheet ────────────────────────────────────────────────────────
 export default function ItemSheet({ item, sym, onAdd, onClose }: {
@@ -10,6 +11,7 @@ export default function ItemSheet({ item, sym, onAdd, onClose }: {
   onAdd: (modifiers: CartItemModifier[]) => void;
   onClose: () => void;
 }) {
+  useEscapeKey(onClose);
   const [selected, setSelected] = useState<CartItemModifier[]>([]);
 
   const toggleModifier = (modId: string, optId: string) => {

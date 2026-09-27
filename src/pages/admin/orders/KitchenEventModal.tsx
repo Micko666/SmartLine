@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { Order, KitchenEventType } from '@/domain/types';
 import { EVENT_TYPE_CONFIG } from './shared';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 export default function KitchenEventModal({ order, sym, onSave, onClose }: {
   order: Order;
@@ -17,6 +18,7 @@ export default function KitchenEventModal({ order, sym, onSave, onClose }: {
   ) => void;
   onClose: () => void;
 }) {
+  useEscapeKey(onClose);
   const [type,          setType]          = useState<KitchenEventType>('waste');
   const [notes,         setNotes]         = useState('');
   const [selectedItem,  setSelectedItem]  = useState('');

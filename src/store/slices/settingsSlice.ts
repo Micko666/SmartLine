@@ -8,8 +8,12 @@ import type { StoreGet, StoreSet } from '../runtime';
 import type { AppState } from '../types';
 
 export const createSettingsSlice = (set: StoreSet, get: StoreGet): Pick<AppState, 'updateSettings' | 'addStation' | 'updateStation' | 'deleteStation'> => ({
-  async updateSettings(updates) {
+  async updateSettings(input) {
     const prev = get().settings;
+    // Forms pass the whole settings object; keep only what actually changed.
+    const updates = Object.fromEntries(Object.entries(input).filter(([key, value]) =>
+      key !== 'stations' && JSON.stringify(value) !== JSON.stringify(prev[key as keyof typeof prev]))) as typeof input;
+    if (Object.keys(updates).length === 0) return true;
     set(s => ({ settings: { ...s.settings, ...updates, stations: s.stations } }));
     persistLocal(get);
     if (usesSupabasePersistence() && get().user?.id) {

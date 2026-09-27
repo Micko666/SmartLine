@@ -86,3 +86,19 @@ describe('contract checker fails on broken calls (negative fixtures)', () => {
     }
   });
 });
+
+describe('settings patch contract', () => {
+  it('a full Settings form (incl. restaurant token) produces a patch the server accepts; identity is unchanged', async () => {
+    const { settingsPatch } = await import('@/services/workspaceService');
+    const { DEFAULT_SETTINGS } = await import('@/domain/initialData');
+    const { createTenant } = await import('./support/fixtures');
+    const t = await createTenant(db, 'settings');
+    const patch = settingsPatch({ ...DEFAULT_SETTINGS, businessName: 'Renamed', restaurantToken: 'hijack', timezone: 'Europe/Podgorica' });
+    expect(Object.keys(patch)).not.toContain('restaurant_token');
+    expect(Object.keys(patch)).not.toContain('user_id');
+    const r = await db.rpc<{ ok: boolean; error?: string }>('authenticated', 'patch_settings', { p_patch: patch }, t.userId);
+    expect(r.ok, r.error).toBe(true);
+    const [row] = await db.sql<{ business_name: string; restaurant_token: string }>(`SELECT business_name, restaurant_token FROM business_settings WHERE user_id=$1`, [t.userId]);
+    expect(row).toEqual({ business_name: 'Renamed', restaurant_token: t.token });
+  });
+});

@@ -2,9 +2,11 @@ import { X, ClipboardList } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { Order } from '@/domain/types';
 import { ORDER_STATUS_CSS, ORDER_STATUS_LABELS } from '@/domain/orderMachine';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 // ─── Session Orders Sheet ─────────────────────────────────────────────────────
 export default function SessionOrdersSheet({ orders, sym, onClose }: { orders: Order[]; sym: string; onClose: () => void }) {
+  useEscapeKey(onClose);
   const totalSpent = orders.reduce((sum, o) => sum + o.total, 0);
 
   return (

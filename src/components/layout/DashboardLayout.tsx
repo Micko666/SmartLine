@@ -11,6 +11,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useRealtimeCoordinator } from '@/lib/supabase/realtime/useRealtimeCoordinator';
 import { restaurantDate, restaurantDayKey } from '@/domain/time/restaurantTime';
 import { isActiveOrder } from '@/domain/orderMachine';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 const navItems = [
   { path: '/dashboard',    label: 'Dashboard',    icon: LayoutDashboard },
@@ -30,6 +31,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  useEscapeKey(() => setSidebarOpen(false), sidebarOpen);
 
   // Real-time sync — single coordinator owns all admin channels
   useRealtimeCoordinator();

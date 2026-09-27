@@ -20,6 +20,7 @@ import { useShallow } from 'zustand/react/shallow';
 import type { CalendarEvent, EventPackage, WorkingDay, Employee, Shift, ShiftAssignment, ShiftTemplate } from '@/domain/types';
 import { localDateKey } from '@/domain/time/restaurantTime';
 import { MONTH_NAMES, DAY_NAMES, today, initials, TYPE_EMOJI, TYPE_LABEL, Tab, RosterView } from './calendar/shared';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import Modal from './calendar/Modal';
 import StatusBadge from './calendar/StatusBadge';
 import EventForm from './calendar/EventForm';
@@ -74,6 +75,7 @@ export default function CalendarPage() {
   const [showPackageForm, setShowPackageForm]       = useState(false);
   const [editingPackage, setEditingPackage]         = useState<EventPackage | null>(null);
   const [rejectId, setRejectId]                     = useState<string | null>(null);
+  useEscapeKey(() => setRejectId(null), rejectId !== null);
   const [rejectReason, setRejectReason]             = useState('');
   const [rosterWeekOffset, setRosterWeekOffset]     = useState(0);
   const [showEmployeeForm, setShowEmployeeForm]     = useState(false);
@@ -405,9 +407,12 @@ export default function CalendarPage() {
 
             {/* ── Event packages panel (toggleable) ── */}
             <div className="glass-card overflow-hidden">
+              {/* Toggle and "Add" are sibling buttons (a button cannot contain a button). */}
+              <div className="flex items-center hover:bg-muted/30 transition-colors">
               <button
                 onClick={() => setShowPackagesPanel(v => !v)}
-                className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/30 transition-colors"
+                aria-expanded={showPackagesPanel}
+                className="flex-1 flex items-center justify-between pl-5 pr-2 py-3.5 text-left"
               >
                 <div className="flex items-center gap-2">
                   <Package className="w-4 h-4 text-muted-foreground" />
@@ -421,15 +426,14 @@ export default function CalendarPage() {
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={e => { e.stopPropagation(); setEditingPackage(null); setShowPackageForm(true); }}
-                    className="flex items-center gap-1 text-xs text-primary font-medium hover:underline">
-                    <Plus className="w-3 h-3" /> Add
-                  </button>
-                  {showPackagesPanel ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
-                </div>
+                {showPackagesPanel ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
               </button>
+              <button
+                onClick={() => { setEditingPackage(null); setShowPackageForm(true); }}
+                className="flex items-center gap-1 text-xs text-primary font-medium hover:underline pr-5 pl-2 py-3.5">
+                <Plus className="w-3 h-3" /> Add
+              </button>
+              </div>
 
               {showPackagesPanel && (
                 <div className="border-t border-border p-5">
@@ -941,8 +945,8 @@ export default function CalendarPage() {
 
       {/* ── Reject modal ── */}
       {rejectId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground/30 backdrop-blur-sm">
-          <div className="bg-card rounded-2xl shadow-xl w-full max-w-sm p-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground/30 backdrop-blur-sm" onClick={() => setRejectId(null)}>
+          <div className="bg-card rounded-2xl shadow-xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-display font-bold text-lg">Reject request</h2>
               <button onClick={() => setRejectId(null)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X className="w-4 h-4" /></button>

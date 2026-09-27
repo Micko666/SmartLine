@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Pencil, ChevronDown } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -71,6 +71,7 @@ export default function FloorSelector({ floors, active, tableCounts, onSelect, o
         <DialogContent className="max-w-xs">
           <DialogHeader>
             <DialogTitle>Edit floor</DialogTitle>
+            <DialogDescription>Rename this floor or remove it.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-1">
             <div className="space-y-1.5">

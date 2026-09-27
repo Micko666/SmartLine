@@ -6,7 +6,7 @@ import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { buildStation } from '@/domain/stations';
 import type { Station } from '@/domain/types';
@@ -151,6 +151,7 @@ export default function Stations() {
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editTarget ? 'Edit Station' : 'New Station'}</DialogTitle>
+            <DialogDescription>Role, visible orders, permissions and optional PIN for a station device.</DialogDescription>
           </DialogHeader>
           <StationForm
             form={form}

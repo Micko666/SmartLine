@@ -5,12 +5,14 @@ import QRCode from 'react-qr-code';
 import type { Table } from '@/domain/types';
 import { toast } from 'sonner';
 import { makeQrDownloader } from './shared';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 // ─── QrSheet (full-screen modal) ──────────────────────────────────────────────
 
 export default function QrSheet({ table, url, restaurantName, onClose }: {
   table: Table; url: string; restaurantName: string; onClose: () => void;
 }) {
+  useEscapeKey(onClose);
   const qrRef = useRef<HTMLDivElement>(null);
   const fileName = `qr-${table.name.replace(/\s+/g, '-').toLowerCase()}`;
   const downloadQr = makeQrDownloader(qrRef, fileName);

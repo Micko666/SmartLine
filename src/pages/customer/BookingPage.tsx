@@ -25,6 +25,7 @@ import {
   loadBookingContext, lookupBooking, submitBooking,
   type BookingContext, type BookingLookupRow,
 } from '@/services/bookingService';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -494,6 +495,7 @@ function LookupModal({ onClose, form, list, onNewRequest }: {
   list: React.ReactNode;
   onNewRequest: () => void;
 }) {
+  useEscapeKey(onClose);
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-card rounded-2xl w-full max-w-sm p-5 shadow-xl space-y-4" onClick={e => e.stopPropagation()}>

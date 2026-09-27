@@ -29,11 +29,20 @@ beforeAll(async () => {
 });
 afterEach(cleanup);
 
+/** React dev warnings that point at real markup/accessibility defects. */
+const DEFECT_WARNINGS = /validateDOMNesting|cannot be given refs|Missing `Description`|unique "key" prop/;
+
 describe('admin pages render (demo workspace)', { timeout: 30_000 }, () => {
   it.each(pages)('%s', async (_name, load) => {
-    const { default: Page } = await load();
-    render(<MemoryRouter><Page /></MemoryRouter>);
-    expect(await screen.findAllByRole('link', { name: /settings/i })).not.toHaveLength(0);
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args.map(String).join(' ')); });
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => { errors.push(args.map(String).join(' ')); });
+    try {
+      const { default: Page } = await load();
+      render(<MemoryRouter><Page /></MemoryRouter>);
+      expect(await screen.findAllByRole('link', { name: /settings/i })).not.toHaveLength(0);
+    } finally { spy.mockRestore(); warn.mockRestore(); }
+    expect(errors.filter(e => DEFECT_WARNINGS.test(e))).toEqual([]);
   });
 });
 

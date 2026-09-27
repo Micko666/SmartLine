@@ -48,22 +48,31 @@ export async function setStock(item: MenuItem, stock: number) {
   return mapMenuItemRow(data as Record<string, unknown>);
 }
 
-export async function patchSettings(updates: Partial<BusinessSettings>) {
-  const fields = Object.keys(updates).filter(key => key !== 'stations') as (keyof BusinessSettings)[];
+/**
+ * Columns `patch_settings` (migration 017) accepts. Identity fields such as
+ * restaurant_token, user_id and next_order_number are never sent: the server
+ * rejects the whole patch if one is present.
+ */
+export const EDITABLE_SETTINGS_COLUMNS = [
+  'business_name', 'business_type', 'currency', 'currency_symbol', 'tax_rate', 'tax_display', 'language',
+  'timezone', 'opening_hours', 'service_mode', 'low_stock_threshold', 'zero_stock_behavior', 'app_url',
+  'logo_url', 'ordering_paused', 'ordering_paused_message', 'takeaway_enabled', 'delivery_enabled',
+  'business_hours', 'calendar_settings', 'categories',
+] as const;
+
+/** Snake-case patch of the given fields, limited to editable columns. */
+export function settingsPatch(updates: Partial<BusinessSettings>): Record<string, unknown> {
   const row = settingsToRow({ ...DEFAULT_SETTINGS, ...updates }, '');
-  const baseline = settingsToRow(DEFAULT_SETTINGS, '');
-  // Compare one field at a time to reuse the schema mapper without sending defaults.
   const patch: Record<string, unknown> = {};
-  for (const field of fields) {
-    const single = settingsToRow({ ...DEFAULT_SETTINGS, [field]: updates[field] }, '');
-    for (const key of Object.keys(single)) {
-      if (JSON.stringify(single[key]) !== JSON.stringify(baseline[key])) patch[key] = row[key];
-    }
-    // A field explicitly reset to its default must still be sent.
-    const snake = field.replace(/[A-Z]/g, char => `_${char.toLowerCase()}`);
-    if (snake in row) patch[snake] = row[snake];
+  for (const field of Object.keys(updates)) {
+    const column = field.replace(/[A-Z]/g, char => `_${char.toLowerCase()}`);
+    if ((EDITABLE_SETTINGS_COLUMNS as readonly string[]).includes(column) && column in row) patch[column] = row[column];
   }
-  const result = await rpc('patch_settings', { p_patch: patch });
+  return patch;
+}
+
+export async function patchSettings(updates: Partial<BusinessSettings>) {
+  const result = await rpc('patch_settings', { p_patch: settingsPatch(updates) });
   return mapSettingsRow(result.settings as Record<string, unknown>);
 }
 
