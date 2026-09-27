@@ -29,6 +29,6 @@ dist-ssr
 .env
 .env.local
 
-.vercel
-
-.vercel
+# Playwright
+test-results/
+playwright-report/
