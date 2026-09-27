@@ -4,11 +4,15 @@
  * parameter names, every parameter without a default supplied, and EXECUTE
  * granted to the role that calls it. Catches silent breakage when a migration
  * renames or drops an RPC argument.
+ *
+ * The negative fixtures prove the checker can fail: each one is a call shape
+ * that would break in production and must produce a violation.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { createTestDb, type TestDb } from './support/db';
+import { contractViolations, extractRpcCalls, type RpcCall } from './support/contract';
 
 const SRC = resolve(__dirname, '../../src');
 
@@ -20,52 +24,8 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-interface Call { file: string; fn: string; args: string[] }
-
-/** Index just past the bracket that closes the one at `start`. */
-function skipBalanced(code: string, start: number, open: string, close: string): number {
-  let depth = 0;
-  for (let i = start; i < code.length; i++) {
-    if (code[i] === open) depth++;
-    else if (code[i] === close && --depth === 0) return i + 1;
-  }
-  return code.length;
-}
-
-function rpcCalls(): Call[] {
-  const calls: Call[] = [];
-  for (const file of sourceFiles(SRC)) {
-    const code = readFileSync(file, 'utf8');
-    // supabase.rpc('fn', {...}) and the thin wrappers rpc('fn', {...}) / call('fn', {...}),
-    // including generic type arguments and nested objects in the argument literal.
-    for (const m of code.matchAll(/\b(?:rpc|call)\b/g)) {
-      let i = m.index! + m[0].length;
-      if (code[i] === '<') i = skipBalanced(code, i, '<', '>');
-      if (code[i] !== '(') continue;
-      const head = /^\(\s*'([a-z_]+)'\s*(,\s*)?/.exec(code.slice(i));
-      if (!head) continue;
-      let args: string[] = [];
-      const objStart = i + head[0].length;
-      if (head[2] && code[objStart] === '{') {
-        const literal = code.slice(objStart, skipBalanced(code, objStart, '{', '}'));
-        // Only top-level keys of the argument object are RPC parameter names.
-        let depth = 0;
-        const top: string[] = [];
-        for (let k = 0; k < literal.length; k++) {
-          const ch = literal[k];
-          if ('{([' .includes(ch)) depth++;
-          else if ('})]'.includes(ch)) depth--;
-          else if (depth === 1) {
-            const key = /^(p_[a-z_]+)\s*:/.exec(literal.slice(k));
-            if (key && !/[A-Za-z0-9_]/.test(literal[k - 1])) { top.push(key[1]); k += key[1].length; }
-          }
-        }
-        args = top;
-      }
-      calls.push({ file: relative(SRC, file), fn: head[1], args });
-    }
-  }
-  return calls;
+function rpcCalls(): RpcCall[] {
+  return sourceFiles(SRC).flatMap(file => extractRpcCalls(readFileSync(file, 'utf8'), relative(SRC, file)));
 }
 
 let db: TestDb;
@@ -80,18 +40,46 @@ describe('frontend RPC calls match the migrated schema', () => {
   });
 
   it.each(calls.map(c => [`${c.fn} (${c.file})`, c] as const))('%s', async (_label, call) => {
-    const fns = await db.sql<{ args: string[] | null; modes: string[] | null; ndefaults: number; anon: boolean; auth: boolean }>(`
-      SELECT p.proargnames AS args, p.proargmodes::text[] AS modes, p.pronargdefaults AS ndefaults,
-             has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
-             has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth
-      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-      WHERE n.nspname = 'public' AND p.proname = $1`, [call.fn]);
-    expect(fns, `function ${call.fn} does not exist`).toHaveLength(1);
-    const f = fns[0];
-    const params = (f.args ?? []).filter((_, i) => !f.modes || f.modes[i] === 'i');
-    for (const a of call.args) expect(params, `${call.fn} has no parameter ${a}`).toContain(a);
-    const required = params.slice(0, params.length - f.ndefaults);
-    for (const r of required) expect(call.args, `${call.fn}: required ${r} not passed`).toContain(r);
-    expect(f.anon || f.auth, `${call.fn} is not executable by API roles`).toBe(true);
+    expect(await contractViolations(db, call)).toEqual([]);
+  });
+});
+
+describe('contract checker fails on broken calls (negative fixtures)', () => {
+  it('extracts names, generic calls and only top-level p_ keys', () => {
+    const code = `
+      await supabase.rpc('get_order_status', { p_restaurant_token: t, p_order_number: n });
+      await call<{ ok: boolean }>('station_get_orders', { p_session_token: tok, nested: { p_fake: 1 } });
+      const x = rpc('submit_booking', { ...base, p_notes: '' });`;
+    expect(extractRpcCalls(code, 'x.ts')).toEqual([
+      { file: 'x.ts', fn: 'get_order_status', args: ['p_restaurant_token', 'p_order_number'] },
+      { file: 'x.ts', fn: 'station_get_orders', args: ['p_session_token'] },
+      { file: 'x.ts', fn: 'submit_booking', args: ['p_notes'] },
+    ]);
+  });
+
+  it.each<[string, RpcCall, RegExp]>([
+    ['nonexistent RPC', { file: 'pages/customer/X.tsx', fn: 'get_orders_v2', args: [] }, /does not exist/],
+    ['wrong argument name', { file: 'pages/customer/OrderTracker.tsx', fn: 'get_order_status', args: ['p_token', 'p_order_number'] }, /no parameter p_token/],
+    ['missing required argument', { file: 'pages/customer/OrderTracker.tsx', fn: 'get_order_status', args: ['p_restaurant_token'] }, /required p_order_number not passed/],
+    ['stale argument (removed p_status from submit_booking)', {
+      file: 'lib/supabase/queries/public.ts', fn: 'submit_booking',
+      args: ['p_restaurant_token', 'p_client_request_id', 'p_date', 'p_time_slot', 'p_type', 'p_customer_name', 'p_customer_phone', 'p_customer_email', 'p_guest_count', 'p_package_id', 'p_notes', 'p_status'],
+    }, /no parameter p_status/],
+    ['no EXECUTE for the caller role (owner RPC called from a public page)', { file: 'pages/customer/Menu.tsx', fn: 'record_payment', args: ['p_order_id'] }, /not executable by anon/],
+    ['internal helper called from the client', { file: 'services/workspaceService.ts', fn: 'transition_order_internal', args: ['p_user_id', 'p_order_id', 'p_expected_status', 'p_new_status', 'p_actor'] }, /not executable by authenticated/],
+  ])('%s', async (_name, call, expected) => {
+    const violations = await contractViolations(db, call);
+    expect(violations.length).toBeGreaterThan(0);
+    expect(violations.join('\n')).toMatch(expected);
+  });
+
+  it('an overloaded function is reported as ambiguous', async () => {
+    await db.sql(`CREATE FUNCTION public.get_order_status(p_restaurant_token text) RETURNS jsonb LANGUAGE sql AS $$ SELECT '{}'::jsonb $$`);
+    try {
+      const v = await contractViolations(db, { file: 'pages/customer/OrderTracker.tsx', fn: 'get_order_status', args: ['p_restaurant_token', 'p_order_number'] });
+      expect(v.join('\n')).toMatch(/overloaded/);
+    } finally {
+      await db.sql(`DROP FUNCTION public.get_order_status(text)`);
+    }
   });
 });
