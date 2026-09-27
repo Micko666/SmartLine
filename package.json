@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "packageManager": "npm@10.9.3",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -15,7 +17,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:db": "vitest run -c vitest.db.config.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:pg": "vitest run -c vitest.db.config.ts supabase/tests/concurrency.pg.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -79,6 +82,7 @@
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.0.0",
     "@types/node": "^22.16.5",
+    "@types/pg": "^8.23.1",
     "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react-swc": "^3.11.0",
@@ -88,6 +92,7 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^15.15.0",
     "jsdom": "^20.0.3",
+    "pg": "^8.23.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3",

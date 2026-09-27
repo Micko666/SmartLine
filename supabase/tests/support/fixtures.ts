@@ -25,7 +25,7 @@ export const BURGER_MODIFIERS = [
 ];
 
 /** Creates an owner (auth user + settings row) with a small menu and one table. */
-export async function createTenant(db: TestDb, name: string, overrides: Record<string, unknown> = {}): Promise<Tenant> {
+export async function createTenant(db: Pick<TestDb, 'sql'>, name: string, overrides: Record<string, unknown> = {}): Promise<Tenant> {
   const userId = randomUUID();
   const token = `tok-${name}-${randomUUID()}`;
   await db.sql(`INSERT INTO auth.users(id, email) VALUES ($1, $2)`, [userId, `${name}@example.test`]);
@@ -61,7 +61,7 @@ export function checkoutArgs(t: Tenant, cart: unknown[], extra: Record<string, u
   };
 }
 
-export async function stockOf(db: TestDb, itemId: string): Promise<number | null> {
+export async function stockOf(db: Pick<TestDb, 'sql'>, itemId: string): Promise<number | null> {
   const [row] = await db.sql<{ stock: number | null }>(`SELECT stock FROM menu_items WHERE id=$1`, [itemId]);
   return row.stock;
 }
