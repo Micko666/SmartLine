@@ -52,6 +52,11 @@ describe('checkout creates a placed, unpaid order', () => {
     expect(receipt.payment_status).toBe('unpaid');
   });
 
+  it('orders.paid_at has no default (a row inserted without it is not "paid")', async () => {
+    const [c] = await db.sql<{ d: string | null }>(`SELECT column_default d FROM information_schema.columns WHERE table_name='orders' AND column_name='paid_at'`);
+    expect(c.d).toBeNull();
+  });
+
   it("the legacy fulfillment value 'paid' is rejected by the CHECK constraint", async () => {
     const id = await placeOrder();
     await expect(db.sql(`UPDATE orders SET status='paid' WHERE id=$1`, [id])).rejects.toThrow();

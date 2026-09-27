@@ -17,6 +17,10 @@
 -- collects in-person payments); legacy 'paid' in visibleStatuses -> 'placed'.
 -- ============================================================
 
+-- paid_at means "payment recorded"; a default of now() would mark any row
+-- inserted without it as paid at creation. Existing values are kept.
+ALTER TABLE orders ALTER COLUMN paid_at DROP DEFAULT;
+
 UPDATE stations
    SET permissions = permissions || jsonb_build_object('canRecordPayments', true)
  WHERE role = 'service' AND NOT (permissions ? 'canRecordPayments');

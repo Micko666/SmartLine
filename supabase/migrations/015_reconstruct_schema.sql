@@ -37,6 +37,14 @@ DO $$ DECLARE t text; BEGIN
    EXECUTE format('CREATE POLICY %I ON public.%I TO authenticated USING(auth.uid()=user_id) WITH CHECK(auth.uid()=user_id)',t||'_owner',t);
   END IF;
  END LOOP;
+ -- Production drift: a duplicate owner policy on map_decorations (same rule,
+ -- granted TO public). map_decorations_owner above covers it exactly.
+ DROP POLICY IF EXISTS "Users manage own decorations" ON public.map_decorations;
+ -- One id default everywhere: gen_random_uuid() (pg_catalog), independent of
+ -- where uuid-ossp is installed. Existing ids are not touched.
+ FOREACH t IN ARRAY ARRAY['business_settings','calendar_events','employees','event_packages','ingredients','kitchen_events','map_decorations','menu_items','orders','receipts','shifts','stock_reservations','tables'] LOOP
+  EXECUTE format('ALTER TABLE public.%I ALTER COLUMN id SET DEFAULT gen_random_uuid()', t);
+ END LOOP;
  FOREACH t IN ARRAY ARRAY['orders','menu_items','tables','calendar_events','kitchen_events'] LOOP
   IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND tablename=t) THEN
    EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', t);
@@ -60,6 +68,8 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_name text NOT NULL DEFAULT 
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_phone text NOT NULL DEFAULT '';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_address text NOT NULL DEFAULT '';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_channel text NOT NULL DEFAULT 'dine-in';
+-- Legacy takeaway/delivery orders encoded the channel only in table_id.
+UPDATE orders SET order_channel = table_id WHERE table_id IN ('takeaway','delivery') AND order_channel = 'dine-in';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status text NOT NULL DEFAULT 'legacy_unverified';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_restored_at timestamptz;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS last_actor text;

@@ -54,7 +54,12 @@ async function asRole(client: pg.PoolClient, role: Role, uid: string | null) {
   await client.query(`SELECT set_config('request.jwt.claim.sub', $1, true), set_config('request.jwt.claim.role', $2, true)`, [uid ?? '', role]);
 }
 
-export async function createRealDb(): Promise<RealDb> {
+export interface RealDbOptions {
+  /** SQL files applied after the shim instead of the repository migrations (e.g. a production pre-state). */
+  baseFiles?: string[];
+}
+
+export async function createRealDb(options: RealDbOptions = {}): Promise<RealDb> {
   if (!REAL_PG_URL) throw new Error('SMARTLINE_PG_URL not set');
   if (/supabase\.(co|com)/.test(REAL_PG_URL)) throw new Error('Refusing to run the real-PG harness against a Supabase host');
   const name = `smartline_it_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
@@ -69,9 +74,10 @@ export async function createRealDb(): Promise<RealDb> {
   const setup = await pool.connect();
   try {
     await setup.query(readFileSync(join(__dirname, 'supabase-shim.sql'), 'utf8'));
-    for (const file of migrationFiles()) {
+    const files = options.baseFiles ?? migrationFiles().map(f => join(MIGRATIONS, f));
+    for (const file of files) {
       try {
-        await setup.query(readFileSync(join(MIGRATIONS, file), 'utf8'));
+        await setup.query(readFileSync(file, 'utf8'));
       } catch (error) {
         throw new Error(`Migration ${file} failed on real PostgreSQL: ${(error as Error).message}`);
       }

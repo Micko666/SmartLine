@@ -18,7 +18,7 @@
     "test:watch": "vitest",
     "test:db": "vitest run -c vitest.db.config.ts",
     "test:e2e": "playwright test",
-    "test:pg": "vitest run -c vitest.db.config.ts supabase/tests/concurrency.pg.test.ts"
+    "test:pg": "vitest run -c vitest.db.config.ts pg.test"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
