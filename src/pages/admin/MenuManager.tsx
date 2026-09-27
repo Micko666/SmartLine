@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import {
   Plus, Edit2, Archive, Eye, EyeOff, Search, RotateCcw,
   X, Copy, ChevronDown, ChevronUp, Flame, Leaf, Trash2,
-  FlaskConical, ImagePlus,
+  ImagePlus,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '@/components/layout/DashboardLayout';

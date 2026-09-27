@@ -70,7 +70,6 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       mounted = false;
       cleanup.then(fn => fn?.());
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return <>{children}</>;

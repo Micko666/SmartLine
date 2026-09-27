@@ -33,7 +33,7 @@ export default function Inventory() {
     })
     .filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
 
-  const handleAdjust = (id: string, name: string, delta: number) => {
+  const handleAdjust = (id: string, _name: string, delta: number) => {
     adjustStock(id, delta);
   };
 

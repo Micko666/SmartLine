@@ -24,7 +24,7 @@ import { insertEventPackage, updateEventPackageRow, deleteEventPackageRow } from
 import { insertEmployee, updateEmployeeRow, deleteEmployeeRow } from '@/lib/supabase/queries/employees';
 import { insertShift, updateShiftRow, deleteShiftRow } from '@/lib/supabase/queries/shifts';
 import type {
-  MenuItem, Table, Order, BusinessSettings, StockReservation, Ingredient, KitchenEvent, MapDecoration,
+  MenuItem, Table, Order, StockReservation, Ingredient, KitchenEvent, MapDecoration,
   CalendarEvent, EventPackage, Employee, Shift, CalendarSettings,
 } from '@/domain/types';
 

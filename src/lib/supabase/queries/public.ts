@@ -3,7 +3,7 @@
  */
 
 import { supabase } from '../client';
-import { mapMenuItemRow, mapSettingsRow, mapTableRow, mapCalendarEventRow, mapEventPackageRow, mapEmployeeRow, mapShiftRow } from '../mappers';
+import { mapMenuItemRow, mapSettingsRow, mapTableRow, mapEventPackageRow, mapEmployeeRow, mapShiftRow } from '../mappers';
 import type { MenuItem, BusinessSettings, Table, CalendarSettings, EventPackage, CalendarEvent, Employee, Shift } from '@/domain/types';
 
 export interface PublicRestaurantData {

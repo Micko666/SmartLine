@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { CheckCircle2, Clock, ChefHat, CreditCard, ArrowRight, X, RotateCcw, AlertTriangle, Table2, Flame, ChevronDown, ChevronUp, History, CalendarClock } from 'lucide-react';
+import { CheckCircle2, Clock, ArrowRight, X, AlertTriangle, Table2, Flame, ChevronDown, ChevronUp, History, CalendarClock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
@@ -10,15 +10,6 @@ import { minutesSince } from '@/lib/time';
 import type { OrderStatus, Order, KitchenEventType, Table, TableStatus } from '@/domain/types';
 import { TABLE_STATUS_COLOR, TABLE_STATUS_LABEL } from '@/domain/tables';
 import { toast } from 'sonner';
-
-const STATUS_ICONS: Record<OrderStatus, React.ElementType> = {
-  paid: CreditCard,
-  preparing: ChefHat,
-  ready: Clock,
-  completed: CheckCircle2,
-  cancelled: X,
-  refunded: RotateCcw,
-};
 
 const TABS: { label: string; value: OrderStatus | 'all' | 'tables' }[] = [
   { label: 'All', value: 'all' },
@@ -345,7 +336,6 @@ export default function Orders() {
                 <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
                   <AnimatePresence mode="popLayout">
                     {todayOrders.map(order => {
-                const StatusIcon = STATUS_ICONS[order.status];
                 const nextStatus = advance(order.status);
                 const canCancel = canTransition(order.status, 'cancelled');
                 const finalPrepTime = order.estimatedPrepTime + order.prepTimeAdjustment;

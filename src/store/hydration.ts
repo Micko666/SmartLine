@@ -4,27 +4,21 @@
  * Falls back to defaultWorkspace() if any query fails.
  */
 
-import { fetchMenuItems, insertMenuItem } from '@/lib/supabase/queries/menu';
-import { fetchTables, insertTable } from '@/lib/supabase/queries/tables';
+import { fetchMenuItems } from '@/lib/supabase/queries/menu';
+import { fetchTables } from '@/lib/supabase/queries/tables';
 import { fetchOrders } from '@/lib/supabase/queries/orders';
 import { listStations } from '@/services/workspaceService';
-import { fetchSettings, fetchNextOrderNumber, upsertSettings, upsertCalendarSettings, fetchCalendarSettings, fetchCategories } from '@/lib/supabase/queries/settings';
+import { fetchSettings, fetchNextOrderNumber, upsertSettings, fetchCalendarSettings, fetchCategories } from '@/lib/supabase/queries/settings';
 import { fetchReservations } from '@/lib/supabase/queries/reservations';
 import { fetchIngredients } from '@/lib/supabase/queries/ingredients';
 import { fetchKitchenEvents } from '@/lib/supabase/queries/kitchenEvents';
 import { fetchDecorations } from '@/lib/supabase/queries/decorations';
 import { fetchCalendarEvents } from '@/lib/supabase/queries/calendarEvents';
 import { fetchEventPackages } from '@/lib/supabase/queries/eventPackages';
-import { fetchEmployees, insertEmployee } from '@/lib/supabase/queries/employees';
-import { fetchShifts, insertShift } from '@/lib/supabase/queries/shifts';
-import type {
-  Station,
-  User, MenuItem, Table, Order, Receipt, BusinessSettings, StockReservation,
-  Ingredient, KitchenEvent, MapDecoration, CalendarEvent, EventPackage, CalendarSettings,
-  Employee, Shift,
-} from '@/domain/types';
+import { fetchEmployees } from '@/lib/supabase/queries/employees';
+import { fetchShifts } from '@/lib/supabase/queries/shifts';
+import type { Station, User, CalendarSettings } from '@/domain/types';
 import { SEED_CATEGORIES, DEFAULT_SETTINGS } from '@/domain/initialData';
-
 import { DEFAULT_CALENDAR_SETTINGS, normalizeWorkspace, type WorkspaceSnapshot } from './workspace';
 export type { WorkspaceSnapshot } from './workspace';
 

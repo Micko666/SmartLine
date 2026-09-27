@@ -1,10 +1,9 @@
-import { useState } from 'react';
-import { Clock, Zap, Plus, Minus, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Clock, Zap, CheckCircle2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
-import { isActiveOrder, ORDER_STATUS_CSS, ORDER_STATUS_LABELS } from '@/domain/orderMachine';
+import { ORDER_STATUS_CSS, ORDER_STATUS_LABELS } from '@/domain/orderMachine';
 import { toast } from 'sonner';
 
 export default function PrepTimes() {

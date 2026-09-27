@@ -6,7 +6,7 @@
  * variant="sheet"  → mobile bottom sheet (overlays current view)
  */
 
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { CheckCircle2, X, ArrowRight } from 'lucide-react';
 import { advance, ORDER_STATUS_LABELS, ORDER_STATUS_COLORS } from '@/domain/orderMachine';
 import { applyStationFilter } from '@/lib/station/filterOrdersByCategory';

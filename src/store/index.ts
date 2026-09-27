@@ -2,12 +2,10 @@ import { create } from 'zustand';
 import { toast } from 'sonner';
 import type {
   User, MenuItem, MenuItemStatus, Table, TableStatus,
-  Order, OrderStatus, OrderItem, OrderItemModifier,
-  Receipt, CartItem, StockReservation, BusinessSettings,
+  Order, OrderStatus, OrderItem, Receipt, CartItem, StockReservation, BusinessSettings,
   CheckoutPayload, CheckoutResult, CartValidationResult, CartValidationIssue,
-  PaymentMethod, Ingredient, KitchenEvent, Station, MapDecoration, DecorationType,
-  CalendarEvent, CalendarEventStatus, EventPackage, CalendarSettings, WorkingDay, WorkingException,
-  Employee, Shift, WeeklyDayTemplate,
+  Ingredient, KitchenEvent, Station, MapDecoration, DecorationType,
+  CalendarEvent, CalendarEventStatus, EventPackage, CalendarSettings, Employee, Shift, WeeklyDayTemplate,
 } from '../domain/types';
 import { DEFAULT_SETTINGS, DEMO_USER } from '../domain/initialData';
 import { AUTH_KEY, WORKSPACE_KEY, defaultWorkspace, emptyWorkspace, normalizeWorkspace, loadWorkspaceStateLocal, saveWorkspaceStateLocal, type WorkspaceSnapshot } from './workspace';

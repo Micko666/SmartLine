@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   ShoppingBag, Plus, Minus, X, ChefHat, Clock, Search,
-  CreditCard, Smartphone, Banknote, CheckCircle2, AlertTriangle,
+  Banknote, CheckCircle2, AlertTriangle,
   ClipboardList, Package, Bike, User, Phone, MapPin, Calendar, ArrowRight,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -88,7 +88,6 @@ function StockBadge({ stock, threshold }: { stock: number | null; threshold: num
 export default function CustomerMenu() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const location = useLocation();
 
   // URL params — ?t=tableId for dine-in, ?mode=takeaway|delivery for off-premise
   const tableParam      = searchParams.get('t') ?? '';
@@ -110,7 +109,7 @@ export default function CustomerMenu() {
     : MODE_META[orderMode].tableId;
 
   const {
-    menuItems, categories, tables, settings, orders,
+    menuItems, tables, settings, orders,
     validateCart, createReservation, releaseReservation, checkout, getAvailableStock,
   } = useStore(useShallow(s => ({
     menuItems:          s.menuItems,
@@ -174,8 +173,6 @@ export default function CustomerMenu() {
   const [showPayment,       setShowPayment]        = useState(false);
   const [showSessionOrders, setShowSessionOrders]  = useState(false);
   const [selectedItem,      setSelectedItem]       = useState<MenuItem | null>(null);
-  const [selectedModifiers, setSelectedModifiers]  = useState<CartItemModifier[]>([]);
-  const [paymentMethod,     setPaymentMethod]      = useState<PaymentMethod>('cash');
   const [notes,             setNotes]              = useState('');
   const [checkoutLoading,   setCheckoutLoading]    = useState(false);
   const [cartIssues,        setCartIssues]         = useState<string[]>([]);
@@ -333,7 +330,6 @@ export default function CustomerMenu() {
       const next = new URLSearchParams(searchParams); next.delete('time'); setSearchParams(next); return;
     }
     submitting.current = true;
-    setPaymentMethod(method);
     setCheckoutLoading(true);
 
     const result = await checkout({

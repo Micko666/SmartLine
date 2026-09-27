@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, Flame, CheckCircle2, ArrowRight, Map as MapIcon, List, ChevronRight, Table2 } from 'lucide-react';
+import { Clock, Flame, CheckCircle2, Map as MapIcon, List, ChevronRight, Table2 } from 'lucide-react';
 import { toast } from 'sonner';
 import StationLayout from '@/components/station/StationLayout';
 import FloorMapCanvas from '@/components/floor/FloorMapCanvas';

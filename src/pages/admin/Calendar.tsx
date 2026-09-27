@@ -1020,7 +1020,7 @@ export default function CalendarPage() {
     approveCalendarEvent, rejectCalendarEvent,
     addEventPackage, updateEventPackage, deleteEventPackage,
     updateCalendarSettings,
-    addEmployee, updateEmployee, deleteEmployee,
+    addEmployee, updateEmployee,
     addShift, updateShift, deleteShift,
     applyWeekTemplate, updateWeekTemplate,
   } = useStore(useShallow(s => ({

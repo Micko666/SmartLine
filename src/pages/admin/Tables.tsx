@@ -12,7 +12,7 @@ import FloorMapCanvas from '@/components/floor/FloorMapCanvas';
 import TablePanel from '@/components/station/TablePanel';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
-import type { Table, TableShape, TableStatus, MapDecoration, DecorationType, Order, MenuItem, CategoryMode } from '@/domain/types';
+import type { Table, TableShape, TableStatus, MapDecoration, DecorationType, Order, CategoryMode } from '@/domain/types';
 import { getTableSize, ZONE_PALETTE, TABLE_STATUS_COLOR, TABLE_STATUS_LABEL, TABLE_STATUS_CYCLE } from '@/domain/tables';
 import { toast } from 'sonner';
 import {
@@ -1194,7 +1194,7 @@ export default function Tables() {
     setDragState({ id: table.id, x: nx, y: ny });
   }
 
-  function handlePointerUp(e: React.PointerEvent, table: Table) {
+  function handlePointerUp(_e: React.PointerEvent, table: Table) {
     if (!dragRef.current || dragRef.current.id !== table.id) return;
     const wasDrag = dragRef.current.moved;
     if (wasDrag && dragState) {
@@ -1267,7 +1267,7 @@ export default function Tables() {
     setDragDecState({ id: dec.id, x: nx, y: ny });
   }
 
-  function handleDecPointerUp(e: React.PointerEvent, dec: MapDecoration) {
+  function handleDecPointerUp(_e: React.PointerEvent, dec: MapDecoration) {
     if (!dragDecRef.current || dragDecRef.current.id !== dec.id) return;
     const wasDrag = dragDecRef.current.moved;
     if (wasDrag && dragDecState) {

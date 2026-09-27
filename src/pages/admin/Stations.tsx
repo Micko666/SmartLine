@@ -159,13 +159,8 @@ function StationForm({
     setCatInput('');
   }
 
-  function removeCategory(cat: string) {
-    onChange({ ...form, filterCategories: form.filterCategories.filter(c => c !== cat) });
-  }
-
   // Determine which sections to show based on role
   const isKitchen = form.role === 'kitchen';
-  const isBar     = form.role === 'bar';
   const isCustom  = form.role === 'custom';
   // service + custom: show all capabilities
   const showAllCaps = form.role === 'service' || isCustom;
