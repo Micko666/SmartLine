@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, Layers, Users } from 'lucide-react';
-import type { Table, MapDecoration, Order, DecorationType } from '@/domain/types';
+import type { Table, TableShape, TableStatus, MapDecoration, Order, DecorationType } from '@/domain/types';
 import { getTableSize, ZONE_PALETTE, TABLE_STATUS_COLOR, CANVAS_W, CANVAS_H } from '@/domain/tables';
 
 // ─── Constants ────────────────────────────────────────────────────────────────

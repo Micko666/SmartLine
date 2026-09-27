@@ -555,7 +555,7 @@ function TableOrderGroup({
                 {TABLE_STATUS_LABEL[table.status as TableStatus]}
               </span>
             )}
-            {hasLate && <Flame className="w-3.5 h-3.5 text-destructive shrink-0" title="Late order" />}
+            {hasLate && <span title="Late order"><Flame className="w-3.5 h-3.5 text-destructive shrink-0" aria-label="Late order" /></span>}
           </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">

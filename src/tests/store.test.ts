@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useStore, _resetStoreForTesting } from '../store';
-import { SEED_MENU_ITEMS, SEED_TABLES } from '../domain/initialData';
+import { DEFAULT_SETTINGS, SEED_MENU_ITEMS, SEED_TABLES } from '../domain/initialData';
 import type { CartItem } from '../domain/types';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -49,11 +49,13 @@ function freshStore() {
     ],
     categories: ['Food', 'Drinks', 'Desserts', 'Specials'],
     tables: [
-      { id: 'tbl-1', number: 1, name: 'Table 1', capacity: 4, status: 'available', createdAt: '2024-01-01T00:00:00.000Z' },
+      { id: 'tbl-1', number: 1, name: 'Table 1', capacity: 4, status: 'available', shape: 'square', createdAt: '2024-01-01T00:00:00.000Z' },
     ],
     orders: [],
     receipts: [],
     settings: {
+      ...DEFAULT_SETTINGS,
+      businessHours: ([0, 1, 2, 3, 4, 5, 6] as const).map(dayOfWeek => ({ dayOfWeek, isOpen: true, openTime: '00:00', closeTime: '00:00' })),
       businessName: 'Test Restaurant', businessType: 'Restaurant',
       currency: 'EUR', currencySymbol: '€',
       taxRate: 10, taxDisplay: 'inclusive',
