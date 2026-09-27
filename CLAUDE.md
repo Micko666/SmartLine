@@ -6,102 +6,73 @@ Guidance for Claude Code sessions on this repository.
 
 ```bash
 npm run dev          # Dev server at http://localhost:8080
-npm run build        # Production build
+npm run build        # Production build (does NOT type-check)
 npm run lint         # ESLint
-npm run test         # Vitest (once)
-npm run test:watch   # Vitest (watch)
+npm run typecheck    # tsc strict (+ noUnusedLocals/Parameters) — the real type gate
+npm test             # Vitest unit + component (jsdom)
+npm run test:db      # Migrations + RLS/RPC security + parity + client/DB contract (PGlite, no Docker)
+npm run test:e2e     # Playwright smoke (PW_CHANNEL=chrome to reuse installed Chrome)
 ```
 
-Demo login: `demo@smartline.io` / `demo1234`
+Demo login: `demo@smartline.io` / `demo1234`. It always uses local mode.
+
+Git: if git reports "dubious ownership" on this folder, use `git -c safe.directory=<repo path> …` per command; don't change global config.
 
 ## Stack
 
-**SmartLine** — restaurant operations platform.
-- React 18 + TypeScript + Vite
-- Zustand (store + localStorage persistence under key `smartline-v1`)
-- Supabase (optional; toggled via `src/store/flags.ts` → `isSupabaseEnabled()`)
-- Tailwind CSS + shadcn/ui, framer-motion, lucide-react
-- Path alias: `@/` → `src/`
+React 18 + TypeScript (strict) + Vite · Zustand · Supabase (optional; `src/store/flags.ts` → `isSupabaseEnabled()`) · Tailwind + shadcn/ui · path alias `@/` → `src/`. npm is the only package manager.
 
-## Key Files
+## Architecture (where things go)
 
-| Path | Purpose |
-|------|---------|
-| `src/domain/types.ts` | All TS interfaces — edit here first when adding fields |
-| `src/domain/initialData.ts` | Default settings + seed data |
-| `src/domain/orderMachine.ts` | Order status state machine |
-| `src/store/index.ts` | Single source of truth; all business actions live here |
-| `src/store/flags.ts` | `isSupabaseEnabled()` feature flag |
-| `src/lib/supabase/mappers.ts` | DB row ↔ domain object mapping (snake_case ↔ camelCase) |
-| `src/lib/supabase/queries/public.ts` | `fetchRestaurantByToken`, `submitBookingToSupabase` |
-| `supabase/migrations/` | Sequential SQL migrations (apply via Supabase MCP) |
-| `src/App.tsx` | All routes |
-| `src/pages/customer/OrderPortal.tsx` | Public entry: mode selector → table picker / scheduling |
-| `src/pages/customer/Menu.tsx` | Customer menu, cart, checkout (dine-in + takeaway + delivery) |
-| `src/pages/customer/Receipt.tsx` | Post-order receipt page |
-| `src/pages/admin/Orders.tsx` | Admin order management |
-| `src/pages/admin/Settings.tsx` | Business settings |
-| `src/components/layout/DashboardLayout.tsx` | Admin shell + notification badges |
+| Layer | Path | Rule |
+|---|---|---|
+| Domain | `src/domain/**` | Pure business rules, no React/IO. Unit-tested. |
+| Services | `src/services/*` | Supabase RPC calls / IO (`workspaceService`, `stationService`, `bookingService`). |
+| Store | `src/store/` | `types.ts` (contract), `runtime.ts`, `slices/*` (actions), `workspace.ts` (local serializer), `hydration.ts` (Supabase load), `bridge.ts` (plain CRUD writes). |
+| UI | `src/pages/**`, `src/components/**` | Calls store actions. Never `useStore.setState` outside the store. |
+| DB | `supabase/migrations/*` | Authoritative for money, stock, order status, bookings and station permissions. |
 
-## Routes
+Key domain modules: `ordering/cart.ts` (mirror of `atomic_checkout`), `ordering/orderOperations.ts` (mirror of `transition_order_internal`), `ordering/scheduling.ts`, `booking/policy.ts` (mirror of `submit_booking`), `time/restaurantTime.ts` (restaurant timezone; never use `toISOString().slice(0,10)` for business dates), `orderMachine.ts`, `stations.ts`.
 
-| Route | Surface | Auth |
-|-------|---------|------|
-| `/` | Login | Public |
-| `/signup` | Signup | Public |
-| `/order/:token` | OrderPortal (mode select → table/schedule) | Public |
-| `/menu?t={id}&r={token}` | Dine-in customer menu | Public |
-| `/menu?mode=takeaway&r={token}&date=…&time=…` | Takeaway menu | Public |
-| `/menu?mode=delivery&r={token}&date=…&time=…&addr=…` | Delivery menu | Public |
-| `/receipt/:id?r=…&mode=…&date=…&time=…` | Receipt | Public |
-| `/book/:token` | Reservation booking | Public |
-| `/dashboard` … `/settings` | Admin panel | AdminGuard |
+## Local vs Supabase
 
-## Customer Ordering Flows
+- Local/demo: data in `localStorage` under `smartline-auth` and `smartline-workspace-{userId}`. It is read and written only through `store/workspace.ts`, and hydration happens in one place (`hydrateWorkspace`). Public pages work only in the owner's browser.
+- Supabase: RLS on every table. Public pages use SECURITY DEFINER RPCs scoped by `restaurant_token`, a receipt id or a station session.
+- Same rules in both modes: when changing a rule, change the domain function **and** the SQL, and extend `supabase/tests/parity.test.ts`.
 
-**Dine-in**: `/order/:token` → pick table → `/menu?t={id}&r={token}` → cart → pay → receipt  
-**Takeaway**: `/order/:token` → Takeaway → schedule (date + 15-min slot, min 30 min from now) → `/menu?mode=takeaway&date&time&r` → cart → pay → receipt  
-**Delivery**: same as takeaway + mandatory address input → `/menu?mode=delivery&date&time&addr&r`
+## Customer ordering flows
 
-Receipt "Order More" reconstructs the full URL with all scheduling params — do not simplify it.
+- **Dine-in**: table QR `/menu?t={tableId}&r={token}` → cart → place order → receipt. There is no generic dine-in picker (product decision pending).
+- **Takeaway**: `/order/{token}` → Takeaway → date + 15-min slot (restaurant timezone, ≥ 30 min ahead, within business hours) → `/menu?mode=takeaway&date&time&r` → name + phone → receipt.
+- **Delivery**: same plus the address. The address lives in `sessionStorage` (`lib/orderContext.ts`), **never in the URL**.
+- Checkout sends only ids, quantities and modifier ids plus an idempotency key (`clientOrderId`). The server prices everything. New orders are `status='paid'` (kitchen workflow start) with `paymentStatus='unpaid'`; there is no payment provider.
 
-## Supabase RPCs
+## Supabase RPCs (current)
 
-- `get_customer_menu(token)` — returns settings + menu items + tables in one call
-- `atomic_checkout(...)` — serialised checkout; handles stock, reservations, order creation
-- `submit_booking(...)` — creates `calendar_events` row
-- All RPCs use `SECURITY DEFINER` + `SET search_path = public`
-- Use `gen_random_uuid()` (pg_catalog), never `uuid_generate_v4()` (extensions schema — not on path)
-- Non-UUID `table_id` strings (`takeaway`, `delivery`, `walk-in`) pass through a UUID regex guard
+Public (anon): `atomic_checkout`, `get_customer_menu`, `get_booking_data`, `submit_booking`, `lookup_booking_status`, `get_roster_data`, `get_order_status`, `get_receipt_by_id`, `station_public_config`, `station_login`, `station_logout`, `station_get_context`, `station_get_orders`, `station_advance_order`, `station_adjust_prep_time`, `station_log_kitchen_event`, `station_set_table_status`.
+Owner (authenticated): `advance_order`, `cancel_order`, `adjust_stock`, `patch_settings`, `list_stations`, `upsert_station`, `delete_station`.
+The allow-list is enforced by migration 021 and by tests. A new RPC must be granted explicitly.
 
-## Store Conventions
+## Migrations
 
-- No local state for business data — everything in `useStore`
-- `useShallow` for all multi-key selectors
-- `checkout()` is atomic — validates stock + reservations, deducts, creates Order + Receipt
-- Table status only updated when `tableId` matches UUID regex (`/^[0-9a-f]{8}-…$/i`)
-- `takeawayEnabled` / `deliveryEnabled` in `BusinessSettings` toggle channels
+- Numbered files `NNN_name.sql`. Never edit an applied migration; add a new one.
+- Each file must replay from zero in `npm run test:db` and keep `supabase/tests/migrations.test.ts` (production parity) green.
+- Every SECURITY DEFINER function needs `SET search_path`, validation of all inputs, and an explicit `GRANT EXECUTE`.
+- Use `gen_random_uuid()`; `crypt()`/`digest()` come from pgcrypto in the `extensions` schema.
+- Production: **no `supabase db push`** (history ids differ). Follow the runbook in `docs/stabilization-execution.md`. Production is read-only for sessions unless the owner explicitly approves an apply.
 
-## Coding Conventions
+## Conventions
 
-- Keep explanations short unless teaching is requested
-- Prefer targeted `Read` + `Edit` over full-file rewrites
-- Run targeted tests before full suite: `npm test -- src/tests/store.test.ts`
-- Migrations are numbered sequentially (`013_…`); apply via Supabase MCP `apply_migration`
-- Domain types first → store actions → UI; never bypass the store from UI components
-- shadcn/ui components in `src/components/ui/` — extend by composition, don't edit directly
+- Keep explanations short unless teaching is requested.
+- Prefer targeted edits over full-file rewrites.
+- Domain first → service/SQL → store action → UI.
+- Security checks belong in SQL; the browser mirrors them for UX only.
+- shadcn/ui components in `src/components/ui/`: extend by composition, don't edit.
+- No `any` or `@ts-ignore` to satisfy the type gate.
 
-## Current State (as of Apr 2026)
+## Current state (Sep 2026)
 
-- Supabase backend live; local demo mode also works
-- All three ordering channels functional end-to-end (dine-in, takeaway, delivery)
-- Real-time sync via `useRealtimeCoordinator` in admin layout
-- Calendar, Analytics, Stations, Ingredients, PrepTimes pages complete
-- Orders page: today grid + carryover-active section (previous-day unfinished orders pinned at top) + historical accordion
-
-## Remaining TODOs
-
-1. ~~**Structured opening hours**~~ — ✅ Done. `businessHours: WorkingDay[]` in `BusinessSettings`; OrderPortal gates on `checkOpenStatus()`, slot picker filters to open windows. Settings page has full per-day editor.
-2. **Delivery address map** — currently a plain text input; map integration planned.
-3. ~~**Scheduled order visibility in admin**~~ — ✅ Done. `scheduledFor?: string` ("YYYY-MM-DD HH:MM") is a first-class field on `Order`; Menu.tsx sets it at checkout; Orders page shows a `CalendarClock` badge on takeaway/delivery cards.
-4. **Auth hardening** — credentials stored in `smartline-accounts` localStorage array; ready to swap for real API calls in `login`/`signup` store actions.
+- Stabilization done on branch `stabilization/astra`; see `docs/stabilization-execution.md`.
+- Migrations 015–023 are **not applied to production** yet. They must be deployed together with this frontend.
+- Open product decisions: generic dine-in picker, future of local/demo mode, payment provider, public roster.
+- TODO: delivery address map; payment provider / "mark as paid".

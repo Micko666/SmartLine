@@ -1,5 +1,7 @@
 # 00 — Executive summary: SmartLine stabilization audit
 
+> **Historical snapshot (2026-09-27, before remediation).** Most findings below were fixed on branch `stabilization/astra`; current status, remaining blockers and the deployment runbook are in [`docs/stabilization-execution.md`](../stabilization-execution.md).
+
 **Datum:** 2026-09-27 · **Obim:** cijeli repo + read-only pregled povezanog Supabase projekta `SmartLine` (`bcwlizkhceidumyaygda`) · **Izmjene koda:** nijedne (dodat je samo `docs/stabilization-audit/`; `npm install` je kreirao `node_modules`).
 
 ## Stanje u jednoj rečenici
