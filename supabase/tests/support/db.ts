@@ -31,12 +31,13 @@ export interface TestDb {
   close(): Promise<void>;
 }
 
-export async function createTestDb(): Promise<TestDb> {
+/** @param baseFiles SQL files applied after the shim instead of the repository migrations. */
+export async function createTestDb(baseFiles?: string[]): Promise<TestDb> {
   const pg = new PGlite({ extensions: { pgcrypto, uuid_ossp } });
   await pg.exec(readFileSync(join(__dirname, 'supabase-shim.sql'), 'utf8'));
-  for (const file of migrationFiles()) {
+  for (const file of baseFiles ?? migrationFiles().map(f => join(MIGRATIONS, f))) {
     try {
-      await pg.exec(readFileSync(join(MIGRATIONS, file), 'utf8'));
+      await pg.exec(readFileSync(file, 'utf8'));
     } catch (error) {
       throw new Error(`Migration ${file} failed: ${(error as Error).message}`);
     }

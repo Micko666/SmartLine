@@ -73,13 +73,16 @@ describe('contract checker fails on broken calls (negative fixtures)', () => {
     expect(violations.join('\n')).toMatch(expected);
   });
 
-  it('an overloaded function is reported as ambiguous', async () => {
+  it('overloads resolve by argument names like PostgREST; two fitting overloads are ambiguous', async () => {
+    const call = { file: 'pages/customer/OrderTracker.tsx', fn: 'get_order_status', args: ['p_restaurant_token', 'p_order_number'] };
     await db.sql(`CREATE FUNCTION public.get_order_status(p_restaurant_token text) RETURNS jsonb LANGUAGE sql AS $$ SELECT '{}'::jsonb $$`);
     try {
-      const v = await contractViolations(db, { file: 'pages/customer/OrderTracker.tsx', fn: 'get_order_status', args: ['p_restaurant_token', 'p_order_number'] });
-      expect(v.join('\n')).toMatch(/overloaded/);
+      expect(await contractViolations(db, call, 'authenticated')).toEqual([]); // only the 2-arg overload fits
+      await db.sql(`CREATE FUNCTION public.get_order_status(p_restaurant_token text, p_order_number integer, p_extra text DEFAULT '') RETURNS jsonb LANGUAGE sql AS $$ SELECT '{}'::jsonb $$`);
+      expect((await contractViolations(db, call, 'authenticated')).join('\n')).toMatch(/ambiguous/);
     } finally {
-      await db.sql(`DROP FUNCTION public.get_order_status(text)`);
+      await db.sql(`DROP FUNCTION IF EXISTS public.get_order_status(text)`);
+      await db.sql(`DROP FUNCTION IF EXISTS public.get_order_status(text, integer, text)`);
     }
   });
 });
