@@ -31,3 +31,21 @@ describe('production parity (read-only snapshot of prod catalog, 2026-09-27)', (
     expect(pub).toEqual(expect.arrayContaining(prod.publication));
   });
 });
+
+describe('data constraints', () => {
+  it('every CHECK/UNIQUE added by the stabilization is validated', async () => {
+    const rows = await db.sql<{ conname: string; convalidated: boolean }>(`SELECT conname, convalidated FROM pg_constraint
+      WHERE conname IN ('menu_nonnegative','booking_positive_guests','package_guest_range','orders_payment_method','orders_payment_state','orders_channel','orders_status_check')`);
+    expect(rows).toHaveLength(7);
+    expect(rows.filter(r => !r.convalidated)).toEqual([]);
+    const [idx] = await db.sql<{ n: number }>(`SELECT count(*)::int n FROM pg_indexes WHERE indexname='orders_user_number'`);
+    expect(idx.n).toBe(1);
+  });
+
+  it('rejects negative stock and duplicate order numbers at the database level', async () => {
+    const [{ id: user }] = await db.sql<{ id: string }>(`INSERT INTO auth.users(id) VALUES (gen_random_uuid()) RETURNING id`);
+    await expect(db.sql(`INSERT INTO menu_items(user_id, name, price, stock) VALUES ($1,'x',1,-1)`, [user])).rejects.toThrow();
+    await db.sql(`INSERT INTO orders(user_id, order_number, items) VALUES ($1, 5, '[]')`, [user]);
+    await expect(db.sql(`INSERT INTO orders(user_id, order_number, items) VALUES ($1, 5, '[]')`, [user])).rejects.toThrow();
+  });
+});
