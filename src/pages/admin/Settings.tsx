@@ -234,7 +234,7 @@ export default function Settings() {
                 Closes dine-in table selection, takeaway, and delivery on the public portal. Useful for private events, fully-booked days, or off days.
               </p>
             </div>
-            <button
+            <button role="switch" aria-label="Pause all online ordering" aria-checked={form.orderingPaused}
               type="button"
               onClick={() => { const next = !form.orderingPaused; up('orderingPaused', next); updateSettings({ orderingPaused: next }); }}
               className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${form.orderingPaused ? 'bg-destructive' : 'bg-muted-foreground/30'}`}
@@ -271,7 +271,7 @@ export default function Settings() {
                   <p className="text-xs text-muted-foreground">Customers order ahead and collect in person</p>
                 </div>
               </div>
-              <button
+              <button role="switch" aria-label="Takeaway" aria-checked={(form.takeawayEnabled ?? true)}
                 type="button"
                 onClick={() => { const next = !(form.takeawayEnabled ?? true); up('takeawayEnabled', next); updateSettings({ takeawayEnabled: next }); }}
                 className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${(form.takeawayEnabled ?? true) ? 'bg-primary' : 'bg-muted-foreground/30'}`}
@@ -289,7 +289,7 @@ export default function Settings() {
                   <p className="text-xs text-muted-foreground">Customers provide an address at checkout</p>
                 </div>
               </div>
-              <button
+              <button role="switch" aria-label="Delivery" aria-checked={(form.deliveryEnabled ?? false)}
                 type="button"
                 onClick={() => { const next = !(form.deliveryEnabled ?? false); up('deliveryEnabled', next); updateSettings({ deliveryEnabled: next }); }}
                 className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${(form.deliveryEnabled ?? false) ? 'bg-primary' : 'bg-muted-foreground/30'}`}

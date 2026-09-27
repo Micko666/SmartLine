@@ -3,6 +3,8 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "packageManager": "npm@10.9.3",
+  "engines": { "node": ">=20" },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -12,7 +14,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:db": "vitest run -c vitest.db.config.ts"
+    "test:db": "vitest run -c vitest.db.config.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

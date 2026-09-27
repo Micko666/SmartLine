@@ -156,13 +156,12 @@ export default function Orders() {
   const handleAdvance = (orderId: string, orderNumber: number, currentStatus: OrderStatus) => {
     const next = advance(currentStatus);
     if (!next) return;
-    advanceOrderStatus(orderId);
-    toast.success(`#${orderNumber} → ${ORDER_STATUS_LABELS[next]}`);
+    // Toast only after the server (or local rules) accepted the transition.
+    void advanceOrderStatus(orderId).then(ok => { if (ok) toast.success(`#${orderNumber} → ${ORDER_STATUS_LABELS[next]}`); });
   };
 
   const handleCancel = (orderId: string, orderNumber: number) => {
-    cancelOrder(orderId);
-    toast.success(`#${orderNumber} cancelled — stock restored`);
+    void cancelOrder(orderId).then(ok => { if (ok) toast.success(`#${orderNumber} cancelled — stock restored`); });
   };
 
   return (
