@@ -7,7 +7,7 @@ import { getTableSize, ZONE_PALETTE, TABLE_STATUS_COLOR, CANVAS_W, CANVAS_H } fr
 
 const STATUS_COLOR = TABLE_STATUS_COLOR;
 
-const ACTIVE_STATUSES = ['paid', 'preparing', 'ready'];
+const ACTIVE_STATUSES = ['placed', 'preparing', 'ready'];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

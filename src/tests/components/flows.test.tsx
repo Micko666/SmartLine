@@ -52,7 +52,7 @@ describe('dine-in QR happy path (local mode)', () => {
 
     await screen.findByText(/order more/i);
     const order = useStore.getState().orders[0];
-    expect(order).toMatchObject({ tableId: table.id, orderChannel: 'dine-in', paymentStatus: 'unpaid', status: 'paid', total: 6 });
+    expect(order).toMatchObject({ tableId: table.id, orderChannel: 'dine-in', paymentStatus: 'unpaid', status: 'placed', total: 6 });
     expect(useStore.getState().menuItems[0].stock).toBe(2);
     expect(useStore.getState().tables.find(t => t.id === table.id)?.status).toBe('occupied');
     expect(screen.getByRole('link', { name: /order more/i }).getAttribute('href')).toBe(`/menu?t=${encodeURIComponent(table.id)}&r=test`);
@@ -62,7 +62,7 @@ describe('dine-in QR happy path (local mode)', () => {
 describe('Receipt', () => {
   it('Order More for takeaway keeps mode/date/time and never puts the address in the URL', () => {
     const createdAt = new Date().toISOString();
-    const order = { id: 'o1', orderNumber: 1001, tableId: 'delivery', tableName: 'Delivery', items: [], status: 'paid', subtotal: 6, taxRate: 10, taxAmount: 0, total: 6, paymentMethod: 'cash', paymentStatus: 'unpaid', notes: '', estimatedPrepTime: 10, prepTimeAdjustment: 0, createdAt, paidAt: createdAt, updatedAt: createdAt } as Order;
+    const order = { id: 'o1', orderNumber: 1001, tableId: 'delivery', tableName: 'Delivery', items: [], status: 'placed', subtotal: 6, taxRate: 10, taxAmount: 0, total: 6, paymentMethod: 'cash', paymentStatus: 'unpaid', notes: '', estimatedPrepTime: 10, prepTimeAdjustment: 0, createdAt, paidAt: createdAt, updatedAt: createdAt } as Order;
     useStore.setState({
       orders: [order],
       receipts: [{ id: 'r1', orderId: 'o1', orderNumber: 1001, tableId: 'delivery', tableName: 'Delivery', restaurantName: 'Test', items: [], subtotal: 6, taxRate: 10, taxAmount: 0, total: 6, paymentMethod: 'cash', paymentStatus: 'unpaid', createdAt }],
@@ -113,7 +113,7 @@ describe('station actions (local mode) match server semantics', () => {
     const station = buildStation({ name: 'Kitchen', role: 'kitchen' });
     const createdAt = new Date().toISOString();
     const base = { orderNumber: 1, tableId: SEED_TABLES[0].id, tableName: 'Table 1', items: [{ menuItemId: 'soup', menuItemName: 'Tomato Soup', menuItemIcon: '', quantity: 2, unitPrice: 6, modifiers: [], lineTotal: 12 }], subtotal: 12, taxRate: 0, taxAmount: 0, total: 12, paymentMethod: 'cash' as const, notes: '', estimatedPrepTime: 10, prepTimeAdjustment: 0, createdAt, paidAt: createdAt, updatedAt: createdAt };
-    useStore.setState({ orders: [{ ...base, id: 'ready1', status: 'ready' }, { ...base, id: 'paid1', status: 'paid' }], menuItems: [{ ...soup, stock: 1 }] });
+    useStore.setState({ orders: [{ ...base, id: 'ready1', status: 'ready' }, { ...base, id: 'paid1', status: 'placed' }], menuItems: [{ ...soup, stock: 1 }] });
     const { result } = renderHook(() => useStationOrders(station));
 
     await act(async () => { expect(await result.current.remakeOrder('ready1', 'Cold')).toBe(true); });
@@ -122,7 +122,7 @@ describe('station actions (local mode) match server semantics', () => {
 
     // Kitchen preset has no canCancelOrders: rejected locally exactly like the server.
     await act(async () => { expect(await result.current.advanceOrder('paid1', 'cancelled')).toBe(false); });
-    expect(useStore.getState().orders.find(o => o.id === 'paid1')?.status).toBe('paid');
+    expect(useStore.getState().orders.find(o => o.id === 'paid1')?.status).toBe('placed');
     await act(async () => { await useStore.getState().cancelOrder('paid1'); });
     await act(async () => { await useStore.getState().cancelOrder('paid1'); });
     await waitFor(() => expect(useStore.getState().menuItems[0].stock).toBe(3));

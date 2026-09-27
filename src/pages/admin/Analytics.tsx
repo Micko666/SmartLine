@@ -11,7 +11,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
 import { addDays, restaurantDate, restaurantDayKey, restaurantHour } from '@/domain/time/restaurantTime';
 import { useShallow } from 'zustand/react/shallow';
-import { isRevenueOrder } from '@/domain/orderMachine';
+import { isLiveOrder, isRevenueOrder } from '@/domain/orderMachine';
 
 // ─── Date range helpers ───────────────────────────────────────────────────────
 
@@ -52,10 +52,13 @@ export default function Analytics() {
 
   // ── Filtered slices ────────────────────────────────────────────────────────
 
+  // Volume (orders, items, ingredients) counts every live order; money counts
+  // only orders whose payment was recorded (isRevenueOrder).
   const filteredOrders = useMemo(
-    () => orders.filter(o => isRevenueOrder(o.status) && inRange(o.createdAt, cutoff)),
+    () => orders.filter(o => isLiveOrder(o.status) && inRange(o.createdAt, cutoff)),
     [orders, cutoff],
   );
+  const revenueOrders = useMemo(() => filteredOrders.filter(isRevenueOrder), [filteredOrders]);
 
   const filteredEvents = useMemo(
     () => kitchenEvents.filter(e => inRange(e.createdAt, cutoff)),
@@ -64,9 +67,9 @@ export default function Analytics() {
 
   // ── Summary KPIs ───────────────────────────────────────────────────────────
 
-  const totalRevenue = useMemo(() => filteredOrders.reduce((s, o) => s + o.total, 0), [filteredOrders]);
+  const totalRevenue = useMemo(() => revenueOrders.reduce((s, o) => s + o.total, 0), [revenueOrders]);
   const totalOrders  = filteredOrders.length;
-  const avgOrder     = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+  const avgOrder     = revenueOrders.length > 0 ? totalRevenue / revenueOrders.length : 0;
 
   const estimatedCOGS = useMemo(() =>
     menuItems.reduce((t, i) => i.costPerServing != null && i.salesCount > 0 ? t + i.costPerServing * i.salesCount : t, 0),
@@ -93,7 +96,7 @@ export default function Analytics() {
     }
     filteredOrders.forEach(o => {
       const key = restaurantDayKey(o.createdAt, settings.timezone);
-      if (buckets[key]) { buckets[key].revenue += o.total; buckets[key].orders += 1; }
+      if (buckets[key]) { buckets[key].orders += 1; if (isRevenueOrder(o)) buckets[key].revenue += o.total; }
     });
     return Object.values(buckets);
   }, [filteredOrders, range, settings.timezone]);
@@ -105,7 +108,7 @@ export default function Analytics() {
     for (let h = 7; h <= 22; h++) buckets[h] = { hour: `${String(h).padStart(2, '0')}:00`, revenue: 0, orders: 0 };
     filteredOrders.forEach(o => {
       const h = restaurantHour(o.createdAt, settings.timezone);
-      if (buckets[h]) { buckets[h].revenue += o.total; buckets[h].orders += 1; }
+      if (buckets[h]) { buckets[h].orders += 1; if (isRevenueOrder(o)) buckets[h].revenue += o.total; }
     });
     return Object.values(buckets);
   }, [filteredOrders, settings.timezone]);

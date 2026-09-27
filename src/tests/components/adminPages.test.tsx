@@ -36,3 +36,29 @@ describe('admin pages render (demo workspace)', { timeout: 30_000 }, () => {
     expect(await screen.findAllByRole('link', { name: /settings/i })).not.toHaveLength(0);
   });
 });
+
+describe('revenue consumers use payment state, not kitchen state', { timeout: 30_000 }, () => {
+  it('Dashboard: unpaid orders count as volume and outstanding, never as revenue; Orders: Mark paid records payment', async () => {
+    const createdAt = new Date().toISOString();
+    const base = { tableId: 'takeaway', tableName: 'Takeaway', items: [], subtotal: 0, taxRate: 0, taxAmount: 0, paymentMethod: 'cash' as const, notes: '', estimatedPrepTime: 10, prepTimeAdjustment: 0, createdAt, updatedAt: createdAt };
+    useStore.setState({ orders: [
+      { ...base, id: 'o-paid', orderNumber: 901, status: 'completed', total: 40, paymentStatus: 'paid', paidAt: createdAt },
+      { ...base, id: 'o-unpaid', orderNumber: 902, status: 'ready', total: 25, paymentStatus: 'unpaid' },
+      { ...base, id: 'o-cancel', orderNumber: 903, status: 'cancelled', total: 99, paymentStatus: 'paid', paidAt: createdAt },
+    ] });
+    const { default: Dashboard } = await import('@/pages/admin/Dashboard');
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    const sym = useStore.getState().settings.currencySymbol;
+    expect(await screen.findByText(`${sym}40`)).toBeTruthy();
+    expect(screen.getByText(`${sym}25 unpaid`)).toBeTruthy();
+    cleanup();
+
+    const { default: Orders } = await import('@/pages/admin/Orders');
+    render(<MemoryRouter><Orders /></MemoryRouter>);
+    const buttons = await screen.findAllByRole('button', { name: 'Mark paid' });
+    expect(buttons).toHaveLength(1);
+    buttons[0].click();
+    await vi.waitFor(() => expect(useStore.getState().orders.find(o => o.id === 'o-unpaid')?.paymentStatus).toBe('paid'));
+    expect(useStore.getState().orders.find(o => o.id === 'o-unpaid')?.status).toBe('ready');
+  });
+});

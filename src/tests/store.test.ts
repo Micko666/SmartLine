@@ -167,7 +167,7 @@ describe('checkout', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
 
-    expect(result.order.status).toBe('paid');
+    expect(result.order.status).toBe('placed');
     expect(result.order.tableId).toBe('tbl-1');
     expect(result.order.tableName).toBe('Table 1');
     expect(result.order.items).toHaveLength(2);
@@ -194,7 +194,7 @@ describe('checkout', () => {
     const cart: CartItem[] = [{ menuItemId: 'item-b', quantity: 1, selectedModifiers: [] }];
     await useStore.getState().checkout({ sessionId: 'sess-1', tableId: 'tbl-1', paymentMethod: 'card', cart });
     expect(useStore.getState().orders).toHaveLength(1);
-    expect(useStore.getState().orders[0].status).toBe('paid');
+    expect(useStore.getState().orders[0].status).toBe('placed');
   });
 
   it('increments orderNumber for each order', async () => {
@@ -581,5 +581,61 @@ describe('workspace isolation', () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/already exists/i);
+  });
+});
+
+// ── payment state (separate from fulfillment) ─────────────────────────────────
+
+describe('payment recording (local mode mirrors record_payment_internal)', () => {
+  beforeEach(() => { freshStore(); });
+
+  async function placeOrder() {
+    const result = await useStore.getState().checkout({
+      sessionId: 'sess-pay', tableId: 'tbl-1', paymentMethod: 'cash',
+      cart: [{ menuItemId: 'item-a', quantity: 1, selectedModifiers: [] }],
+    });
+    if (!result.success) throw new Error('checkout failed');
+    return result.order;
+  }
+
+  it('a new order is placed and unpaid, with no payment time', async () => {
+    const order = await placeOrder();
+    expect(order.status).toBe('placed');
+    expect(order.paymentStatus).toBe('unpaid');
+    expect(order.paidAt).toBeUndefined();
+  });
+
+  it('recordPayment marks paid (order + receipt) without touching kitchen status; idempotent', async () => {
+    const order = await placeOrder();
+    await useStore.getState().advanceOrderStatus(order.id);
+    expect(await useStore.getState().recordPayment(order.id)).toBe(true);
+    const paid = useStore.getState().orders.find(o => o.id === order.id)!;
+    expect(paid.paymentStatus).toBe('paid');
+    expect(paid.status).toBe('preparing');
+    expect(paid.paidAt).toBeTruthy();
+    expect(useStore.getState().receipts.find(r => r.orderId === order.id)?.paymentStatus).toBe('paid');
+    const paidAt = paid.paidAt;
+    expect(await useStore.getState().recordPayment(order.id)).toBe(true);
+    expect(useStore.getState().orders.find(o => o.id === order.id)?.paidAt).toBe(paidAt);
+  });
+
+  it('cannot record payment on a cancelled order', async () => {
+    const order = await placeOrder();
+    await useStore.getState().cancelOrder(order.id);
+    expect(await useStore.getState().recordPayment(order.id)).toBe(false);
+    expect(useStore.getState().orders.find(o => o.id === order.id)?.paymentStatus).toBe('unpaid');
+  });
+
+  it('refund reverses a recorded payment; an unpaid refund stays unpaid', async () => {
+    const paidOrder = await placeOrder();
+    await useStore.getState().recordPayment(paidOrder.id);
+    await useStore.getState().cancelOrder(paidOrder.id);
+    await useStore.getState().refundOrder(paidOrder.id);
+    expect(useStore.getState().orders.find(o => o.id === paidOrder.id)).toMatchObject({ status: 'refunded', paymentStatus: 'refunded' });
+
+    const unpaidOrder = await placeOrder();
+    await useStore.getState().cancelOrder(unpaidOrder.id);
+    await useStore.getState().refundOrder(unpaidOrder.id);
+    expect(useStore.getState().orders.find(o => o.id === unpaidOrder.id)).toMatchObject({ status: 'refunded', paymentStatus: 'unpaid' });
   });
 });

@@ -14,7 +14,7 @@ export default function PrepTimes() {
     advanceOrderStatus: s.advanceOrderStatus,
   })));
 
-  const activeOrders = orders.filter(o => o.status === 'paid' || o.status === 'preparing');
+  const activeOrders = orders.filter(o => o.status === 'placed' || o.status === 'preparing');
 
   const kitchenLoad = activeOrders.length > 4 ? 'high' : activeOrders.length > 2 ? 'medium' : 'low';
   const loadMultiplier = kitchenLoad === 'high' ? 1.4 : kitchenLoad === 'medium' ? 1.15 : 1;

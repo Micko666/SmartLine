@@ -7,7 +7,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
 import { restaurantDate, restaurantDayKey, restaurantHour } from '@/domain/time/restaurantTime';
 import { useShallow } from 'zustand/react/shallow';
-import { isActiveOrder, isRevenueOrder, ORDER_STATUS_CSS, ORDER_STATUS_LABELS } from '@/domain/orderMachine';
+import { isActiveOrder, isLiveOrder, isOutstandingPayment, isRevenueOrder, ORDER_STATUS_CSS, ORDER_STATUS_LABELS } from '@/domain/orderMachine';
 import type { Order } from '@/domain/types';
 
 // ── Getting Started card ──────────────────────────────────────────────────────
@@ -101,13 +101,15 @@ export default function Dashboard() {
   // ── Derived stats from real orders ──
   const stats = useMemo(() => {
     const today = restaurantDate(settings.timezone);
+    // Volume counts every live order; revenue only recorded payments.
     const todayOrders = orders.filter(
-      o => restaurantDayKey(o.createdAt, settings.timezone) === today && isRevenueOrder(o.status),
+      o => restaurantDayKey(o.createdAt, settings.timezone) === today && isLiveOrder(o.status),
     );
 
     const activeOrders = orders.filter(o => isActiveOrder(o.status));
 
-    const todayRevenue = todayOrders.reduce((sum, o) => sum + o.total, 0);
+    const todayRevenue = todayOrders.filter(isRevenueOrder).reduce((sum, o) => sum + o.total, 0);
+    const todayOutstanding = todayOrders.filter(isOutstandingPayment).reduce((sum, o) => sum + o.total, 0);
 
     const completedToday = todayOrders.filter(o => o.status === 'completed');
     const totalToday = todayOrders.length;
@@ -122,7 +124,7 @@ export default function Dashboard() {
       i => i.stock !== null && i.stock > 0 && i.stock <= settings.lowStockThreshold,
     ).length;
 
-    return { todayRevenue, todayOrderCount: todayOrders.length, activeOrders, completionRate, avgPrepTime, lowStockCount };
+    return { todayRevenue, todayOutstanding, todayOrderCount: todayOrders.length, activeOrders, completionRate, avgPrepTime, lowStockCount };
   }, [orders, menuItems, settings]);
 
   // ── Hourly chart: bucket today's orders ──
@@ -132,10 +134,10 @@ export default function Dashboard() {
     for (let h = 7; h <= 22; h++) buckets[h] = { orders: 0, revenue: 0 };
 
     orders
-      .filter(o => restaurantDayKey(o.createdAt, settings.timezone) === today && isRevenueOrder(o.status))
+      .filter(o => restaurantDayKey(o.createdAt, settings.timezone) === today && isLiveOrder(o.status))
       .forEach(o => {
         const h = restaurantHour(o.createdAt, settings.timezone);
-        if (buckets[h]) { buckets[h].orders += 1; buckets[h].revenue += o.total; }
+        if (buckets[h]) { buckets[h].orders += 1; if (isRevenueOrder(o)) buckets[h].revenue += o.total; }
       });
 
     return Object.entries(buckets).map(([h, v]) => ({
@@ -171,7 +173,7 @@ export default function Dashboard() {
   const liveOrders = stats.activeOrders.slice(0, 6);
 
   const kpis = [
-    { label: "Today's Revenue", value: `${sym}${stats.todayRevenue.toFixed(0)}`, change: `${stats.todayOrderCount} orders`, up: true, icon: TrendingUp, color: 'text-success' },
+    { label: "Today's Revenue", value: `${sym}${stats.todayRevenue.toFixed(0)}`, change: stats.todayOutstanding > 0 ? `${sym}${stats.todayOutstanding.toFixed(0)} unpaid` : `${stats.todayOrderCount} orders`, up: true, icon: TrendingUp, color: 'text-success' },
     { label: "Today's Orders",  value: String(stats.todayOrderCount), change: `${stats.activeOrders.length} active`, up: true, icon: ShoppingBag, color: 'text-info' },
     { label: 'Avg Prep Time',   value: `${stats.avgPrepTime.toFixed(1)} min`, change: 'from completed', up: true, icon: Clock, color: 'text-warning' },
     { label: 'Active Orders',   value: String(stats.activeOrders.length), change: `${stats.activeOrders.filter(o => o.status === 'preparing').length} preparing`, up: false, icon: Flame, color: 'text-destructive' },

@@ -1,4 +1,4 @@
-import type { OrderStatus } from './types';
+import type { Order, OrderStatus } from './types';
 
 /**
  * Valid transitions for the order state machine.
@@ -8,7 +8,7 @@ import type { OrderStatus } from './types';
  * paid | preparing | ready → cancelled → refunded
  */
 const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  paid:      ['preparing', 'cancelled'],
+  placed:      ['preparing', 'cancelled'],
   preparing: ['ready',    'cancelled'],
   ready:     ['completed', 'cancelled'],
   completed: [],
@@ -55,7 +55,7 @@ export function advance(current: OrderStatus): OrderStatus | null {
 }
 
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
-  paid:      'Paid',
+  placed:    'New',
   preparing: 'Preparing',
   ready:     'Ready',
   completed: 'Completed',
@@ -68,7 +68,7 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
  * Used across kitchen, bar, and service station screens.
  */
 export const ORDER_STATUS_COLORS: Record<OrderStatus, string> = {
-  paid:      '#eab308',
+  placed:      '#eab308',
   preparing: '#f97316',
   ready:     '#22c55e',
   completed: '#64748b',
@@ -77,7 +77,7 @@ export const ORDER_STATUS_COLORS: Record<OrderStatus, string> = {
 };
 
 export const ORDER_STATUS_CSS: Record<OrderStatus, string> = {
-  paid:      'status-paid',
+  placed:      'status-paid',
   preparing: 'status-preparing',
   ready:     'status-ready',
   completed: 'status-completed',
@@ -87,10 +87,25 @@ export const ORDER_STATUS_CSS: Record<OrderStatus, string> = {
 
 /** Returns true if the order is in an "active" kitchen state. */
 export function isActiveOrder(status: OrderStatus): boolean {
-  return status === 'paid' || status === 'preparing' || status === 'ready';
+  return status === 'placed' || status === 'preparing' || status === 'ready';
 }
 
-/** Returns true if the order counts toward today's revenue. */
-export function isRevenueOrder(status: OrderStatus): boolean {
+/** Not cancelled or refunded: counts toward order volume. */
+export function isLiveOrder(status: OrderStatus): boolean {
   return status !== 'cancelled' && status !== 'refunded';
+}
+
+/**
+ * Realized revenue: a live order whose payment was recorded. Orders created
+ * before payment tracking (paymentStatus legacy_unverified / absent) keep being
+ * counted as the old system did. Unpaid orders are never revenue.
+ */
+export function isRevenueOrder(order: Pick<Order, 'status' | 'paymentStatus'>): boolean {
+  if (order.status === 'cancelled' || order.status === 'refunded') return false;
+  return order.paymentStatus === 'paid' || order.paymentStatus === 'legacy_unverified' || order.paymentStatus === undefined;
+}
+
+/** Placed but not yet paid (and not cancelled): money still to collect. */
+export function isOutstandingPayment(order: Pick<Order, 'status' | 'paymentStatus'>): boolean {
+  return order.paymentStatus === 'unpaid' && order.status !== 'cancelled' && order.status !== 'refunded';
 }

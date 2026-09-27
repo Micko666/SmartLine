@@ -80,7 +80,7 @@ export default function KitchenOrderCard({
             className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl font-semibold text-xs transition-all active:scale-95 hover:opacity-90 text-white shrink-0"
             style={{ backgroundColor: accent }}
           >
-            {order.status === 'paid'
+            {order.status === 'placed'
               ? <><Play className="w-3 h-3" /> Start</>
               : <><CheckCircle2 className="w-3 h-3" /> Ready</>
             }
@@ -205,7 +205,7 @@ export default function KitchenOrderCard({
                       className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 hover:opacity-90 text-white"
                       style={{ backgroundColor: accent }}
                     >
-                      {order.status === 'paid'
+                      {order.status === 'placed'
                         ? <><Play className="w-4 h-4" /> Start Cooking</>
                         : <><CheckCircle2 className="w-4 h-4" /> {ORDER_STATUS_LABELS[nextStatus]}</>
                       }

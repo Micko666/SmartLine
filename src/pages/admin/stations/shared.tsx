@@ -18,7 +18,7 @@ export const ROLE_DESCRIPTIONS: Record<StationRole, string> = {
   custom:  'Custom permissions — configure exactly what this station can do',
 };
 
-export const ALL_STATUSES: OrderStatus[] = ['paid', 'preparing', 'ready', 'completed', 'cancelled'];
+export const ALL_STATUSES: OrderStatus[] = ['placed', 'preparing', 'ready', 'completed', 'cancelled'];
 
 // ─── Station Form ─────────────────────────────────────────────────────────────
 
@@ -40,6 +40,7 @@ export interface FormState {
   showProductionSummary: boolean;
   mapAccess: boolean;
   canUpdateTableStatus: boolean;
+  canRecordPayments: boolean;
   canEditTableLayout: boolean;
   categoryMode: 'all' | 'focus' | 'exclusive';
   filterCategories: string[];
@@ -63,6 +64,7 @@ export function defaultForm(role: StationRole = 'kitchen'): FormState {
     showProductionSummary: preset.permissions.showProductionSummary,
     mapAccess: preset.permissions.mapAccess,
     canUpdateTableStatus: preset.permissions.canUpdateTableStatus,
+    canRecordPayments: preset.permissions.canRecordPayments,
     canEditTableLayout: preset.permissions.canEditTableLayout,
     categoryMode: preset.permissions.categoryMode,
     filterCategories: [...preset.permissions.filterCategories],
@@ -87,6 +89,7 @@ export function stationToForm(s: Station): FormState {
     showProductionSummary: p.showProductionSummary,
     mapAccess:             p.mapAccess ?? false,
     canUpdateTableStatus:  p.canUpdateTableStatus ?? false,
+    canRecordPayments:     p.canRecordPayments ?? false,
     canEditTableLayout:    p.canEditTableLayout ?? false,
     categoryMode:          p.categoryMode ?? 'all',
     filterCategories:      [...p.filterCategories],

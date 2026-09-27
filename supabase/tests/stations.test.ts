@@ -5,8 +5,8 @@ import { burger, checkoutArgs, createTenant, stockOf, type Tenant } from './supp
 
 type Res = { ok: boolean; error?: string; sessionToken?: string; orders?: Array<Record<string, unknown>>; station?: Record<string, unknown> };
 
-const KITCHEN = { canAdvanceOrders: true, canCancelOrders: false, canLogKitchenEvents: true, canAdjustPrepTime: true, canReworkOrders: true, canUpdateTableStatus: false, visibleStatuses: ['paid', 'preparing', 'ready'] };
-const SERVICE = { canAdvanceOrders: true, canCancelOrders: true, canLogKitchenEvents: false, canAdjustPrepTime: false, canReworkOrders: false, canUpdateTableStatus: true, visibleStatuses: ['paid', 'preparing', 'ready'] };
+const KITCHEN = { canAdvanceOrders: true, canCancelOrders: false, canLogKitchenEvents: true, canAdjustPrepTime: true, canReworkOrders: true, canUpdateTableStatus: false, visibleStatuses: ['paid', 'preparing', 'ready'] }; // legacy 'paid' payload
+const SERVICE = { canAdvanceOrders: true, canCancelOrders: true, canLogKitchenEvents: false, canAdjustPrepTime: false, canReworkOrders: false, canUpdateTableStatus: true, canRecordPayments: true, visibleStatuses: ['placed', 'preparing', 'ready'] };
 
 let db: TestDb;
 let t: Tenant;
@@ -82,7 +82,7 @@ describe('station operations require a session and server-side permissions', () 
     const forged = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
     for (const token of [null, '', forged]) {
       expect((await db.rpc<Res>('anon', 'station_get_orders', { p_session_token: token })).ok).toBe(false);
-      expect((await db.rpc<Res>('anon', 'station_advance_order', { p_session_token: token, p_order_id: id, p_expected_status: 'paid', p_new_status: 'preparing' })).ok).toBe(false);
+      expect((await db.rpc<Res>('anon', 'station_advance_order', { p_session_token: token, p_order_id: id, p_expected_status: 'placed', p_new_status: 'preparing' })).ok).toBe(false);
       expect((await db.rpc<Res>('anon', 'station_adjust_prep_time', { p_session_token: token, p_order_id: id, p_delta_minutes: 5 })).ok).toBe(false);
       expect((await db.rpc<Res>('anon', 'station_log_kitchen_event', { p_session_token: token, p_order_id: id, p_type: 'note', p_notes: 'x' })).ok).toBe(false);
       expect((await db.rpc<Res>('anon', 'station_set_table_status', { p_session_token: token, p_table_id: t.tableId, p_status: 'available' })).ok).toBe(false);
@@ -101,16 +101,16 @@ describe('station operations require a session and server-side permissions', () 
   it('kitchen: may advance, may not cancel or change tables; invalid transitions rejected', async () => {
     const token = (await login(kitchenId, '1234')).sessionToken;
     const id = await order();
-    expect((await db.rpc<Res>('anon', 'station_advance_order', { p_session_token: token, p_order_id: id, p_expected_status: 'paid', p_new_status: 'cancelled' })).ok).toBe(false);
-    expect((await db.rpc<Res>('anon', 'station_advance_order', { p_session_token: token, p_order_id: id, p_expected_status: 'paid', p_new_status: 'ready' })).ok).toBe(false);
-    expect((await db.rpc<Res>('anon', 'station_advance_order', { p_session_token: token, p_order_id: id, p_expected_status: 'paid', p_new_status: 'preparing' })).ok).toBe(true);
+    expect((await db.rpc<Res>('anon', 'station_advance_order', { p_session_token: token, p_order_id: id, p_expected_status: 'placed', p_new_status: 'cancelled' })).ok).toBe(false);
+    expect((await db.rpc<Res>('anon', 'station_advance_order', { p_session_token: token, p_order_id: id, p_expected_status: 'placed', p_new_status: 'ready' })).ok).toBe(false);
+    expect((await db.rpc<Res>('anon', 'station_advance_order', { p_session_token: token, p_order_id: id, p_expected_status: 'placed', p_new_status: 'preparing' })).ok).toBe(true);
     expect((await db.rpc<Res>('anon', 'station_set_table_status', { p_session_token: token, p_table_id: t.tableId, p_status: 'available' })).ok).toBe(false);
   });
 
   it('kitchen rework: ready -> preparing needs canReworkOrders and logs a remake', async () => {
     const token = (await login(kitchenId, '1234')).sessionToken;
     const id = await order();
-    for (const [e, n] of [['paid', 'preparing'], ['preparing', 'ready']]) {
+    for (const [e, n] of [['placed', 'preparing'], ['preparing', 'ready']]) {
       await db.rpc('anon', 'station_advance_order', { p_session_token: token, p_order_id: id, p_expected_status: e, p_new_status: n });
     }
     expect((await db.rpc<Res>('anon', 'station_log_kitchen_event', { p_session_token: token, p_order_id: id, p_type: 'remake', p_notes: 'Burnt' })).ok).toBe(true);
@@ -125,7 +125,7 @@ describe('station operations require a session and server-side permissions', () 
     const before = await stockOf(db, t.burgerId);
     const id = await order(t, 2);
     expect(await stockOf(db, t.burgerId)).toBe((before ?? 0) - 2);
-    const args = { p_session_token: token, p_order_id: id, p_expected_status: 'paid', p_new_status: 'cancelled' };
+    const args = { p_session_token: token, p_order_id: id, p_expected_status: 'placed', p_new_status: 'cancelled' };
     expect((await db.rpc<Res>('anon', 'station_advance_order', args)).ok).toBe(true);
     expect((await db.rpc<Res>('anon', 'station_advance_order', args)).ok).toBe(true);
     expect(await stockOf(db, t.burgerId)).toBe(before);
@@ -134,10 +134,10 @@ describe('station operations require a session and server-side permissions', () 
   it('stations can never refund and cannot touch other tenants', async () => {
     const token = (await login(serviceId, '5678')).sessionToken;
     const id = await order();
-    await db.rpc('anon', 'station_advance_order', { p_session_token: token, p_order_id: id, p_expected_status: 'paid', p_new_status: 'cancelled' });
+    await db.rpc('anon', 'station_advance_order', { p_session_token: token, p_order_id: id, p_expected_status: 'placed', p_new_status: 'cancelled' });
     expect((await db.rpc<Res>('anon', 'station_advance_order', { p_session_token: token, p_order_id: id, p_expected_status: 'cancelled', p_new_status: 'refunded' })).ok).toBe(false);
     const foreign = await order(other);
-    expect((await db.rpc<Res>('anon', 'station_advance_order', { p_session_token: token, p_order_id: foreign, p_expected_status: 'paid', p_new_status: 'preparing' })).ok).toBe(false);
+    expect((await db.rpc<Res>('anon', 'station_advance_order', { p_session_token: token, p_order_id: foreign, p_expected_status: 'placed', p_new_status: 'preparing' })).ok).toBe(false);
   });
 
   it('prep time needs permission and is clamped to [-60, 180]', async () => {
@@ -160,7 +160,7 @@ describe('station operations require a session and server-side permissions', () 
     expect(JSON.stringify(k.orders)).not.toContain('Secret street 9');
     expect(JSON.stringify(k.orders)).not.toContain('+38267111222');
     expect(JSON.stringify(s.orders)).toContain('Secret street 9');
-    expect(k.orders?.every(o => ['paid', 'preparing', 'ready'].includes(String(o.status)))).toBe(true);
+    expect(k.orders?.every(o => ['placed', 'preparing', 'ready'].includes(String(o.status)))).toBe(true);
   });
 
   it('changing the PIN revokes existing sessions', async () => {

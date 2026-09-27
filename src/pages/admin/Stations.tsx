@@ -69,6 +69,7 @@ export default function Stations() {
       showProductionSummary: form.showProductionSummary,
       mapAccess: form.mapAccess,
       canUpdateTableStatus: form.canUpdateTableStatus,
+      canRecordPayments: form.canRecordPayments,
       canEditTableLayout: form.canEditTableLayout,
       categoryMode: form.categoryMode,
       filterCategories: form.filterCategories,

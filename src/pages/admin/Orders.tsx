@@ -5,7 +5,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
 import { restaurantDate, restaurantDayKey } from '@/domain/time/restaurantTime';
 import { useShallow } from 'zustand/react/shallow';
-import { advance, canTransition, ORDER_STATUS_CSS, ORDER_STATUS_LABELS } from '@/domain/orderMachine';
+import { advance, canTransition, isRevenueOrder, ORDER_STATUS_CSS, ORDER_STATUS_LABELS } from '@/domain/orderMachine';
 import { minutesSince } from '@/lib/time';
 import type { OrderStatus, Order } from '@/domain/types';
 import { toast } from 'sonner';
@@ -242,7 +242,7 @@ export default function Orders() {
                                 </p>
                               </div>
                               <div className="flex items-center gap-2">
-                                {(order.status === 'preparing' || order.status === 'paid') && (
+                                {(order.status === 'preparing' || order.status === 'placed') && (
                                   <button
                                     onClick={() => setEventOrder(order)}
                                     className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-warning/40 text-warning text-xs font-medium hover:bg-warning/10 transition-colors"
@@ -342,7 +342,7 @@ export default function Orders() {
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
-                        {(order.status === 'preparing' || order.status === 'paid') && (
+                        {(order.status === 'preparing' || order.status === 'placed') && (
                           <button
                             onClick={() => setEventOrder(order)}
                             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-warning/40 text-warning text-xs font-medium hover:bg-warning/10 transition-colors"
@@ -387,7 +387,7 @@ export default function Orders() {
                 <div className="glass-card overflow-hidden">
                   {olderDayKeys.map(k => {
                     const dayOrders = olderByDay[k];
-                    const dayTotal = dayOrders.reduce((sum, o) => sum + o.total, 0);
+                    const dayTotal = dayOrders.filter(isRevenueOrder).reduce((sum, o) => sum + o.total, 0);
                     const open = openDays[k] ?? false;
                     return (
                       <div key={k} className="border-b border-border last:border-b-0">

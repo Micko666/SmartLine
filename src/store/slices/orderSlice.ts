@@ -3,14 +3,14 @@ import { toast } from 'sonner';
 import type { TableStatus, Order, OrderStatus, OrderItem, Receipt, StockReservation, CheckoutPayload, CheckoutResult, CartValidationIssue } from '../../domain/types';
 import { advance } from '../../domain/orderMachine';
 import { evaluateCheckout, groupModifierSelections } from '../../domain/ordering/cart';
-import { applyTransition } from '../../domain/ordering/orderOperations';
+import { applyRecordPayment, applyTransition } from '../../domain/ordering/orderOperations';
 import * as workspaceService from '../../services/workspaceService';
 import * as bridge from '../bridge';
 import { genId, now, RESERVATION_TTL_MS, usesSupabasePersistence, persistLocal, errorMessage } from '../runtime';
 import type { StoreGet, StoreSet } from '../runtime';
 import type { AppState } from '../types';
 
-export const createOrderSlice = (set: StoreSet, get: StoreGet): Pick<AppState, 'transitionOrder' | 'advanceOrderStatus' | 'cancelOrder' | 'refundOrder' | 'adjustPrepTime' | 'validateCart' | 'createReservation' | 'releaseReservation' | 'checkout' | 'getAvailableStock'> => ({
+export const createOrderSlice = (set: StoreSet, get: StoreGet): Pick<AppState, 'transitionOrder' | 'advanceOrderStatus' | 'cancelOrder' | 'refundOrder' | 'recordPayment' | 'adjustPrepTime' | 'validateCart' | 'createReservation' | 'releaseReservation' | 'checkout' | 'getAvailableStock'> => ({
   // ── Orders ───────────────────────────────────────────────────────────────────
   async transitionOrder(orderId, expected, next, actor = 'owner') {
     if (usesSupabasePersistence() && get().user?.id) {
@@ -51,6 +51,27 @@ export const createOrderSlice = (set: StoreSet, get: StoreGet): Pick<AppState, '
 
   async refundOrder(orderId) {
     return get().transitionOrder(orderId, 'cancelled', 'refunded');
+  },
+
+  async recordPayment(orderId) {
+    if (usesSupabasePersistence() && get().user?.id) {
+      try {
+        get().applyRemoteOrder(await workspaceService.recordPayment(orderId));
+        set(s => ({ receipts: s.receipts.map(r => (r.orderId === orderId ? { ...r, paymentStatus: 'paid' } : r)) }));
+        return true;
+      } catch (err) {
+        toast.error(errorMessage(err, 'Failed to record payment.'));
+        return false;
+      }
+    }
+    const result = applyRecordPayment(get().orders, orderId);
+    if (!result.ok) { toast.error(result.error); return false; }
+    set(s => ({
+      orders: result.orders,
+      receipts: s.receipts.map(r => (r.orderId === orderId ? { ...r, paymentStatus: 'paid' } : r)),
+    }));
+    persistLocal(get);
+    return true;
   },
 
   adjustPrepTime(orderId, deltaMinutes) {
@@ -181,14 +202,14 @@ export const createOrderSlice = (set: StoreSet, get: StoreGet): Pick<AppState, '
       const channel = channelOfTable(tableId);
       const order: Order = {
         id: result.orderId as string, orderNumber: result.orderNumber as number, tableId,
-        tableName: result.tableName as string, items, status: (result.status as OrderStatus) ?? 'paid',
+        tableName: result.tableName as string, items, status: (result.status as OrderStatus) ?? 'placed',
         subtotal: Number(result.subtotal), taxRate: Number(result.taxRate), taxAmount: Number(result.taxAmount), total: Number(result.total),
         paymentMethod, paymentStatus: (result.paymentStatus as Order['paymentStatus']) ?? 'unpaid',
         notes: notes ?? '', scheduledFor: scheduledFor || undefined, orderChannel: channel,
         customerName: payload.customerName || undefined, customerPhone: payload.customerPhone || undefined,
         deliveryAddress: payload.deliveryAddress || undefined, clientOrderId,
         estimatedPrepTime: Number(result.estimatedPrepTime), prepTimeAdjustment: 0,
-        createdAt, paidAt: createdAt, updatedAt: createdAt,
+        createdAt, updatedAt: createdAt,
       };
       const receipt: Receipt = {
         id: result.receiptId as string, orderId: order.id, orderNumber: order.orderNumber, tableId,
@@ -252,14 +273,14 @@ function localCheckout(
   const { items, channel } = evaluation;
   const order: Order = {
     id: genId(), orderNumber: state.nextOrderNumber, tableId: payload.tableId, tableName: evaluation.tableName, items,
-    status: 'paid', subtotal: evaluation.subtotal, taxRate: state.settings.taxRate, taxAmount: evaluation.taxAmount,
+    status: 'placed', subtotal: evaluation.subtotal, taxRate: state.settings.taxRate, taxAmount: evaluation.taxAmount,
     total: evaluation.total, paymentMethod: payload.paymentMethod, paymentStatus: 'unpaid',
     notes: payload.notes ?? '', scheduledFor: payload.scheduledFor || undefined, orderChannel: channel,
     customerName: payload.customerName?.trim() || undefined, customerPhone: payload.customerPhone?.trim() || undefined,
     deliveryAddress: channel === 'delivery' ? payload.deliveryAddress?.trim() : undefined,
     clientOrderId: payload.clientOrderId,
     estimatedPrepTime: evaluation.estimatedPrepTime, prepTimeAdjustment: 0,
-    createdAt, paidAt: createdAt, updatedAt: createdAt,
+    createdAt, updatedAt: createdAt,
   };
   const receipt: Receipt = {
     id: genId(), orderId: order.id, orderNumber: order.orderNumber, tableId: payload.tableId, tableName: order.tableName,

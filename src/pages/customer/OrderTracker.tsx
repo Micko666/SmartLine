@@ -15,7 +15,11 @@ interface OrderStatusData {
   tableName: string;
   estimatedPrepTime: number;
   prepTimeAdjustment: number;
-  paidAt: string;
+  /** Order time (migration 024+). */
+  placedAt?: string;
+  /** Pre-024 servers returned the order time here. */
+  paidAt?: string;
+  paymentStatus?: string;
   restaurantName: string;
 }
 
@@ -29,7 +33,7 @@ const STATUS_CONFIG: Record<string, {
   bg: string;
   done: boolean;
 }> = {
-  paid: {
+  placed: {
     label: 'Order Received',
     description: 'Your order is in the queue and will start preparing shortly.',
     icon: Package,
@@ -71,11 +75,14 @@ const STATUS_CONFIG: Record<string, {
   },
 };
 
-const STATUS_ORDER = ['paid', 'preparing', 'ready'];
+const STATUS_ORDER = ['placed', 'preparing', 'ready'];
 
 function estimatedRemaining(data: OrderStatusData): number | null {
-  if (data.status !== 'paid' && data.status !== 'preparing') return null;
-  const elapsed = minutesSince(data.paidAt);
+  if (data.status !== 'placed' && data.status !== 'preparing') return null;
+  const since = data.placedAt ?? data.paidAt;
+  if (!since) return null;
+  const elapsed = minutesSince(since);
+  if (!Number.isFinite(elapsed)) return null;
   const total = data.estimatedPrepTime + data.prepTimeAdjustment;
   return Math.max(0, total - elapsed);
 }
@@ -163,7 +170,8 @@ export default function OrderTracker() {
       return;
     }
 
-    setData(row);
+    // Pre-024 servers still report the first kitchen state as 'paid'.
+    setData(row.status === 'paid' ? { ...row, status: 'placed' } : row);
     setError(null);
     setLastUpdated(new Date());
     setLoading(false);
@@ -175,7 +183,7 @@ export default function OrderTracker() {
     return () => clearInterval(interval);
   }, [fetchStatus]);
 
-  const cfg = data ? (STATUS_CONFIG[data.status] ?? STATUS_CONFIG['paid']) : null;
+  const cfg = data ? (STATUS_CONFIG[data.status] ?? STATUS_CONFIG['placed']) : null;
   const remaining = data ? estimatedRemaining(data) : null;
 
   return (

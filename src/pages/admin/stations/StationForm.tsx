@@ -37,6 +37,7 @@ export default function StationForm({
       showProductionSummary: preset.permissions.showProductionSummary,
       mapAccess: preset.permissions.mapAccess,
       canUpdateTableStatus: preset.permissions.canUpdateTableStatus,
+      canRecordPayments: preset.permissions.canRecordPayments,
       canEditTableLayout: preset.permissions.canEditTableLayout,
       categoryMode: preset.permissions.categoryMode as 'all' | 'focus' | 'exclusive',
       filterCategories: [...preset.permissions.filterCategories],
@@ -203,6 +204,7 @@ export default function StationForm({
           {[
             { key: 'mapAccess' as const, label: 'Floor map access', desc: 'Show the restaurant floor map on this station' },
             { key: 'canUpdateTableStatus' as const, label: 'Update table status', desc: 'Staff can mark tables as available or occupied' },
+            { key: 'canRecordPayments' as const, label: 'Record payments', desc: 'Staff can mark unpaid orders as paid when the customer pays in person' },
             { key: 'canEditTableLayout' as const, label: 'Edit table layout', desc: 'Reposition, add, or delete tables on the floor map (manager-level)' },
           ].map(({ key, label, desc }) => (
             <div key={key} className="flex items-start justify-between gap-3">

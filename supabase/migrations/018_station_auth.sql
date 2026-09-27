@@ -164,9 +164,10 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE st stations%ROWTYPE; v_statuses text[]; v_contact boolean; v_orders jsonb;
 BEGIN
   st := station_require_session(p_session_token);
-  SELECT COALESCE(array_agg(x) FILTER (WHERE x IN ('paid','preparing','ready')), ARRAY['paid','preparing','ready'])
+  -- Legacy permission payloads may still say 'paid' for the first kitchen state.
+  SELECT COALESCE(array_agg(CASE WHEN x = 'paid' THEN 'placed' ELSE x END) FILTER (WHERE x IN ('paid','placed','preparing','ready')), ARRAY['placed','preparing','ready'])
     INTO v_statuses FROM jsonb_array_elements_text(COALESCE(st.permissions->'visibleStatuses', '[]'::jsonb)) x;
-  IF cardinality(v_statuses) = 0 THEN v_statuses := ARRAY['paid','preparing','ready']; END IF;
+  IF cardinality(v_statuses) = 0 THEN v_statuses := ARRAY['placed','preparing','ready']; END IF;
   -- Contact details are only for stations that hand orders over to customers.
   v_contact := st.role IN ('service','custom');
   SELECT COALESCE(jsonb_agg(jsonb_build_object(
@@ -215,7 +216,7 @@ BEGIN
   IF p_delta_minutes IS NULL OR abs(p_delta_minutes) > 240 THEN RAISE EXCEPTION 'Invalid prep time adjustment'; END IF;
   UPDATE orders SET prep_time_adjustment = greatest(-60, least(180, COALESCE(prep_time_adjustment, 0) + p_delta_minutes)),
                     updated_at = now(), last_actor = 'station:' || st.id
-   WHERE id = p_order_id AND user_id = st.user_id AND status IN ('paid','preparing','ready')
+   WHERE id = p_order_id AND user_id = st.user_id AND status IN ('placed','preparing','ready')
   RETURNING * INTO o;
   IF NOT FOUND THEN RAISE EXCEPTION 'Order not found'; END IF;
   RETURN jsonb_build_object('ok', true, 'order', to_jsonb(o));

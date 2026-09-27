@@ -18,7 +18,7 @@ export default function KitchenStation({ station, restaurantName, onLock }: Prop
   const { orders, online, advanceOrder, adjustPrepTime, logKitchenEvent, remakeOrder } = useStationOrders(station, onLock);
   const menuItems = useStore(s => s.menuItems);
   const [advancing, setAdvancing] = useState<Set<string>>(new Set());
-  const [mobileTab, setMobileTab] = useState<OrderStatus>('paid');
+  const [mobileTab, setMobileTab] = useState<OrderStatus>('placed');
 
   // Station is always normalized by StationGate before reaching here
   const canAdjustPrepTime = station.permissions.canAdjustPrepTime;
@@ -39,12 +39,12 @@ export default function KitchenStation({ station, restaurantName, onLock }: Prop
   );
 
   // ── Expansion state — lifted to component level so cards don't auto-collapse
-  // when an order moves columns (paid → preparing). New 'paid' orders start expanded.
+  // when an order moves columns (paid → preparing). New 'placed' orders start expanded.
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set);
 
   useEffect(() => {
     setExpandedIds(prev => {
-      const newPaid = orders.filter(o => o.status === 'paid' && !prev.has(o.id));
+      const newPaid = orders.filter(o => o.status === 'placed' && !prev.has(o.id));
       if (!newPaid.length) return prev;
       const next = new Set(prev);
       newPaid.forEach(o => next.add(o.id));

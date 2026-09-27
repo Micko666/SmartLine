@@ -15,12 +15,12 @@ describe('mergeOrders (admin visibility refresh)', () => {
   });
 
   it('adds new orders and keeps untouched history, newest first', () => {
-    const merged = mergeOrders([order('b', 'completed', '2026-01-01')], [order('c', 'paid', '2026-01-03')]);
+    const merged = mergeOrders([order('b', 'completed', '2026-01-01')], [order('c', 'placed', '2026-01-03')]);
     expect(merged.map(o => o.id)).toEqual(['c', 'b']);
   });
 
   it('is a no-op for an empty update', () => {
-    const current = [order('a', 'paid', '2026-01-01')];
+    const current = [order('a', 'placed', '2026-01-01')];
     expect(mergeOrders(current, [])).toBe(current);
   });
 });

@@ -124,7 +124,7 @@ export default function BarStation({ station, restaurantName, onLock }: Props) {
   const { filterCategories, categoryMode } = station.permissions;
   const filterActive = filterCategories.length > 0;
 
-  const defaultStatuses: OrderStatus[] = ['paid', 'preparing', 'ready'];
+  const defaultStatuses: OrderStatus[] = ['placed', 'preparing', 'ready'];
   const visibleStatuses = station.permissions.visibleStatuses.length > 0
     ? defaultStatuses.filter(s => station.permissions.visibleStatuses.includes(s))
     : defaultStatuses;
@@ -159,7 +159,7 @@ export default function BarStation({ station, restaurantName, onLock }: Props) {
 
   const readyOrders     = displayOrders.filter(d => d.order.status === 'ready');
   const preparingOrders = displayOrders.filter(d => d.order.status === 'preparing');
-  const paidOrders      = displayOrders.filter(d => d.order.status === 'paid');
+  const paidOrders      = displayOrders.filter(d => d.order.status === 'placed');
 
   function rowProps(d: DisplayOrder) {
     return {

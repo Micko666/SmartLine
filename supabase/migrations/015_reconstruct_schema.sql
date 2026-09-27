@@ -65,10 +65,14 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_restored_at timestamptz;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS last_actor text;
 ALTER TABLE receipts ADD COLUMN IF NOT EXISTS payment_status text NOT NULL DEFAULT 'legacy_unverified';
 CREATE UNIQUE INDEX IF NOT EXISTS orders_client_key ON orders(user_id,client_order_id) WHERE client_order_id IS NOT NULL;
+-- Fulfillment status is separate from payment_status: the first kitchen state
+-- is 'placed' (was 'paid', which wrongly implied money was collected).
 -- Existing served rows retain their operational meaning as completed orders.
 UPDATE orders SET status='completed' WHERE status='served';
 ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_status_check;
-ALTER TABLE orders ADD CONSTRAINT orders_status_check CHECK(status IN ('paid','preparing','ready','completed','cancelled','refunded'));
+UPDATE orders SET status='placed' WHERE status='paid';
+ALTER TABLE orders ALTER COLUMN status SET DEFAULT 'placed';
+ALTER TABLE orders ADD CONSTRAINT orders_status_check CHECK(status IN ('placed','preparing','ready','completed','cancelled','refunded'));
 ALTER TABLE menu_items ADD CONSTRAINT menu_nonnegative CHECK(price>=0 AND (stock IS NULL OR stock>=0) AND (max_stock IS NULL OR max_stock>=0)) NOT VALID;
 ALTER TABLE calendar_events ADD CONSTRAINT booking_positive_guests CHECK(guest_count>0) NOT VALID;
 ALTER TABLE event_packages ADD CONSTRAINT package_guest_range CHECK(min_guests>0 AND max_guests>=min_guests) NOT VALID;

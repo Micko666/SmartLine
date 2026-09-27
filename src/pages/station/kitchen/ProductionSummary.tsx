@@ -3,7 +3,7 @@ import type { Order } from '@/domain/types';
 // ─── ProductionSummary ────────────────────────────────────────────────────────
 
 export default function ProductionSummary({ orders }: { orders: Order[] }) {
-  const incoming = orders.filter(o => o.status === 'paid' || o.status === 'preparing');
+  const incoming = orders.filter(o => o.status === 'placed' || o.status === 'preparing');
   if (incoming.length === 0) return null;
 
   const totals = new Map<string, number>();

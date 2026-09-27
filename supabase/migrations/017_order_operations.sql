@@ -1,7 +1,7 @@
 -- One state machine/cancellation implementation, shared by owner and stations.
 CREATE OR REPLACE FUNCTION order_transition_allowed(p_from text,p_to text)
 RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path=public AS $$
- SELECT (p_from='paid' AND p_to IN ('preparing','cancelled')) OR
+ SELECT (p_from='placed' AND p_to IN ('preparing','cancelled')) OR
  (p_from='preparing' AND p_to IN ('ready','cancelled')) OR
  (p_from='ready' AND p_to IN ('completed','cancelled')) OR
  (p_from='cancelled' AND p_to='refunded');
@@ -38,8 +38,11 @@ DECLARE o orders%ROWTYPE; x jsonb; BEGIN
   END LOOP;
   o.stock_restored_at:=now();
  END IF;
- UPDATE orders SET status=p_new_status,stock_restored_at=o.stock_restored_at,last_actor=p_actor,updated_at=now() WHERE id=o.id RETURNING * INTO o;
- IF p_new_status IN ('cancelled','completed','refunded') AND NOT EXISTS(SELECT 1 FROM orders WHERE user_id=p_user_id AND table_id=o.table_id AND status IN ('paid','preparing','ready')) THEN
+ -- A refund reverses a recorded payment; unpaid/legacy payment states are left as they are.
+ UPDATE orders SET status=p_new_status,stock_restored_at=o.stock_restored_at,last_actor=p_actor,updated_at=now(),
+  payment_status=CASE WHEN p_new_status='refunded' AND payment_status='paid' THEN 'refunded' ELSE payment_status END
+  WHERE id=o.id RETURNING * INTO o;
+ IF p_new_status IN ('cancelled','completed','refunded') AND NOT EXISTS(SELECT 1 FROM orders WHERE user_id=p_user_id AND table_id=o.table_id AND status IN ('placed','preparing','ready')) THEN
   UPDATE tables SET status='available' WHERE user_id=p_user_id AND id::text=o.table_id AND status='occupied';
  END IF;
  RETURN jsonb_build_object('ok',true,'order',to_jsonb(o));

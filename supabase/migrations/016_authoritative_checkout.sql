@@ -109,7 +109,7 @@ BEGIN
   UPDATE menu_items SET stock=CASE WHEN stock IS NULL THEN NULL ELSE stock-(ci->>'quantity')::int END,sales_count=COALESCE(sales_count,0)+(ci->>'quantity')::int,updated_at=now() WHERE id=(ci->>'id')::uuid AND user_id=s.user_id;
  END LOOP;
  INSERT INTO orders(user_id,client_order_id,order_number,table_id,table_name,items,status,subtotal,tax_rate,tax_amount,total,payment_method,notes,scheduled_for,estimated_prep_time,prep_time_adjustment,customer_name,customer_phone,delivery_address,order_channel,payment_status,paid_at,last_actor)
- VALUES(s.user_id,p_client_order_id,s.next_order_number,p_table_id,table_name,items,'paid',subtotal,s.tax_rate,tax,total,p_payment_method,COALESCE(p_notes,''),NULLIF(p_scheduled_for,''),max_prep+greatest(0,jsonb_array_length(items)-1)*2,0,COALESCE(p_customer_name,''),COALESCE(p_customer_phone,''),COALESCE(p_delivery_address,''),channel,'unpaid',NULL,'customer') RETURNING * INTO ord;
+ VALUES(s.user_id,p_client_order_id,s.next_order_number,p_table_id,table_name,items,'placed',subtotal,s.tax_rate,tax,total,p_payment_method,COALESCE(p_notes,''),NULLIF(p_scheduled_for,''),max_prep+greatest(0,jsonb_array_length(items)-1)*2,0,COALESCE(p_customer_name,''),COALESCE(p_customer_phone,''),COALESCE(p_delivery_address,''),channel,'unpaid',NULL,'customer') RETURNING * INTO ord;
  INSERT INTO receipts(id,user_id,order_id,order_number,table_id,table_name,restaurant_name,items,subtotal,tax_rate,tax_amount,total,payment_method,payment_status)
  VALUES(receipt_id,s.user_id,ord.id,ord.order_number,p_table_id,table_name,s.business_name,items,subtotal,s.tax_rate,tax,total,p_payment_method,'unpaid');
  UPDATE business_settings SET next_order_number=next_order_number+1 WHERE user_id=s.user_id;

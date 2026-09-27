@@ -175,7 +175,8 @@ export function mapOrderRow(row: Record<string, unknown>): Order {
     tableId:              (row.table_id as string) ?? '',
     tableName:            (row.table_name as string) ?? '',
     items:                (row.items as Order['items']) ?? [],
-    status:               (row.status as Order['status']) ?? 'paid',
+    // Rows written before migration 015 may still carry the legacy 'paid' status.
+    status:               (row.status === 'paid' ? 'placed' : (row.status as Order['status'])) ?? 'placed',
     subtotal:             Number(row.subtotal ?? 0),
     taxRate:              Number(row.tax_rate ?? 0),
     taxAmount:            Number(row.tax_amount ?? 0),
@@ -193,7 +194,7 @@ export function mapOrderRow(row: Record<string, unknown>): Order {
     stockRestoredAt:      (row.stock_restored_at as string | undefined) || undefined,
     clientOrderId:        (row.client_order_id as string | undefined) || undefined,
     createdAt:            row.created_at as string,
-    paidAt:               (row.paid_at as string) ?? row.created_at as string,
+    paidAt:               (row.paid_at as string | null) ?? undefined,
     updatedAt:            row.updated_at as string,
   };
 }

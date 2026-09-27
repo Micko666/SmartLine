@@ -8,7 +8,7 @@
 
 import { motion } from 'framer-motion';
 import { CheckCircle2, X, ArrowRight } from 'lucide-react';
-import { advance, ORDER_STATUS_LABELS, ORDER_STATUS_COLORS } from '@/domain/orderMachine';
+import { advance, isOutstandingPayment, ORDER_STATUS_LABELS, ORDER_STATUS_COLORS } from '@/domain/orderMachine';
 import { applyStationFilter } from '@/lib/station/filterOrdersByCategory';
 import { minutesSince } from '@/lib/time';
 import type { Table, Order, MenuItem, OrderItem, OrderStatus, CategoryMode } from '@/domain/types';
@@ -24,7 +24,7 @@ function ItemLine({ item, dimmed }: { item: OrderItem; dimmed?: boolean }) {
 }
 
 function OrderRowInPanel({
-  order, primaryItems, contextItems, canAdvance, isAdvancing, onAdvance,
+  order, primaryItems, contextItems, canAdvance, isAdvancing, onAdvance, onRecordPayment,
 }: {
   order: Order;
   primaryItems: OrderItem[];
@@ -32,6 +32,7 @@ function OrderRowInPanel({
   canAdvance: boolean;
   isAdvancing: boolean;
   onAdvance: () => void;
+  onRecordPayment?: () => void;
 }) {
   const isReady = order.status === 'ready';
   const nextStatus = advance(order.status as OrderStatus);
@@ -39,7 +40,7 @@ function OrderRowInPanel({
   const mins = minutesSince(order.createdAt);
 
   const STATUS_LABEL: Record<string, string> = {
-    paid: 'Waiting', preparing: 'Cooking', ready: 'Ready',
+    placed: 'Waiting', preparing: 'Cooking', ready: 'Ready',
   };
 
   return (
@@ -67,6 +68,15 @@ function OrderRowInPanel({
               <p className="text-[10px] text-muted-foreground italic mt-1 border-l-2 border-muted pl-1.5 line-clamp-1">
                 {order.notes}
               </p>
+            )}
+            {onRecordPayment && isOutstandingPayment(order) && (
+              <button
+                type="button"
+                onClick={onRecordPayment}
+                className="mt-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-green-500/10 text-green-700 dark:text-green-400 hover:bg-green-500/20"
+              >
+                Unpaid · Mark paid
+              </button>
             )}
           </div>
           {canAdvance && nextStatus && (
@@ -97,6 +107,8 @@ export interface TablePanelProps {
   canAdvance: boolean;
   canUpdateTableStatus: boolean;
   onAdvance: (order: Order) => void;
+  /** Present only for stations allowed to record payments. */
+  onRecordPayment?: (order: Order) => void;
   onClose: () => void;
   onClearTable: () => void;
   advancing: Set<string>;
@@ -108,7 +120,7 @@ export interface TablePanelProps {
 
 export default function TablePanel({
   table, orders, canAdvance, canUpdateTableStatus,
-  onAdvance, onClose, onClearTable, advancing, variant,
+  onAdvance, onRecordPayment, onClose, onClearTable, advancing, variant,
   filterCategories, categoryMode, menuItems,
 }: TablePanelProps) {
   const hasReady = orders.some(o => o.status === 'ready');
@@ -165,6 +177,7 @@ export default function TablePanel({
               canAdvance={canAdvance && !advancing.has(order.id)}
               isAdvancing={advancing.has(order.id)}
               onAdvance={() => onAdvance(order)}
+              onRecordPayment={onRecordPayment ? () => onRecordPayment(order) : undefined}
             />
           ))}
         </div>

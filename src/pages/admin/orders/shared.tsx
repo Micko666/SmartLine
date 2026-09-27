@@ -5,14 +5,14 @@ import type { OrderStatus, Order, KitchenEventType } from '@/domain/types';
 
 export const TABS: { label: string; value: OrderStatus | 'all' | 'tables' }[] = [
   { label: 'All', value: 'all' },
-  { label: 'Paid', value: 'paid' },
+  { label: 'New', value: 'placed' },
   { label: 'Preparing', value: 'preparing' },
   { label: 'Ready', value: 'ready' },
   { label: 'Completed', value: 'completed' },
   { label: 'Tables', value: 'tables' },
 ];
 
-export const ACTIVE_STATUSES: OrderStatus[] = ['paid', 'preparing', 'ready'];
+export const ACTIVE_STATUSES: OrderStatus[] = ['placed', 'preparing', 'ready'];
 
 export function timeAgo(iso: string) {
   const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);

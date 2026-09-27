@@ -108,7 +108,7 @@ export default function TableOrderGroup({
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span className="text-xs font-bold text-foreground">{sym}{order.total.toFixed(2)}</span>
-                {(order.status === 'preparing' || order.status === 'paid') && (
+                {(order.status === 'preparing' || order.status === 'placed') && (
                   <button
                     onClick={() => onLogEvent(order)}
                     className="w-7 h-7 rounded-lg border border-warning/40 text-warning text-xs flex items-center justify-center hover:bg-warning/10 transition-colors"

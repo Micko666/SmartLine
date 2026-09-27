@@ -88,6 +88,11 @@ export async function stationTransition(token: string, orderId: string, expected
   return mapOrderRow(r.order);
 }
 
+export async function stationRecordPayment(token: string, orderId: string): Promise<Order> {
+  const r = await call<{ order: Record<string, unknown> }>('station_record_payment', { p_session_token: token, p_order_id: orderId });
+  return mapOrderRow(r.order);
+}
+
 export async function stationAdjustPrepTime(token: string, orderId: string, deltaMinutes: number): Promise<Order> {
   const r = await call<{ order: Record<string, unknown> }>('station_adjust_prep_time', { p_session_token: token, p_order_id: orderId, p_delta_minutes: deltaMinutes });
   return mapOrderRow(r.order);

@@ -19,7 +19,7 @@ interface Props {
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  paid:      'Waiting',
+  placed:      'Waiting',
   preparing: 'Cooking',
   ready:     'Ready',
 };
@@ -75,7 +75,7 @@ function OrderListRow({ order, onClick }: { order: Order; onClick: () => void })
 // ─── ServiceStation ───────────────────────────────────────────────────────────
 
 export default function ServiceStation({ station, restaurantName, onLock }: Props) {
-  const { orders, online, advanceOrder, setTableStatus } = useStationOrders(station, onLock);
+  const { orders, online, advanceOrder, recordPayment, setTableStatus } = useStationOrders(station, onLock);
   const { tables, decorations, menuItems } = useStore(useShallow(s => ({
     tables:         s.tables,
     decorations:    s.decorations,
@@ -88,7 +88,7 @@ export default function ServiceStation({ station, restaurantName, onLock }: Prop
   // Map is the default if the station has map access; otherwise fall back to list.
   const [listMode, setListMode] = useState(!station.permissions.mapAccess);
 
-  const defaultStatuses: OrderStatus[] = ['paid', 'preparing', 'ready'];
+  const defaultStatuses: OrderStatus[] = ['placed', 'preparing', 'ready'];
   const visibleStatuses = station.permissions.visibleStatuses.length > 0
     ? defaultStatuses.filter(s => station.permissions.visibleStatuses.includes(s))
     : defaultStatuses;
@@ -161,6 +161,9 @@ export default function ServiceStation({ station, restaurantName, onLock }: Prop
     canAdvance:           station.permissions.canAdvanceOrders,
     canUpdateTableStatus: station.permissions.canUpdateTableStatus,
     onAdvance:            handleAdvance,
+    onRecordPayment:      station.permissions.canRecordPayments
+      ? (order: Order) => { void recordPayment(order.id).then(ok => { if (ok) toast.success(`#${order.orderNumber} marked paid`); }); }
+      : undefined,
     onClose:              () => setSelectedTable(null),
     onClearTable: () => {
       setTableStatus(selectedTable.id, 'available');

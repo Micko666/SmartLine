@@ -85,13 +85,13 @@ describe('checkout parity (TypeScript domain vs SQL atomic_checkout)', () => {
 
 describe('order operation parity (TypeScript applyTransition vs SQL transition_order_internal)', () => {
   const cases: Array<{ path: Array<[OrderStatus, OrderStatus]>; actor?: string }> = [
-    { path: [['paid', 'preparing'], ['preparing', 'ready'], ['ready', 'completed']] },
-    { path: [['paid', 'ready']] },
-    { path: [['paid', 'cancelled'], ['cancelled', 'cancelled'], ['cancelled', 'refunded']] },
-    { path: [['paid', 'preparing'], ['preparing', 'ready'], ['ready', 'preparing']] },
-    { path: [['paid', 'preparing'], ['preparing', 'ready'], ['ready', 'preparing']], actor: 'station:x:rework' },
-    { path: [['paid', 'preparing'], ['paid', 'preparing']] },
-    { path: [['paid', 'preparing'], ['preparing', 'ready'], ['ready', 'completed'], ['completed', 'cancelled']] },
+    { path: [['placed', 'preparing'], ['preparing', 'ready'], ['ready', 'completed']] },
+    { path: [['placed', 'ready']] },
+    { path: [['placed', 'cancelled'], ['cancelled', 'cancelled'], ['cancelled', 'refunded']] },
+    { path: [['placed', 'preparing'], ['preparing', 'ready'], ['ready', 'preparing']] },
+    { path: [['placed', 'preparing'], ['preparing', 'ready'], ['ready', 'preparing']], actor: 'station:x:rework' },
+    { path: [['placed', 'preparing'], ['placed', 'preparing']] },
+    { path: [['placed', 'preparing'], ['preparing', 'ready'], ['ready', 'completed'], ['completed', 'cancelled']] },
   ];
 
   it.each(cases.map((c, i) => [i, c] as const))('case %i: same accept/reject, stock and table outcome', async (_i, c) => {
@@ -99,7 +99,7 @@ describe('order operation parity (TypeScript applyTransition vs SQL transition_o
     const r = await db.rpc<{ success: boolean; orderId: string; items: Order['items'] }>('anon', 'atomic_checkout',
       checkoutArgs(t, [{ menuItemId: t.burgerId, quantity: 2, selectedModifiers: [{ modifierId: 'size', optionIds: ['regular'] }] }]));
     let local = {
-      orders: [{ id: r.orderId, orderNumber: 1, tableId: t.tableId, tableName: 'Table 1', items: r.items, status: 'paid', subtotal: 0, taxRate: 0, taxAmount: 0, total: 0, paymentMethod: 'cash', notes: '', estimatedPrepTime: 0, prepTimeAdjustment: 0, createdAt: '', paidAt: '', updatedAt: '' } as Order],
+      orders: [{ id: r.orderId, orderNumber: 1, tableId: t.tableId, tableName: 'Table 1', items: r.items, status: 'placed', subtotal: 0, taxRate: 0, taxAmount: 0, total: 0, paymentMethod: 'cash', notes: '', estimatedPrepTime: 0, prepTimeAdjustment: 0, createdAt: '', updatedAt: '' } as Order],
       menuItems: menuFor(t).map(m => m.id === t.burgerId ? { ...m, stock: 3 } : m),
       tables: [{ id: t.tableId, number: 1, name: 'Table 1', capacity: 4, status: 'occupied', shape: 'square', createdAt: '' } as Table],
     };

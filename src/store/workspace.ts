@@ -100,7 +100,10 @@ export function loadWorkspaceStateLocal(userId: string, user: User): WorkspaceSn
         restaurantToken: state.settings?.restaurantToken || defaults.settings.restaurantToken,
         stations: state.settings?.stations ?? state.stations ?? [],
       },
-      orders: selected.orders.filter(order => new Date(order.createdAt).getTime() > cutoff),
+      // Local data saved before the placed/paid split used 'paid' as the first kitchen state.
+      orders: selected.orders
+        .filter(order => new Date(order.createdAt).getTime() > cutoff)
+        .map(order => ((order.status as string) === 'paid' ? { ...order, status: 'placed' as const } : order)),
       receipts: selected.receipts.filter(receipt => new Date(receipt.createdAt).getTime() > cutoff),
       kitchenEvents: selected.kitchenEvents.filter(event => new Date(event.createdAt).getTime() > cutoff),
       reservations: selected.reservations.filter(reservation => reservation.expiresAt > timestamp),

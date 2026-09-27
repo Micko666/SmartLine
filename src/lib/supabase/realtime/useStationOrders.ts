@@ -126,6 +126,19 @@ export function useStationOrders(station: Station, onSessionLost?: () => void) {
     return order.status === 'ready' ? transition(orderId, 'preparing', true) : true;
   }, [orders, logKitchenEvent, transition]);
 
+  /** Record an in-person payment (stations with canRecordPayments). */
+  const recordPayment = useCallback(async (orderId: string): Promise<boolean> => {
+    if (!station.permissions.canRecordPayments) { toast.error('Station may not record payments'); return false; }
+    if (!remote) return useStore.getState().recordPayment(orderId);
+    const t = token();
+    if (!t) return handleError(new Error('Station session required'));
+    try {
+      const updated = await stationService.stationRecordPayment(t, orderId);
+      setRemoteOrders(prev => prev.map(o => (o.id === orderId ? updated : o)));
+      return true;
+    } catch (err) { return handleError(err); }
+  }, [remote, token, handleError, station.permissions.canRecordPayments]);
+
   const setTableStatus = useCallback(async (tableId: string, status: TableStatus): Promise<boolean> => {
     if (!remote) { useStore.getState().setTableStatus(tableId, status); return true; }
     const t = token();
@@ -136,5 +149,5 @@ export function useStationOrders(station: Station, onSessionLost?: () => void) {
     } catch (err) { return handleError(err); }
   }, [remote, token, handleError]);
 
-  return { orders, online: remote ? online : true, refetch, advanceOrder, adjustPrepTime, logKitchenEvent, remakeOrder, setTableStatus };
+  return { orders, online: remote ? online : true, refetch, advanceOrder, adjustPrepTime, logKitchenEvent, remakeOrder, recordPayment, setTableStatus };
 }

@@ -53,6 +53,8 @@ export interface AppState extends WorkspaceSnapshot {
   advanceOrderStatus: (orderId: string) => Promise<boolean>;
   cancelOrder:        (orderId: string) => Promise<boolean>;
   refundOrder:        (orderId: string) => Promise<boolean>;
+  /** Record an in-person payment (payment state only; kitchen status untouched). */
+  recordPayment:      (orderId: string) => Promise<boolean>;
   adjustPrepTime:     (orderId: string, deltaMinutes: number) => void;
 
   updateSettings: (updates: Partial<BusinessSettings>) => Promise<boolean>;

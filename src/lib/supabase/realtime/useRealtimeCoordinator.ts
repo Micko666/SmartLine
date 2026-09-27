@@ -63,7 +63,7 @@ export function useRealtimeCoordinator() {
       if (document.visibilityState !== 'visible') return;
       const staleActiveIds = store().orders.filter(o => isActiveOrder(o.status)).map(o => o.id);
       const [active, stale] = await Promise.all([
-        client.from('orders').select('*').eq('user_id', userId).in('status', ['paid', 'preparing', 'ready'])
+        client.from('orders').select('*').eq('user_id', userId).in('status', ['placed', 'preparing', 'ready'])
           .order('created_at', { ascending: false }).limit(500),
         staleActiveIds.length
           ? client.from('orders').select('*').eq('user_id', userId).in('id', staleActiveIds)

@@ -104,8 +104,9 @@ export interface Table {
 
 // ─── Orders ──────────────────────────────────────────────────────────────────
 
+/** Fulfillment (kitchen) status. Money is tracked separately in `paymentStatus`. */
 export type OrderStatus =
-  | 'paid'
+  | 'placed'
   | 'preparing'
   | 'ready'
   | 'completed'
@@ -173,7 +174,8 @@ export interface Order {
   /** Checkout idempotency key supplied by the customer device. */
   clientOrderId?: string;
   createdAt: string;
-  paidAt: string;
+  /** When payment was recorded; undefined while unpaid (legacy rows: order time). */
+  paidAt?: string;
   updatedAt: string;
 }
 
@@ -272,6 +274,8 @@ export interface StationPermissions {
   showProductionSummary: boolean;
   mapAccess: boolean;
   canUpdateTableStatus: boolean;
+  /** Record in-person payments (marks an unpaid order as paid). */
+  canRecordPayments: boolean;
   /**
    * Allow repositioning / adding / deleting tables on the floor map.
    * Separate from canUpdateTableStatus (operational) — this is layout editing.

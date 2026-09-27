@@ -1,6 +1,6 @@
 import type { Station, StationRole, StationPermissions, OrderStatus } from './types';
 
-const ALL_ACTIVE_STATUSES: OrderStatus[] = ['paid', 'preparing', 'ready'];
+const ALL_ACTIVE_STATUSES: OrderStatus[] = ['placed', 'preparing', 'ready'];
 
 export const ROLE_PRESETS: Record<StationRole, {
   label: string;
@@ -21,6 +21,7 @@ export const ROLE_PRESETS: Record<StationRole, {
       showProductionSummary: true,
       mapAccess: false,
       canUpdateTableStatus: false,
+      canRecordPayments: false,
       canEditTableLayout: false,
       filterCategories: [],
       categoryMode: 'all',
@@ -40,6 +41,7 @@ export const ROLE_PRESETS: Record<StationRole, {
       showProductionSummary: false,
       mapAccess: true,
       canUpdateTableStatus: true,
+      canRecordPayments: true,
       canEditTableLayout: false,
       filterCategories: [],
       categoryMode: 'all',
@@ -59,6 +61,7 @@ export const ROLE_PRESETS: Record<StationRole, {
       showProductionSummary: false,
       mapAccess: false,
       canUpdateTableStatus: false,
+      canRecordPayments: false,
       canEditTableLayout: false,
       filterCategories: [],
       categoryMode: 'focus',
@@ -78,6 +81,7 @@ export const ROLE_PRESETS: Record<StationRole, {
       showProductionSummary: false,
       mapAccess: false,
       canUpdateTableStatus: false,
+      canRecordPayments: false,
       canEditTableLayout: false,
       filterCategories: [],
       categoryMode: 'all',
@@ -142,11 +146,13 @@ export function normalizeStation(station: Station): Station {
       showProductionSummary: p.showProductionSummary  ?? defaults.showProductionSummary,
       mapAccess:             p.mapAccess              ?? defaults.mapAccess,
       canUpdateTableStatus:  p.canUpdateTableStatus   ?? defaults.canUpdateTableStatus,
+      canRecordPayments:     p.canRecordPayments      ?? defaults.canRecordPayments,
       canEditTableLayout:    p.canEditTableLayout     ?? defaults.canEditTableLayout,
       filterCategories:      p.filterCategories       ?? defaults.filterCategories,
       categoryMode:          p.categoryMode           ?? defaults.categoryMode,
+      // Legacy payloads used 'paid' for the first kitchen state.
       visibleStatuses:       (p.visibleStatuses?.length ?? 0) > 0
-                               ? p.visibleStatuses
+                               ? p.visibleStatuses.map(s => (s as string) === 'paid' ? 'placed' : s)
                                : defaults.visibleStatuses,
     },
   };

@@ -21,6 +21,11 @@ export async function transitionOrder(orderId: string, expected: OrderStatus, ne
   return mapOrderRow(result.order as Record<string, unknown>);
 }
 
+export async function recordPayment(orderId: string) {
+  const result = await rpc('record_payment', { p_order_id: orderId });
+  return mapOrderRow(result.order as Record<string, unknown>);
+}
+
 export async function cancelOrder(orderId: string, userId: string) {
   const result = await rpc('cancel_order', { p_order_id: orderId });
   // Cancel and restock are one DB transaction. Refresh the projections afterward.

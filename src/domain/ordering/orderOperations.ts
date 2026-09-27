@@ -43,7 +43,9 @@ export function applyTransition(
     stockRestoredAt = now;
   }
 
-  const updated: Order = { ...order, status: next, stockRestoredAt, updatedAt: now };
+  // A refund reverses a recorded payment; unpaid/legacy payment states stay as they are.
+  const paymentStatus = next === 'refunded' && order.paymentStatus === 'paid' ? 'refunded' : order.paymentStatus;
+  const updated: Order = { ...order, status: next, paymentStatus, stockRestoredAt, updatedAt: now };
   const orders = state.orders.map(o => (o.id === orderId ? updated : o));
 
   let tables = state.tables;
@@ -52,4 +54,22 @@ export function applyTransition(
     tables = tables.map(t => (t.id === order.tableId && t.status === 'occupied' ? { ...t, status: 'available' } : t));
   }
   return { ok: true, order: updated, orders, menuItems, tables };
+}
+
+export type PaymentResult =
+  | { ok: true; order: Order; orders: Order[] }
+  | { ok: false; error: string };
+
+/**
+ * Mirror of SQL `record_payment_internal` (migration 024): marks a live unpaid
+ * order as paid. Idempotent; never touches the fulfillment status.
+ */
+export function applyRecordPayment(orders: Order[], orderId: string, now = new Date().toISOString()): PaymentResult {
+  const order = orders.find(o => o.id === orderId);
+  if (!order) return { ok: false, error: 'Order not found' };
+  if (order.paymentStatus === 'paid') return { ok: true, order, orders };
+  if (order.status === 'cancelled' || order.status === 'refunded') return { ok: false, error: 'Order is cancelled' };
+  if (order.paymentStatus !== 'unpaid') return { ok: false, error: `Payment state ${order.paymentStatus ?? 'unknown'} cannot be recorded` };
+  const updated: Order = { ...order, paymentStatus: 'paid', paidAt: now, updatedAt: now };
+  return { ok: true, order: updated, orders: orders.map(o => (o.id === orderId ? updated : o)) };
 }

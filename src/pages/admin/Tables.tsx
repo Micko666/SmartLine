@@ -39,7 +39,7 @@ export default function Tables() {
   const appUrl = typeof window !== 'undefined' ? window.location.origin : settings.appUrl;
   const getTableUrl = (id: string) => `${appUrl}/menu?t=${id}&r=${settings.restaurantToken}`;
   const activeOrdersFor = (id: string) =>
-    orders.filter(o => o.tableId === id && ['paid', 'preparing', 'ready'].includes(o.status)).length;
+    orders.filter(o => o.tableId === id && ['placed', 'preparing', 'ready'].includes(o.status)).length;
 
   // ── Floor state ──────────────────────────────────────────────────────────────
   const [activeFloor, setActiveFloor] = useState<string | null>(null);
@@ -330,7 +330,7 @@ export default function Tables() {
   const [addDefaultName, setAddDefaultName] = useState('');
 
   // ── Operate mode handlers ─────────────────────────────────────────────────
-  const OP_STATUSES = ['paid', 'preparing', 'ready'];
+  const OP_STATUSES = ['placed', 'preparing', 'ready'];
 
   function handleAdminAdvance(order: Order) {
     advanceOrderStatus(order.id);

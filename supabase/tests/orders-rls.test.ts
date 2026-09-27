@@ -61,10 +61,10 @@ describe('RLS: anonymous and cross-tenant reads', () => {
 
 describe('order state machine (server enforced)', () => {
   it.each([
-    ['paid', 'ready'], ['paid', 'completed'], ['ready', 'paid'], ['completed', 'preparing'], ['completed', 'refunded'], ['paid', 'served'],
+    ['placed', 'ready'], ['placed', 'completed'], ['ready', 'placed'], ['completed', 'preparing'], ['completed', 'refunded'], ['placed', 'served'], ['placed', 'paid'],
   ])('rejects %s -> %s even for the owner', async (from, to) => {
     const id = await placeOrder(a, 1, 'soup');
-    if (from !== 'paid') {
+    if (from !== 'placed') {
       const path: Record<string, string[]> = { ready: ['preparing', 'ready'], completed: ['preparing', 'ready', 'completed'] };
       for (const step of path[from]) await db.sql(`UPDATE orders SET status=$2 WHERE id=$1`, [id, step]);
     }
@@ -73,15 +73,15 @@ describe('order state machine (server enforced)', () => {
 
   it('advance_order enforces the expected status (no stale overwrite)', async () => {
     const id = await placeOrder(a, 1, 'soup');
-    expect((await db.rpc<Ok>('authenticated', 'advance_order', { p_order_id: id, p_expected_status: 'paid', p_new_status: 'preparing' }, a.userId)).ok).toBe(true);
-    const stale = await db.rpc<Ok>('authenticated', 'advance_order', { p_order_id: id, p_expected_status: 'paid', p_new_status: 'preparing' }, a.userId);
+    expect((await db.rpc<Ok>('authenticated', 'advance_order', { p_order_id: id, p_expected_status: 'placed', p_new_status: 'preparing' }, a.userId)).ok).toBe(true);
+    const stale = await db.rpc<Ok>('authenticated', 'advance_order', { p_order_id: id, p_expected_status: 'placed', p_new_status: 'preparing' }, a.userId);
     expect(stale.ok).toBe(false);
   });
 
   it('advance_order cannot touch another tenant order and requires auth', async () => {
     const id = await placeOrder(b, 1, 'soup');
-    expect((await db.rpc<Ok>('authenticated', 'advance_order', { p_order_id: id, p_expected_status: 'paid', p_new_status: 'preparing' }, a.userId)).ok).toBe(false);
-    await expect(db.rpc<Ok>('anon', 'advance_order', { p_order_id: id, p_expected_status: 'paid', p_new_status: 'preparing' })).rejects.toThrow(/permission denied/);
+    expect((await db.rpc<Ok>('authenticated', 'advance_order', { p_order_id: id, p_expected_status: 'placed', p_new_status: 'preparing' }, a.userId)).ok).toBe(false);
+    await expect(db.rpc<Ok>('anon', 'advance_order', { p_order_id: id, p_expected_status: 'placed', p_new_status: 'preparing' })).rejects.toThrow(/permission denied/);
   });
 });
 
@@ -103,7 +103,7 @@ describe('cancel_order: one transaction, stock restored exactly once', () => {
   it('cannot cancel a completed order', async () => {
     const t = await createTenant(db, 'cancel2');
     const id = await placeOrder(t, 1);
-    for (const [e, n] of [['paid', 'preparing'], ['preparing', 'ready'], ['ready', 'completed']]) {
+    for (const [e, n] of [['placed', 'preparing'], ['preparing', 'ready'], ['ready', 'completed']]) {
       await db.rpc('authenticated', 'advance_order', { p_order_id: id, p_expected_status: e, p_new_status: n }, t.userId);
     }
     expect((await db.rpc<Ok>('authenticated', 'cancel_order', { p_order_id: id }, t.userId)).ok).toBe(false);

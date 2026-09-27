@@ -11,18 +11,18 @@ export interface Props {
 }
 
 export const STATUS_BG: Record<string, string> = {
-  paid:      'bg-yellow-500/8 border-yellow-500/25',
+  placed:      'bg-yellow-500/8 border-yellow-500/25',
   preparing: 'bg-orange-500/8 border-orange-500/25',
   ready:     'bg-green-500/8 border-green-500/25',
 };
 
 export const COLUMN_LABELS: Record<string, { label: string; color: string }> = {
-  paid:      { label: 'New',         color: ORDER_STATUS_COLORS.paid },
+  placed:      { label: 'New',         color: ORDER_STATUS_COLORS.placed },
   preparing: { label: 'In Progress', color: ORDER_STATUS_COLORS.preparing },
   ready:     { label: 'Ready',       color: ORDER_STATUS_COLORS.ready },
 };
 
-export const ALL_STATUSES: OrderStatus[] = ['paid', 'preparing', 'ready'];
+export const ALL_STATUSES: OrderStatus[] = ['placed', 'preparing', 'ready'];
 
 // ─── LogEventPanel ────────────────────────────────────────────────────────────
 

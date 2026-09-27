@@ -86,6 +86,9 @@ export default function StationCard({
         {p.canUpdateTableStatus && (
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-400 font-medium">Table control</span>
         )}
+        {p.canRecordPayments && (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-700 dark:text-green-400 font-medium">Payments</span>
+        )}
         {p.categoryMode !== 'all' && p.filterCategories && p.filterCategories.length > 0 && (
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium capitalize">
             {p.categoryMode}: {p.filterCategories.join(', ')}

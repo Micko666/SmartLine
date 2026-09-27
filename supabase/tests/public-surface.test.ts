@@ -151,8 +151,8 @@ describe('public data minimization', () => {
 });
 
 describe('privileges (SECURITY DEFINER hardening)', () => {
-  const PUBLIC_API = ['atomic_checkout', 'get_customer_menu', 'get_booking_data', 'submit_booking', 'lookup_booking_status', 'get_roster_data', 'get_order_status', 'get_receipt_by_id', 'station_public_config', 'station_login', 'station_logout', 'station_get_orders', 'station_advance_order', 'station_adjust_prep_time', 'station_log_kitchen_event', 'station_set_table_status', 'station_get_context'];
-  const OWNER_API = ['advance_order', 'cancel_order', 'adjust_stock', 'patch_settings', 'list_stations', 'upsert_station', 'delete_station'];
+  const PUBLIC_API = ['atomic_checkout', 'get_customer_menu', 'get_booking_data', 'submit_booking', 'lookup_booking_status', 'get_roster_data', 'get_order_status', 'get_receipt_by_id', 'station_public_config', 'station_login', 'station_logout', 'station_get_orders', 'station_advance_order', 'station_adjust_prep_time', 'station_log_kitchen_event', 'station_set_table_status', 'station_get_context', 'station_record_payment'];
+  const OWNER_API = ['advance_order', 'cancel_order', 'adjust_stock', 'patch_settings', 'list_stations', 'upsert_station', 'delete_station', 'record_payment'];
 
   it('anon can execute exactly the public allow-list', async () => {
     const rows = await db.sql<{ proname: string }>(`SELECT DISTINCT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND has_function_privilege('anon', p.oid, 'EXECUTE') ORDER BY 1`);
@@ -165,7 +165,7 @@ describe('privileges (SECURITY DEFINER hardening)', () => {
   });
 
   it('internal helpers such as transition_order_internal are not callable by API roles', async () => {
-    await expect(db.as('anon', `SELECT transition_order_internal($1, gen_random_uuid(), 'paid', 'cancelled', 'x')`, [t.userId])).rejects.toThrow(/permission denied/);
+    await expect(db.as('anon', `SELECT transition_order_internal($1, gen_random_uuid(), 'placed', 'cancelled', 'x')`, [t.userId])).rejects.toThrow(/permission denied/);
   });
 
   it('every SECURITY DEFINER function pins search_path', async () => {

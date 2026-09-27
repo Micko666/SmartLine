@@ -1,18 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import {
   canTransition, transition, advance, nextStatuses,
-  isActiveOrder, isRevenueOrder, ORDER_STATUS_LABELS,
+  isActiveOrder, isLiveOrder, isRevenueOrder,
+  isOutstandingPayment, ORDER_STATUS_LABELS,
 } from '../domain/orderMachine';
 import type { OrderStatus } from '../domain/types';
 
 describe('orderMachine', () => {
   // ── canTransition ──────────────────────────────────────────────
   describe('canTransition', () => {
-    it('allows paid → preparing', () => {
-      expect(canTransition('paid', 'preparing')).toBe(true);
+    it('allows placed → preparing', () => {
+      expect(canTransition('placed', 'preparing')).toBe(true);
     });
-    it('allows paid → cancelled', () => {
-      expect(canTransition('paid', 'cancelled')).toBe(true);
+    it('allows placed → cancelled', () => {
+      expect(canTransition('placed', 'cancelled')).toBe(true);
     });
     it('allows preparing → ready', () => {
       expect(canTransition('preparing', 'ready')).toBe(true);
@@ -23,20 +24,20 @@ describe('orderMachine', () => {
     it('allows cancelled → refunded', () => {
       expect(canTransition('cancelled', 'refunded')).toBe(true);
     });
-    it('blocks paid → completed (skip steps)', () => {
-      expect(canTransition('paid', 'completed')).toBe(false);
+    it('blocks placed → completed (skip steps)', () => {
+      expect(canTransition('placed', 'completed')).toBe(false);
     });
     it('blocks completed → preparing (backwards)', () => {
       expect(canTransition('completed', 'preparing')).toBe(false);
     });
     it('blocks refunded → anything (terminal)', () => {
-      const allStatuses: OrderStatus[] = ['paid', 'preparing', 'ready', 'completed', 'cancelled', 'refunded'];
+      const allStatuses: OrderStatus[] = ['placed', 'preparing', 'ready', 'completed', 'cancelled', 'refunded'];
       allStatuses.forEach(s => {
         expect(canTransition('refunded', s)).toBe(false);
       });
     });
     it('blocks completed → anything (terminal)', () => {
-      const allStatuses: OrderStatus[] = ['paid', 'preparing', 'ready', 'completed', 'cancelled', 'refunded'];
+      const allStatuses: OrderStatus[] = ['placed', 'preparing', 'ready', 'completed', 'cancelled', 'refunded'];
       allStatuses.forEach(s => {
         expect(canTransition('completed', s)).toBe(false);
       });
@@ -46,20 +47,20 @@ describe('orderMachine', () => {
   // ── transition ─────────────────────────────────────────────────
   describe('transition', () => {
     it('returns new status on valid transition', () => {
-      expect(transition('paid', 'preparing')).toBe('preparing');
+      expect(transition('placed', 'preparing')).toBe('preparing');
     });
     it('throws on invalid transition', () => {
-      expect(() => transition('paid', 'completed')).toThrow();
+      expect(() => transition('placed', 'completed')).toThrow();
     });
     it('throws on backwards transition', () => {
-      expect(() => transition('ready', 'paid')).toThrow();
+      expect(() => transition('ready', 'placed')).toThrow();
     });
   });
 
   // ── advance ────────────────────────────────────────────────────
   describe('advance', () => {
-    it('advances paid → preparing (skips cancelled as primary)', () => {
-      expect(advance('paid')).toBe('preparing');
+    it('advances placed → preparing (skips cancelled as primary)', () => {
+      expect(advance('placed')).toBe('preparing');
     });
     it('advances preparing → ready', () => {
       expect(advance('preparing')).toBe('ready');
@@ -80,8 +81,8 @@ describe('orderMachine', () => {
 
   // ── nextStatuses ───────────────────────────────────────────────
   describe('nextStatuses', () => {
-    it('returns all valid next statuses for paid', () => {
-      const nexts = nextStatuses('paid');
+    it('returns all valid next statuses for placed', () => {
+      const nexts = nextStatuses('placed');
       expect(nexts).toContain('preparing');
       expect(nexts).toContain('cancelled');
     });
@@ -92,8 +93,8 @@ describe('orderMachine', () => {
 
   // ── helper flags ───────────────────────────────────────────────
   describe('isActiveOrder', () => {
-    it('considers paid, preparing, ready as active', () => {
-      expect(isActiveOrder('paid')).toBe(true);
+    it('considers placed, preparing, ready as active', () => {
+      expect(isActiveOrder('placed')).toBe(true);
       expect(isActiveOrder('preparing')).toBe(true);
       expect(isActiveOrder('ready')).toBe(true);
     });
@@ -103,21 +104,40 @@ describe('orderMachine', () => {
     });
   });
 
-  describe('isRevenueOrder', () => {
-    it('counts paid, preparing, ready, completed as revenue', () => {
-      expect(isRevenueOrder('paid')).toBe(true);
-      expect(isRevenueOrder('completed')).toBe(true);
+  it('isLiveOrder excludes only cancelled and refunded', () => {
+    expect(isLiveOrder('placed')).toBe(true);
+    expect(isLiveOrder('completed')).toBe(true);
+    expect(isLiveOrder('cancelled')).toBe(false);
+    expect(isLiveOrder('refunded')).toBe(false);
+  });
+
+  describe('isRevenueOrder (payment state, not kitchen state)', () => {
+    it('never counts an unpaid order, whatever its kitchen status', () => {
+      for (const status of ['placed', 'preparing', 'ready', 'completed'] as const) {
+        expect(isRevenueOrder({ status, paymentStatus: 'unpaid' })).toBe(false);
+      }
     });
-    it('excludes cancelled and refunded from revenue', () => {
-      expect(isRevenueOrder('cancelled')).toBe(false);
-      expect(isRevenueOrder('refunded')).toBe(false);
+    it('counts recorded payments and legacy orders that are still live', () => {
+      expect(isRevenueOrder({ status: 'placed', paymentStatus: 'paid' })).toBe(true);
+      expect(isRevenueOrder({ status: 'completed', paymentStatus: 'paid' })).toBe(true);
+      expect(isRevenueOrder({ status: 'completed', paymentStatus: 'legacy_unverified' })).toBe(true);
+      expect(isRevenueOrder({ status: 'completed', paymentStatus: undefined })).toBe(true);
+    });
+    it('excludes cancelled and refunded orders even if they were paid', () => {
+      expect(isRevenueOrder({ status: 'cancelled', paymentStatus: 'paid' })).toBe(false);
+      expect(isRevenueOrder({ status: 'refunded', paymentStatus: 'refunded' })).toBe(false);
+    });
+    it('isOutstandingPayment flags live unpaid orders only', () => {
+      expect(isOutstandingPayment({ status: 'ready', paymentStatus: 'unpaid' })).toBe(true);
+      expect(isOutstandingPayment({ status: 'cancelled', paymentStatus: 'unpaid' })).toBe(false);
+      expect(isOutstandingPayment({ status: 'ready', paymentStatus: 'paid' })).toBe(false);
     });
   });
 
   // ── labels ─────────────────────────────────────────────────────
   describe('ORDER_STATUS_LABELS', () => {
     it('has labels for all statuses', () => {
-      const statuses: OrderStatus[] = ['paid', 'preparing', 'ready', 'completed', 'cancelled', 'refunded'];
+      const statuses: OrderStatus[] = ['placed', 'preparing', 'ready', 'completed', 'cancelled', 'refunded'];
       statuses.forEach(s => {
         expect(ORDER_STATUS_LABELS[s]).toBeTruthy();
       });

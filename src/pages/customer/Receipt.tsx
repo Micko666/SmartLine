@@ -242,7 +242,7 @@ export default function CustomerReceipt() {
 
             <div className="pt-2 border-t border-border text-xs text-muted-foreground">
               <div className="flex justify-between">
-                <span>Payment due at restaurant / delivery</span>
+                <span>{receipt.paymentStatus === 'paid' ? 'Paid' : 'Payment due at restaurant / delivery'}</span>
                 <span>{PAYMENT_LABELS[receipt.paymentMethod] ?? receipt.paymentMethod}</span>
               </div>
             </div>

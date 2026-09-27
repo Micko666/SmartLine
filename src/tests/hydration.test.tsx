@@ -23,7 +23,7 @@ function fullWorkspace(): WorkspaceSnapshot {
   const createdAt = new Date().toISOString();
   const station = buildStation({ name: 'Kitchen', role: 'kitchen' });
   state.stations = [station]; state.settings.stations = [station];
-  state.orders = [{ id: 'order', orderNumber: 1001, tableId: state.tables[0].id, tableName: 'Table 1', items: [], status: 'paid', subtotal: 1, taxRate: 0, taxAmount: 0, total: 1, paymentMethod: 'cash', notes: '', estimatedPrepTime: 10, prepTimeAdjustment: 0, createdAt, updatedAt: createdAt, paidAt: createdAt }];
+  state.orders = [{ id: 'order', orderNumber: 1001, tableId: state.tables[0].id, tableName: 'Table 1', items: [], status: 'placed', subtotal: 1, taxRate: 0, taxAmount: 0, total: 1, paymentMethod: 'cash', notes: '', estimatedPrepTime: 10, prepTimeAdjustment: 0, createdAt, updatedAt: createdAt, paidAt: createdAt }];
   state.receipts = [{ id: 'receipt', orderId: 'order', orderNumber: 1001, tableId: state.tables[0].id, tableName: 'Table 1', restaurantName: 'Demo', items: [], subtotal: 1, taxRate: 0, taxAmount: 0, total: 1, paymentMethod: 'cash', createdAt }];
   state.nextOrderNumber = 1002;
   state.reservations = [{ id: 'reservation', sessionId: 'session', items: [], expiresAt: Date.now() + 60000 }];
@@ -68,6 +68,15 @@ describe('canonical workspace hydration', () => {
     expect(workspaceSnapshot(useStore.getState())).toEqual(login);
     expect(login.stations).toEqual(saved.stations);
     expect(login.calendarSettings.shiftTemplates).toEqual([]);
+  });
+
+  it('legacy local orders saved with status "paid" load as "placed" (payment state untouched)', () => {
+    const saved = fullWorkspace();
+    const legacy = { ...saved, orders: saved.orders.map(o => ({ ...o, status: 'paid' })) };
+    localStorage.setItem(WORKSPACE_KEY(DEMO_USER.id), JSON.stringify({ state: legacy }));
+    const loaded = loadWorkspaceStateLocal(DEMO_USER.id, DEMO_USER);
+    expect(loaded.orders[0].status).toBe('placed');
+    expect(loaded.orders[0].paymentStatus).toBeUndefined();
   });
 
   it('Supabase refresh restores stations before the next station write', async () => {
