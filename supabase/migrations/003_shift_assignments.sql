@@ -17,7 +17,7 @@ UPDATE shifts
 SET
   name = COALESCE(role, 'Shift'),
   assignments = CASE
-    WHEN employee_ids IS NULL OR jsonb_array_length(COALESCE(employee_ids, '[]'::jsonb)) = 0
+    WHEN employee_ids IS NULL OR cardinality(employee_ids) = 0
     THEN '[]'::jsonb
     ELSE (
       SELECT jsonb_agg(
@@ -26,7 +26,7 @@ SET
           'role',       COALESCE(role, 'Staff')
         )
       )
-      FROM jsonb_array_elements_text(employee_ids) AS e
+      FROM unnest(employee_ids) AS e
     )
   END
 WHERE name IS NULL;

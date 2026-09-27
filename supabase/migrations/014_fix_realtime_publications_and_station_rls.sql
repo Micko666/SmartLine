@@ -20,8 +20,16 @@
 -- ============================================================
 
 -- 1. Add missing tables to realtime publication ─────────────────
-ALTER PUBLICATION supabase_realtime ADD TABLE kitchen_events;
-ALTER PUBLICATION supabase_realtime ADD TABLE tables;
+-- Historical replay repair: kitchen_events was originally created outside source
+-- control. Migration 015 reconstructs it and registers its publication membership.
+DO $$ BEGIN
+  IF to_regclass('public.kitchen_events') IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND tablename='kitchen_events'
+  ) THEN ALTER PUBLICATION supabase_realtime ADD TABLE kitchen_events; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND tablename='tables') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE tables;
+  END IF;
+END $$;
 
 -- 2. Fix tables REPLICA IDENTITY ────────────────────────────────
 ALTER TABLE tables REPLICA IDENTITY DEFAULT;
