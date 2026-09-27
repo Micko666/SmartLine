@@ -3,6 +3,7 @@ import { CheckCircle2, Clock, ChefHat, CreditCard, ArrowRight, X, RotateCcw, Ale
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
+import { addDays, formatScheduled, restaurantDate, restaurantDayKey } from '@/domain/time/restaurantTime';
 import { useShallow } from 'zustand/react/shallow';
 import { advance, canTransition, ORDER_STATUS_CSS, ORDER_STATUS_LABELS, ORDER_STATUS_COLORS } from '@/domain/orderMachine';
 import { minutesSince } from '@/lib/time';
@@ -35,36 +36,39 @@ function timeAgo(iso: string) {
   return m < 1 ? 'just now' : `${m}m ago`;
 }
 
-/** Format "YYYY-MM-DD HH:MM" into a short human label for display on order cards. */
-function formatScheduledFor(scheduledFor: string): string {
+/** "YYYY-MM-DD HH:MM" (restaurant wall clock) -> "Today · 18:30" relative to the restaurant's day. */
+function formatScheduledFor(scheduledFor: string, timezone: string): string {
   const [dateStr, timeStr] = scheduledFor.split(' ');
   if (!dateStr || !timeStr) return scheduledFor;
-  const today    = new Date().toISOString().slice(0, 10);
-  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-  const dateLabel =
-    dateStr === today    ? 'Today' :
-    dateStr === tomorrow ? 'Tomorrow' :
-    new Date(dateStr + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-  return `${dateLabel} · ${timeStr}`;
+  return formatScheduled(dateStr, timeStr, timezone);
 }
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function dayKey(iso: string) {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function formatDayLabel(key: string, timezone: string) {
+  const today = restaurantDate(timezone);
+  if (key === today) return 'Today';
+  if (key === addDays(today, -1)) return 'Yesterday';
+  return new Intl.DateTimeFormat([], { timeZone: 'UTC', weekday: 'long', month: 'short', day: 'numeric' }).format(new Date(`${key}T12:00:00Z`));
 }
 
-function formatDayLabel(key: string) {
-  const now = new Date();
-  const todayK = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const yest = new Date(); yest.setDate(yest.getDate() - 1);
-  const yestK = `${yest.getFullYear()}-${String(yest.getMonth() + 1).padStart(2, '0')}-${String(yest.getDate()).padStart(2, '0')}`;
-  if (key === todayK) return 'Today';
-  if (key === yestK) return 'Yesterday';
-  return new Date(key + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+const PAYMENT_STATUS_LABEL: Record<NonNullable<Order['paymentStatus']>, string> = {
+  unpaid: 'Payment due', paid: 'Paid', refunded: 'Refunded', legacy_unverified: 'Payment not verified',
+};
+
+/** Structured customer contact (new orders) with a fallback note for legacy orders. */
+function OrderCustomerInfo({ order }: { order: Order }) {
+  const contact = [order.customerName, order.customerPhone].filter(Boolean).join(' · ');
+  if (!contact && !order.deliveryAddress && !order.paymentStatus) return null;
+  return (
+    <div className="text-xs text-muted-foreground mb-2 space-y-0.5">
+      {contact && <p className="font-medium text-foreground">{contact}</p>}
+      {order.deliveryAddress && <p>{order.deliveryAddress}</p>}
+      {order.paymentStatus && <p>{PAYMENT_STATUS_LABEL[order.paymentStatus]} · {order.paymentMethod === 'cash' ? 'in person' : order.paymentMethod}</p>}
+    </div>
+  );
 }
 
 export default function Orders() {
@@ -94,12 +98,12 @@ export default function Orders() {
   //   3. olderByDay       — previous-day orders that are already in a terminal state (accordion)
   const { carryoverActive, todayOrders, olderByDay, olderDayKeys } = useMemo(() => {
     const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const today = restaurantDate(settings.timezone, now);
     const carryoverActive: Order[] = [];
     const todayOrders: Order[] = [];
     const older: Record<string, Order[]> = {};
     for (const o of filtered) {
-      const k = dayKey(o.createdAt);
+      const k = restaurantDayKey(o.createdAt, settings.timezone);
       if (k === today) {
         todayOrders.push(o);
       } else if (ACTIVE_STATUSES.includes(o.status as OrderStatus)) {
@@ -116,7 +120,7 @@ export default function Orders() {
       olderByDay: older,
       olderDayKeys: Object.keys(older).sort((a, b) => b.localeCompare(a)),
     };
-  }, [filtered]);
+  }, [filtered, settings.timezone]);
 
   const toggleDay = (k: string) => setOpenDays(prev => ({ ...prev, [k]: !prev[k] }));
 
@@ -270,7 +274,7 @@ export default function Orders() {
                             {order.scheduledFor && (
                               <div className="flex items-center gap-1.5 text-xs font-medium text-primary bg-primary/10 px-2.5 py-1 rounded-lg mb-3 w-fit">
                                 <CalendarClock className="w-3 h-3 shrink-0" />
-                                {formatScheduledFor(order.scheduledFor)}
+                                {formatScheduledFor(order.scheduledFor, settings.timezone)}
                               </div>
                             )}
 
@@ -283,6 +287,7 @@ export default function Orders() {
                               ))}
                             </div>
 
+                            <OrderCustomerInfo order={order} />
                             {order.notes && (
                               <p className="text-xs text-muted-foreground mb-3 p-2 bg-muted/50 rounded-lg italic">"{order.notes}"</p>
                             )}
@@ -370,7 +375,7 @@ export default function Orders() {
                     {order.scheduledFor && (
                       <div className="flex items-center gap-1.5 text-xs font-medium text-primary bg-primary/10 px-2.5 py-1 rounded-lg mb-3 w-fit">
                         <CalendarClock className="w-3 h-3 shrink-0" />
-                        {formatScheduledFor(order.scheduledFor)}
+                        {formatScheduledFor(order.scheduledFor, settings.timezone)}
                       </div>
                     )}
 
@@ -383,6 +388,7 @@ export default function Orders() {
                       ))}
                     </div>
 
+                    <OrderCustomerInfo order={order} />
                     {order.notes && (
                       <p className="text-xs text-muted-foreground mb-3 p-2 bg-muted/50 rounded-lg italic">"{order.notes}"</p>
                     )}
@@ -448,7 +454,7 @@ export default function Orders() {
                           onClick={() => toggleDay(k)}
                           className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
                         >
-                          <span className="font-semibold text-sm">{formatDayLabel(k)}</span>
+                          <span className="font-semibold text-sm">{formatDayLabel(k, settings.timezone)}</span>
                           <span className="text-xs text-muted-foreground">{dayOrders.length} order{dayOrders.length === 1 ? '' : 's'}</span>
                           <span className="text-xs font-semibold text-foreground ml-auto tabular-nums">{sym}{dayTotal.toFixed(2)}</span>
                           {open ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
@@ -527,6 +533,7 @@ function TableOrderGroup({
   onClearTable: () => void;
   canClear: boolean;
 }) {
+  const timezone = useStore(st => st.settings.timezone);
   return (
     <motion.div
       layout
@@ -600,7 +607,7 @@ function TableOrderGroup({
                 </p>
                 {order.scheduledFor && (
                   <p className="text-[10px] font-medium text-primary mt-0.5 flex items-center gap-1">
-                    <CalendarClock className="w-2.5 h-2.5 shrink-0" />{formatScheduledFor(order.scheduledFor)}
+                    <CalendarClock className="w-2.5 h-2.5 shrink-0" />{formatScheduledFor(order.scheduledFor, timezone)}
                   </p>
                 )}
                 {order.notes && (

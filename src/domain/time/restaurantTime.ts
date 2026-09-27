@@ -38,3 +38,16 @@ export function formatScheduled(date: string, time: string, timezone = 'UTC', no
     new Intl.DateTimeFormat('en', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(`${date}T12:00:00Z`));
   return `${label} · ${time}`;
 }
+
+/** Restaurant-local calendar day of an ISO instant (e.g. an order's createdAt). */
+export function restaurantDayKey(iso: string, timezone = 'UTC'): string { return restaurantClock(timezone, new Date(iso)).date; }
+/** Restaurant-local hour (0-23) of an ISO instant. */
+export function restaurantHour(iso: string, timezone = 'UTC'): number { return Math.floor(restaurantClock(timezone, new Date(iso)).minutes / 60); }
+/**
+ * YYYY-MM-DD from a Date's *device-local* fields. Use for UI calendar grids
+ * built with local Date arithmetic; `toISOString().slice(0, 10)` would shift
+ * local midnight to the previous UTC day in zones east of UTC.
+ */
+export function localDateKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}

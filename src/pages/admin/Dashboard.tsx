@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
+import { restaurantDate, restaurantDayKey, restaurantHour } from '@/domain/time/restaurantTime';
 import { useShallow } from 'zustand/react/shallow';
 import { isActiveOrder, isRevenueOrder, ORDER_STATUS_CSS, ORDER_STATUS_LABELS } from '@/domain/orderMachine';
 import type { Order } from '@/domain/types';
@@ -99,11 +100,9 @@ export default function Dashboard() {
 
   // ── Derived stats from real orders ──
   const stats = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
+    const today = restaurantDate(settings.timezone);
     const todayOrders = orders.filter(
-      o => new Date(o.createdAt) >= today && isRevenueOrder(o.status),
+      o => restaurantDayKey(o.createdAt, settings.timezone) === today && isRevenueOrder(o.status),
     );
 
     const activeOrders = orders.filter(o => isActiveOrder(o.status));
@@ -128,15 +127,14 @@ export default function Dashboard() {
 
   // ── Hourly chart: bucket today's orders ──
   const hourlyData = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = restaurantDate(settings.timezone);
     const buckets: Record<number, { orders: number; revenue: number }> = {};
     for (let h = 7; h <= 22; h++) buckets[h] = { orders: 0, revenue: 0 };
 
     orders
-      .filter(o => new Date(o.createdAt) >= today && isRevenueOrder(o.status))
+      .filter(o => restaurantDayKey(o.createdAt, settings.timezone) === today && isRevenueOrder(o.status))
       .forEach(o => {
-        const h = new Date(o.createdAt).getHours();
+        const h = restaurantHour(o.createdAt, settings.timezone);
         if (buckets[h]) { buckets[h].orders += 1; buckets[h].revenue += o.total; }
       });
 
@@ -145,7 +143,7 @@ export default function Dashboard() {
       orders: v.orders,
       revenue: Math.round(v.revenue),
     }));
-  }, [orders]);
+  }, [orders, settings.timezone]);
 
   // ── Status distribution ──
   const statusDist = useMemo(() => {

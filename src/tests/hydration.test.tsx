@@ -14,7 +14,6 @@ vi.mock('@/lib/supabase/client', () => ({ supabase: { auth: {
   onAuthStateChange: mocks.authChange,
   signOut: mocks.signOut,
 } } }));
-vi.mock('@/store/bridge', () => ({ persistSettings: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@/services/workspaceService', () => ({
   saveStation: vi.fn(async (station: Record<string, unknown>) => ({ ...station, pin: '', hasPin: 'pin' in station })),
 }));

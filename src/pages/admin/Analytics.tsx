@@ -9,6 +9,7 @@ import {
 } from 'recharts';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useStore } from '@/store';
+import { addDays, restaurantDate, restaurantDayKey, restaurantHour } from '@/domain/time/restaurantTime';
 import { useShallow } from 'zustand/react/shallow';
 import { isRevenueOrder } from '@/domain/orderMachine';
 
@@ -85,17 +86,17 @@ export default function Analytics() {
     const days = range === 'all' ? 30 : parseInt(range);
     const buckets: Record<string, { day: string; revenue: number; orders: number }> = {};
     for (let i = days - 1; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
-      buckets[key] = { day: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), revenue: 0, orders: 0 };
+      // Restaurant-local calendar days (not UTC days of the device clock).
+      const key = addDays(restaurantDate(settings.timezone), -i);
+      const d = new Date(`${key}T12:00:00Z`);
+      buckets[key] = { day: d.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }), revenue: 0, orders: 0 };
     }
     filteredOrders.forEach(o => {
-      const key = o.createdAt.slice(0, 10);
+      const key = restaurantDayKey(o.createdAt, settings.timezone);
       if (buckets[key]) { buckets[key].revenue += o.total; buckets[key].orders += 1; }
     });
     return Object.values(buckets);
-  }, [filteredOrders, range]);
+  }, [filteredOrders, range, settings.timezone]);
 
   // ── Peak hours ─────────────────────────────────────────────────────────────
 
@@ -103,11 +104,11 @@ export default function Analytics() {
     const buckets: Record<number, { hour: string; revenue: number; orders: number }> = {};
     for (let h = 7; h <= 22; h++) buckets[h] = { hour: `${String(h).padStart(2, '0')}:00`, revenue: 0, orders: 0 };
     filteredOrders.forEach(o => {
-      const h = new Date(o.createdAt).getHours();
+      const h = restaurantHour(o.createdAt, settings.timezone);
       if (buckets[h]) { buckets[h].revenue += o.total; buckets[h].orders += 1; }
     });
     return Object.values(buckets);
-  }, [filteredOrders]);
+  }, [filteredOrders, settings.timezone]);
 
   // ── Avg prep time trend ────────────────────────────────────────────────────
 
@@ -115,17 +116,17 @@ export default function Analytics() {
     const days = Math.min(range === 'all' ? 30 : parseInt(range), 30);
     const buckets: Record<string, { day: string; avgPrep: number; count: number }> = {};
     for (let i = days - 1; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
-      buckets[key] = { day: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), avgPrep: 0, count: 0 };
+      // Restaurant-local calendar days (not UTC days of the device clock).
+      const key = addDays(restaurantDate(settings.timezone), -i);
+      const d = new Date(`${key}T12:00:00Z`);
+      buckets[key] = { day: d.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }), avgPrep: 0, count: 0 };
     }
     orders.filter(o => o.status === 'completed' && inRange(o.createdAt, cutoff)).forEach(o => {
-      const key = o.createdAt.slice(0, 10);
+      const key = restaurantDayKey(o.createdAt, settings.timezone);
       if (buckets[key]) { buckets[key].avgPrep += o.estimatedPrepTime + o.prepTimeAdjustment; buckets[key].count += 1; }
     });
     return Object.values(buckets).map(d => ({ ...d, avgPrep: d.count > 0 ? Math.round(d.avgPrep / d.count) : 0 }));
-  }, [orders, cutoff, range]);
+  }, [orders, cutoff, range, settings.timezone]);
 
   // ── Top & slow items ───────────────────────────────────────────────────────
 
@@ -180,13 +181,13 @@ export default function Analytics() {
     const days = Math.min(range === 'all' ? 14 : parseInt(range), 14);
     const daily: Record<string, { day: string; delays: number; remakes: number; waste: number }> = {};
     for (let i = days - 1; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
-      daily[key] = { day: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), delays: 0, remakes: 0, waste: 0 };
+      // Restaurant-local calendar days (not UTC days of the device clock).
+      const key = addDays(restaurantDate(settings.timezone), -i);
+      const d = new Date(`${key}T12:00:00Z`);
+      daily[key] = { day: d.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }), delays: 0, remakes: 0, waste: 0 };
     }
     filteredEvents.forEach(e => {
-      const key = e.createdAt.slice(0, 10);
+      const key = restaurantDayKey(e.createdAt, settings.timezone);
       if (!daily[key]) return;
       if (e.type === 'delay')  daily[key].delays++;
       if (e.type === 'remake') daily[key].remakes++;
@@ -194,7 +195,7 @@ export default function Analytics() {
     });
 
     return { totalWaste, totalRemake, totalDelay, wasteCost, daily: Object.values(daily) };
-  }, [filteredEvents, range]);
+  }, [filteredEvents, range, settings.timezone]);
 
   // ── Menu intelligence ──────────────────────────────────────────────────────
 

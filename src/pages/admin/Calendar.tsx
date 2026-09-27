@@ -27,13 +27,15 @@ import type {
   Employee, Shift, ShiftAssignment, ShiftTemplate,
   WeeklyShiftSlot, WeeklyDayTemplate,
 } from '@/domain/types';
+import { localDateKey } from '@/domain/time/restaurantTime';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DAY_NAMES   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-function isoDate(d: Date) { return d.toISOString().slice(0, 10); }
+/** Device-local calendar day (see localDateKey: toISOString shifted local midnight to the previous UTC day). */
+const isoDate = localDateKey;
 function today()          { return isoDate(new Date()); }
 
 function initials(name: string) {
@@ -1102,7 +1104,7 @@ export default function CalendarPage() {
     base.setDate(base.getDate() + (day === 0 ? -6 : 1 - day) + rosterWeekOffset * 7);
     base.setHours(0, 0, 0, 0);
     return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(base); d.setDate(base.getDate() + i); return d.toISOString().slice(0, 10);
+      const d = new Date(base); d.setDate(base.getDate() + i); return localDateKey(d);
     });
   }, [rosterWeekOffset]);
 

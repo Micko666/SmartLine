@@ -8,6 +8,8 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    // Full UI flow tests (render -> cart -> checkout) can exceed 5s on loaded CI runners.
+    testTimeout: 15_000,
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     env: {
       // Disable Supabase in tests so all store actions use the local fallback.

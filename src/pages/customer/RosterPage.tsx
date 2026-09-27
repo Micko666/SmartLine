@@ -10,8 +10,10 @@ import { fetchRosterDataByToken } from '@/lib/supabase/queries/public';
 import { useStore } from '@/store';
 import { isSupabaseEnabled } from '@/store/flags';
 import type { Employee, Shift } from '@/domain/types';
+import { localDateKey } from '@/domain/time/restaurantTime';
 
-function isoDate(d: Date) { return d.toISOString().slice(0, 10); }
+/** Device-local calendar day (toISOString shifted local midnight to the previous UTC day). */
+const isoDate = localDateKey;
 function today()          { return isoDate(new Date()); }
 
 function initials(name: string) {

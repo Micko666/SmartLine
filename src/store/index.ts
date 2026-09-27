@@ -11,7 +11,7 @@ import type {
 } from '../domain/types';
 import { DEFAULT_SETTINGS, DEMO_USER } from '../domain/initialData';
 import { AUTH_KEY, WORKSPACE_KEY, defaultWorkspace, emptyWorkspace, normalizeWorkspace, loadWorkspaceStateLocal, saveWorkspaceStateLocal, type WorkspaceSnapshot } from './workspace';
-import { advance, isActiveOrder, isRevenueOrder } from '../domain/orderMachine';
+import { advance } from '../domain/orderMachine';
 import { evaluateCheckout, groupModifierSelections } from '../domain/ordering/cart';
 import { applyTransition } from '../domain/ordering/orderOperations';
 import { mergeOrders } from '../domain/ordering/orderMerge';
@@ -63,7 +63,6 @@ export interface AppState extends WorkspaceSnapshot {
   updateMenuItem:    (id: string, updates: Partial<Omit<MenuItem, 'id' | 'createdAt'>>) => void;
   deleteMenuItem:    (id: string) => void;
   setMenuItemStatus: (id: string, status: MenuItemStatus) => void;
-  reorderMenuItems:  (orderedIds: string[]) => void;
   addCategory:       (name: string) => void;
   deleteCategory:    (name: string) => void;
 
@@ -106,8 +105,6 @@ export interface AppState extends WorkspaceSnapshot {
   checkout:           (payload: CheckoutPayload) => Promise<CheckoutResult>;
 
   getAvailableStock: (itemId: string) => number;
-  getActiveOrders:   () => Order[];
-  getTodayOrders:    () => Order[];
 
   // ── Calendar ────────────────────────────────────────────────────────────────
   addCalendarEvent:        (data: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'>) => CalendarEvent;
@@ -388,20 +385,6 @@ export const useStore = create<AppState>()((set, get) => ({
         if (prev) set(s => ({ menuItems: s.menuItems.map(i => i.id === id ? prev : i) }));
         toast.error('Failed to update item status.');
       });
-    }
-  },
-
-  reorderMenuItems(orderedIds) {
-    set(s => ({
-      menuItems: s.menuItems.map(i => {
-        const idx = orderedIds.indexOf(i.id);
-        return idx >= 0 ? { ...i, sortOrder: idx + 1 } : i;
-      }),
-    }));
-    _persistLocal(get);
-    if (usesSupabasePersistence()) {
-      bridge.persistMenuItemReorder(orderedIds.map((id, i) => ({ id, sortOrder: i + 1 })))
-        .catch(() => toast.error('Failed to save order to server.'));
     }
   },
 
@@ -891,18 +874,6 @@ export const useStore = create<AppState>()((set, get) => ({
       .filter(ri => ri.menuItemId === itemId)
       .reduce((sum, ri) => sum + ri.quantity, 0);
     return Math.max(0, item.stock - reserved);
-  },
-
-  getActiveOrders() {
-    return get().orders.filter(o => isActiveOrder(o.status));
-  },
-
-  getTodayOrders() {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    return get().orders.filter(
-      o => new Date(o.createdAt) >= startOfDay && isRevenueOrder(o.status),
-    );
   },
 
   // ── Calendar ─────────────────────────────────────────────────────────────────

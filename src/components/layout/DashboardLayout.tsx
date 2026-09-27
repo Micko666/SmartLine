@@ -9,6 +9,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import { useRealtimeCoordinator } from '@/lib/supabase/realtime/useRealtimeCoordinator';
+import { restaurantDate, restaurantDayKey } from '@/domain/time/restaurantTime';
+import { isActiveOrder } from '@/domain/orderMachine';
 
 const navItems = [
   { path: '/dashboard',    label: 'Dashboard',    icon: LayoutDashboard },
@@ -49,10 +51,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Notification badge — only TODAY's active orders trigger the alert.
   // Orders from previous days that are still mid-flow save their status but
   // are shown as a carry-over section in /orders without ringing the bell.
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = restaurantDate(settings.timezone);
   const activeCount = orders.filter(o =>
-    (o.status === 'paid' || o.status === 'preparing' || o.status === 'ready') &&
-    o.createdAt.slice(0, 10) === todayStr,
+    isActiveOrder(o.status) && restaurantDayKey(o.createdAt, settings.timezone) === todayStr,
   ).length;
 
   const pendingBookings = calendarEvents.filter(e => e.status === 'pending').length;

@@ -11,10 +11,10 @@
  *   }
  */
 
-import { updateMenuItemRow, insertMenuItem, bulkUpdateSortOrder } from '@/lib/supabase/queries/menu';
+import { updateMenuItemRow, insertMenuItem } from '@/lib/supabase/queries/menu';
 import { insertTable, updateTableRow, deleteTableRow } from '@/lib/supabase/queries/tables';
 import { updateOrderRow } from '@/lib/supabase/queries/orders';
-import { upsertSettings, upsertCalendarSettings } from '@/lib/supabase/queries/settings';
+import { upsertCalendarSettings } from '@/lib/supabase/queries/settings';
 import { insertReservation, deleteReservationBySession } from '@/lib/supabase/queries/reservations';
 import { insertIngredient, updateIngredientRow, deleteIngredientRow } from '@/lib/supabase/queries/ingredients';
 import { insertKitchenEvent } from '@/lib/supabase/queries/kitchenEvents';
@@ -62,12 +62,6 @@ export async function persistMenuItemUpdate(
   await updateMenuItemRow(id, dbUpdates);
 }
 
-export async function persistMenuItemReorder(
-  items: { id: string; sortOrder: number }[],
-): Promise<void> {
-  await bulkUpdateSortOrder(items);
-}
-
 // ─── Tables ───────────────────────────────────────────────────────────────────
 
 export async function persistNewTable(table: Table, userId: string): Promise<void> {
@@ -110,13 +104,6 @@ export async function persistOrderUpdate(
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
-
-export async function persistSettings(
-  settings: BusinessSettings,
-  userId: string,
-): Promise<void> {
-  await upsertSettings(settings, userId);
-}
 
 // ─── Ingredients ─────────────────────────────────────────────────────────────
 

@@ -23,3 +23,14 @@ describe('restaurant scheduling', () => {
     expect(orderingSlots('2026-09-27', hours, 'Europe/Podgorica', new Date('2026-09-28T17:00Z'))).toEqual([]);
   });
 });
+
+import { localDateKey, restaurantDayKey, restaurantHour } from '@/domain/time/restaurantTime';
+describe('restaurant day helpers', () => {
+  it('buckets an order placed at 00:30 Podgorica time into that local day', () => {
+    expect(restaurantDayKey('2026-09-27T22:30:00Z', 'Europe/Podgorica')).toBe('2026-09-28');
+    expect(restaurantHour('2026-09-27T22:30:00Z', 'Europe/Podgorica')).toBe(0);
+  });
+  it('localDateKey keeps the local calendar day at local midnight', () => {
+    expect(localDateKey(new Date(2026, 8, 28, 0, 0, 0))).toBe('2026-09-28');
+  });
+});
