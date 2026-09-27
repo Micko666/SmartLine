@@ -15,6 +15,9 @@ vi.mock('@/lib/supabase/client', () => ({ supabase: { auth: {
   signOut: mocks.signOut,
 } } }));
 vi.mock('@/store/bridge', () => ({ persistSettings: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@/services/workspaceService', () => ({
+  saveStation: vi.fn(async (station: Record<string, unknown>) => ({ ...station, pin: '', hasPin: 'pin' in station })),
+}));
 
 function fullWorkspace(): WorkspaceSnapshot {
   const state = defaultWorkspace(DEMO_USER);
@@ -76,7 +79,7 @@ describe('canonical workspace hydration', () => {
     await waitFor(() => expect(useStore.getState().user?.id).toBe('owner-cloud'));
     expect(useStore.getState().stations).toEqual(saved.settings.stations);
     const next = buildStation({ name: 'Bar', role: 'bar' });
-    useStore.getState().addStation(next);
+    expect(await useStore.getState().addStation(next)).toBe(true);
     expect(useStore.getState().stations.map(station => station.name)).toEqual(['Kitchen', 'Bar']);
     expect(useStore.getState().settings.stations).toEqual(useStore.getState().stations);
   });

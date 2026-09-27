@@ -191,6 +191,7 @@ export function mapOrderRow(row: Record<string, unknown>): Order {
     orderChannel:         (row.order_channel as Order['orderChannel']) ?? undefined,
     paymentStatus:        (row.payment_status as Order['paymentStatus']) ?? undefined,
     stockRestoredAt:      (row.stock_restored_at as string | undefined) || undefined,
+    clientOrderId:        (row.client_order_id as string | undefined) || undefined,
     createdAt:            row.created_at as string,
     paidAt:               (row.paid_at as string) ?? row.created_at as string,
     updatedAt:            row.updated_at as string,

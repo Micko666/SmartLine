@@ -27,6 +27,15 @@ export function canTransition(from: OrderStatus, to: OrderStatus): boolean {
 }
 
 /**
+ * Transition check including the one actor-dependent exception: a station
+ * with rework permission (actor tagged `:rework`) may send `ready` back to
+ * `preparing`. Mirrors SQL `order_transition_allowed_by` (migration 017).
+ */
+export function canTransitionBy(from: OrderStatus, to: OrderStatus, actor = ''): boolean {
+  return canTransition(from, to) || (from === 'ready' && to === 'preparing' && actor.endsWith(':rework'));
+}
+
+/**
  * Performs the status transition or throws if invalid.
  * Returns the new status so callers remain pure.
  */

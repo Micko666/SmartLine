@@ -12,6 +12,9 @@ import type {
 import { DEFAULT_SETTINGS, DEMO_USER } from '../domain/initialData';
 import { AUTH_KEY, WORKSPACE_KEY, defaultWorkspace, emptyWorkspace, normalizeWorkspace, loadWorkspaceStateLocal, saveWorkspaceStateLocal, type WorkspaceSnapshot } from './workspace';
 import { advance, isActiveOrder, isRevenueOrder } from '../domain/orderMachine';
+import { evaluateCheckout, groupModifierSelections } from '../domain/ordering/cart';
+import { applyTransition } from '../domain/ordering/orderOperations';
+import * as workspaceService from '../services/workspaceService';
 import { normalizeStation } from '../domain/stations';
 import { isSupabaseEnabled } from './flags';
 import * as bridge from './bridge';
@@ -66,25 +69,29 @@ export interface AppState extends WorkspaceSnapshot {
   deleteTable:    (id: string) => void;
   setTableStatus: (id: string, status: TableStatus) => void;
 
-  adjustStock:  (itemId: string, delta: number) => void;
-  setStock:     (itemId: string, stock: number) => void;
-  restockItem:  (itemId: string) => void;
+  /** Business-critical writes resolve to false (and toast) when rejected. */
+  adjustStock:  (itemId: string, delta: number) => Promise<boolean>;
+  setStock:     (itemId: string, stock: number) => Promise<boolean>;
+  restockItem:  (itemId: string) => Promise<boolean>;
 
-  advanceOrderStatus: (orderId: string) => void;
-  cancelOrder:        (orderId: string) => void;
-  refundOrder:        (orderId: string) => void;
+  /** Moves an order from `expected` to `next` (server state machine / local mirror). */
+  transitionOrder:    (orderId: string, expected: OrderStatus, next: OrderStatus, actor?: string) => Promise<boolean>;
+  advanceOrderStatus: (orderId: string) => Promise<boolean>;
+  cancelOrder:        (orderId: string) => Promise<boolean>;
+  refundOrder:        (orderId: string) => Promise<boolean>;
   adjustPrepTime:     (orderId: string, deltaMinutes: number) => void;
 
-  updateSettings: (updates: Partial<BusinessSettings>) => void;
+  updateSettings: (updates: Partial<BusinessSettings>) => Promise<boolean>;
 
   addIngredient:    (data: Omit<Ingredient, 'id' | 'createdAt' | 'updatedAt'>) => Ingredient;
   updateIngredient: (id: string, updates: Partial<Omit<Ingredient, 'id' | 'createdAt'>>) => void;
   deleteIngredient: (id: string) => void;
   logKitchenEvent:  (data: Omit<KitchenEvent, 'id' | 'createdAt'>) => void;
 
-  addStation:    (data: Station) => void;
-  updateStation: (id: string, updates: Partial<Station>) => void;
-  deleteStation: (id: string) => void;
+  addStation:    (data: Station) => Promise<boolean>;
+  /** `pin` non-empty sets a new PIN, `removePin` clears it, otherwise the PIN is kept. */
+  updateStation: (id: string, updates: Partial<Station> & { removePin?: boolean }) => Promise<boolean>;
+  deleteStation: (id: string) => Promise<boolean>;
 
   validateCart:       (cart: CartItem[]) => CartValidationResult;
   createReservation:  (sessionId: string, cart: CartItem[]) => boolean;
@@ -502,7 +509,11 @@ export const useStore = create<AppState>()((set, get) => ({
 
   // ── Stock ────────────────────────────────────────────────────────────────────
 
-  adjustStock(itemId, delta) {
+  async adjustStock(itemId, delta) {
+    if (usesSupabasePersistence() && get().user?.id) {
+      try { get().applyRemoteMenuItem(await workspaceService.adjustStock(itemId, delta)); return true; }
+      catch (err) { toast.error(errorMessage(err, 'Failed to adjust stock.')); return false; }
+    }
     set(s => ({
       menuItems: s.menuItems.map(i => {
         if (i.id !== itemId || i.stock === null) return i;
@@ -510,92 +521,69 @@ export const useStore = create<AppState>()((set, get) => ({
       }),
     }));
     _persistLocal(get);
-    const item = get().menuItems.find(m => m.id === itemId);
-    if (usesSupabasePersistence() && get().user?.id && item?.stock !== null) {
-      bridge.persistMenuItemUpdate(itemId, { stock: item?.stock }).catch(() =>
-        toast.error('Failed to sync stock.'));
-    }
+    return true;
   },
 
-  setStock(itemId, stock) {
-    set(s => ({
-      menuItems: s.menuItems.map(i =>
-        i.id === itemId ? { ...i, stock: Math.max(0, stock), updatedAt: now() } : i),
-    }));
-    _persistLocal(get);
+  async setStock(itemId, stock) {
+    const item = get().menuItems.find(m => m.id === itemId);
+    if (!item) return false;
+    const value = Math.max(0, Math.floor(stock));
     if (usesSupabasePersistence() && get().user?.id) {
-      bridge.persistMenuItemUpdate(itemId, { stock: Math.max(0, stock) }).catch(() =>
-        toast.error('Failed to sync stock.'));
+      try { get().applyRemoteMenuItem(await workspaceService.setStock(item, value)); return true; }
+      catch (err) { toast.error(errorMessage(err, 'Failed to set stock.')); return false; }
     }
+    set(s => ({ menuItems: s.menuItems.map(i => i.id === itemId ? { ...i, stock: value, updatedAt: now() } : i) }));
+    _persistLocal(get);
+    return true;
   },
 
-  restockItem(itemId) {
-    set(s => ({
-      menuItems: s.menuItems.map(i =>
-        i.id === itemId && i.maxStock !== null
-          ? { ...i, stock: i.maxStock, updatedAt: now() } : i),
-    }));
-    _persistLocal(get);
+  async restockItem(itemId) {
     const item = get().menuItems.find(m => m.id === itemId);
-    if (usesSupabasePersistence() && get().user?.id && item?.maxStock !== null) {
-      bridge.persistMenuItemUpdate(itemId, { stock: item?.maxStock }).catch(() =>
-        toast.error('Failed to sync stock.'));
-    }
+    if (!item || item.maxStock === null) return false;
+    return get().setStock(itemId, item.maxStock);
   },
 
   // ── Orders ───────────────────────────────────────────────────────────────────
 
-  advanceOrderStatus(orderId) {
-    const prev = get().orders.find(o => o.id === orderId);
-    set(s => ({
-      orders: s.orders.map(o => {
-        if (o.id !== orderId) return o;
-        const next = advance(o.status);
-        if (!next) return o;
-        return { ...o, status: next, updatedAt: now() };
-      }),
-    }));
-    _persistLocal(get);
-    const updated = get().orders.find(o => o.id === orderId);
-    if (usesSupabasePersistence() && get().user?.id && updated) {
-      bridge.persistOrderUpdate(orderId, { status: updated.status }).catch(() => {
-        if (prev) set(s => ({ orders: s.orders.map(o => o.id === orderId ? prev : o) }));
-        toast.error('Failed to update order status.');
-      });
+  async transitionOrder(orderId, expected, next, actor = 'owner') {
+    if (usesSupabasePersistence() && get().user?.id) {
+      try {
+        if (next === 'cancelled') {
+          const result = await workspaceService.cancelOrder(orderId, get().user!.id);
+          get().applyRemoteOrder(result.order);
+          set({ menuItems: result.menuItems, tables: result.tables });
+        } else {
+          get().applyRemoteOrder(await workspaceService.transitionOrder(orderId, expected, next));
+        }
+        return true;
+      } catch (err) {
+        toast.error(errorMessage(err, 'Failed to update order.'));
+        return false;
+      }
     }
+    const { orders, menuItems, tables } = get();
+    const result = applyTransition({ orders, menuItems, tables }, orderId, expected, next, actor);
+    if (!result.ok) { toast.error(result.error); return false; }
+    set({ orders: result.orders, menuItems: result.menuItems, tables: result.tables });
+    _persistLocal(get);
+    return true;
   },
 
-  cancelOrder(orderId) {
+  async advanceOrderStatus(orderId) {
     const order = get().orders.find(o => o.id === orderId);
-    if (!order) return;
-    _restoreStock(get, set, order);
-    set(s => ({
-      orders: s.orders.map(o =>
-        o.id === orderId ? { ...o, status: 'cancelled' as OrderStatus, updatedAt: now() } : o),
-    }));
-    const table = get().tables.find(t => t.id === order.tableId);
-    if (table?.status === 'occupied') get().setTableStatus(order.tableId, 'available');
-    _persistLocal(get);
-    if (usesSupabasePersistence() && get().user?.id) {
-      bridge.persistOrderUpdate(orderId, { status: 'cancelled' }).catch(() =>
-        toast.error('Failed to cancel order on server.'));
-    }
+    const next = order ? advance(order.status) : null;
+    if (!order || !next) return false;
+    return get().transitionOrder(orderId, order.status, next);
   },
 
-  refundOrder(orderId) {
-    const prev = get().orders.find(o => o.id === orderId);
-    set(s => ({
-      orders: s.orders.map(o =>
-        o.id === orderId && o.status === 'cancelled'
-          ? { ...o, status: 'refunded' as OrderStatus, updatedAt: now() } : o),
-    }));
-    _persistLocal(get);
-    if (usesSupabasePersistence() && get().user?.id) {
-      bridge.persistOrderUpdate(orderId, { status: 'refunded' }).catch(() => {
-        if (prev) set(s => ({ orders: s.orders.map(o => o.id === orderId ? prev : o) }));
-        toast.error('Failed to mark order as refunded.');
-      });
-    }
+  async cancelOrder(orderId) {
+    const order = get().orders.find(o => o.id === orderId);
+    if (!order) return false;
+    return get().transitionOrder(orderId, order.status, 'cancelled');
+  },
+
+  async refundOrder(orderId) {
+    return get().transitionOrder(orderId, 'cancelled', 'refunded');
   },
 
   adjustPrepTime(orderId, deltaMinutes) {
@@ -652,46 +640,47 @@ export const useStore = create<AppState>()((set, get) => ({
 
   // ── Stations ─────────────────────────────────────────────────────────────────
 
-  addStation(station) {
-    const normalized = normalizeStation(station);
-    set(s => {
-      const next = [...s.stations, normalized];
-      return { stations: next, settings: { ...s.settings, stations: next } };
-    });
-    _persistLocal(get);
-    const { settings, user } = get();
-    if (usesSupabasePersistence() && user?.id) {
-      bridge.persistSettings(settings, user.id).catch(() =>
-        toast.error('Failed to save station.'));
+  async addStation(station) {
+    if (usesSupabasePersistence() && get().user?.id) {
+      try {
+        const saved = await workspaceService.saveStation(stationPayload(station, station.pin ? station.pin : undefined));
+        set(st => withStations(st, [...st.stations, saved]));
+        return true;
+      } catch (err) { toast.error(errorMessage(err, 'Failed to save station.')); return false; }
     }
+    const normalized = normalizeStation({ ...station, hasPin: !!station.pin });
+    set(st => withStations(st, [...st.stations, normalized]));
+    _persistLocal(get);
+    return true;
   },
 
-  updateStation(id, updates) {
-    set(s => {
-      const next = s.stations.map(st =>
-        st.id === id ? normalizeStation({ ...st, ...updates }) : st,
-      );
-      return { stations: next, settings: { ...s.settings, stations: next } };
-    });
-    _persistLocal(get);
-    const { settings, user } = get();
-    if (usesSupabasePersistence() && user?.id) {
-      bridge.persistSettings(settings, user.id).catch(() =>
-        toast.error('Failed to update station.'));
+  async updateStation(id, updates) {
+    const current = get().stations.find(st => st.id === id);
+    if (!current) return false;
+    const { removePin, pin, ...rest } = updates;
+    const nextPin = removePin ? '' : (pin ? pin : undefined);
+    if (usesSupabasePersistence() && get().user?.id) {
+      try {
+        const saved = await workspaceService.saveStation(stationPayload({ ...current, ...rest }, nextPin));
+        set(st => withStations(st, st.stations.map(x => x.id === id ? saved : x)));
+        return true;
+      } catch (err) { toast.error(errorMessage(err, 'Failed to update station.')); return false; }
     }
+    const localPin = nextPin === undefined ? current.pin : nextPin;
+    const updated = normalizeStation({ ...current, ...rest, pin: localPin, hasPin: !!localPin });
+    set(st => withStations(st, st.stations.map(x => x.id === id ? updated : x)));
+    _persistLocal(get);
+    return true;
   },
 
-  deleteStation(id) {
-    set(s => {
-      const next = s.stations.filter(st => st.id !== id);
-      return { stations: next, settings: { ...s.settings, stations: next } };
-    });
-    _persistLocal(get);
-    const { settings, user } = get();
-    if (usesSupabasePersistence() && user?.id) {
-      bridge.persistSettings(settings, user.id).catch(() =>
-        toast.error('Failed to delete station.'));
+  async deleteStation(id) {
+    if (usesSupabasePersistence() && get().user?.id) {
+      try { await workspaceService.deleteStation(id); }
+      catch (err) { toast.error(errorMessage(err, 'Failed to delete station.')); return false; }
     }
+    set(st => withStations(st, st.stations.filter(x => x.id !== id)));
+    _persistLocal(get);
+    return true;
   },
 
   // ── Kitchen Events ───────────────────────────────────────────────────────────
@@ -706,14 +695,23 @@ export const useStore = create<AppState>()((set, get) => ({
     }
   },
 
-  updateSettings(updates) {
-    set(s => ({ settings: { ...s.settings, ...updates } }));
+  async updateSettings(updates) {
+    const prev = get().settings;
+    set(s => ({ settings: { ...s.settings, ...updates, stations: s.stations } }));
     _persistLocal(get);
-    const { settings, user } = get();
-    if (usesSupabasePersistence() && user?.id) {
-      bridge.persistSettings(settings, user.id).catch(() =>
-        toast.error('Failed to save settings.'));
+    if (usesSupabasePersistence() && get().user?.id) {
+      try {
+        // Patch only the changed fields: a stale full-row upsert could overwrite
+        // concurrent edits from another device.
+        const saved = await workspaceService.patchSettings(updates);
+        set(s => ({ settings: { ...saved, stations: s.stations } }));
+      } catch (err) {
+        set(s => ({ settings: { ...prev, stations: s.stations } }));
+        toast.error(errorMessage(err, 'Failed to save settings.'));
+        return false;
+      }
     }
+    return true;
   },
 
   // ── Customer checkout ─────────────────────────────────────────────────────────
@@ -793,115 +791,70 @@ export const useStore = create<AppState>()((set, get) => ({
 
   async checkout(payload) {
     const { cart, sessionId, tableId, paymentMethod, notes, scheduledFor } = payload;
+    const clientOrderId = payload.clientOrderId ?? genId();
 
-    // ── Supabase path: delegate entirely to atomic_checkout RPC ───────────────
+    // ── Supabase path: the RPC is authoritative for prices, stock and rules ──
     if (usesSupabasePersistence()) {
       const { supabase } = await import('@/lib/supabase/client');
       if (!supabase) return { success: false, error: 'Supabase not configured.', unavailableItems: [] };
-
-      // atomic_checkout resolves user_id server-side from the restaurant_token
-      // (enforced by RLS + RPC scope — no cross-tenant writes possible).
       const token = payload.restaurantToken ?? get().settings?.restaurantToken;
       if (!token) return { success: false, error: 'Restaurant not found.', unavailableItems: [] };
 
-      // Resolve modifiers client-side before sending to RPC
-      const { menuItems } = get();
-      const resolvedCart = cart.map(ci => {
-        const item = menuItems.find(m => m.id === ci.menuItemId);
-        const resolvedModifiers = ci.selectedModifiers.map(sel => {
-          const mod = item?.modifiers.find(m => m.id === sel.modifierId);
-          const opt = mod?.options.find(o => o.id === sel.optionId);
-          return mod && opt
-            ? { modifierId: mod.id, modifierName: mod.name, optionId: opt.id, optionName: opt.name, priceAdjustment: opt.priceAdjustment }
-            : null;
-        }).filter(Boolean);
-        return { menuItemId: ci.menuItemId, quantity: ci.quantity, resolvedModifiers };
-      });
-
+      // Only identifiers and quantities leave the browser — never prices or names.
       const { data, error } = await supabase.rpc('atomic_checkout', {
-        p_restaurant_token: token,
-        p_session_id:       sessionId,
-        p_table_id:         tableId,
-        p_payment_method:   paymentMethod,
-        p_cart:             resolvedCart,
-        p_notes:            notes ?? '',
-        p_scheduled_for:    scheduledFor ?? '',
+        p_restaurant_token:  token,
+        p_session_id:        sessionId,
+        p_table_id:          tableId,
+        p_payment_method:    paymentMethod,
+        p_cart:              cart.map(ci => ({ menuItemId: ci.menuItemId, quantity: ci.quantity, selectedModifiers: groupModifierSelections(ci.selectedModifiers) })),
+        p_notes:             notes ?? '',
+        p_scheduled_for:     scheduledFor ?? '',
+        p_client_order_id:   clientOrderId,
+        p_customer_name:     payload.customerName ?? '',
+        p_customer_phone:    payload.customerPhone ?? '',
+        p_delivery_address:  payload.deliveryAddress ?? '',
       });
-
       if (error) return { success: false, error: error.message, unavailableItems: [] };
 
       const result = data as Record<string, unknown>;
       if (!result.success) {
-        return {
-          success: false,
-          error: (result.error as string) ?? 'Checkout failed.',
-          unavailableItems: (result.unavailableItems as string[]) ?? [],
-        };
+        return { success: false, error: (result.error as string) ?? 'Checkout failed.', unavailableItems: (result.unavailableItems as string[]) ?? [] };
       }
 
-      // Build local Order and Receipt from RPC response to update Zustand
-      const orderId    = result.orderId as string;
-      const receiptId  = result.receiptId as string;
-      const createdAt  = new Date(result.createdAt as string).toISOString();
-      const items      = result.items as OrderItem[];
-
+      const createdAt = new Date(result.createdAt as string).toISOString();
+      const items = result.items as OrderItem[];
+      const channel = channelOfTable(tableId);
       const order: Order = {
-        id:                  orderId,
-        orderNumber:         result.orderNumber as number,
-        tableId,
-        tableName:           result.tableName as string,
-        items,
-        status:              'paid',
-        subtotal:            result.subtotal as number,
-        taxRate:             result.taxRate as number,
-        taxAmount:           result.taxAmount as number,
-        total:               result.total as number,
-        paymentMethod:       paymentMethod as PaymentMethod,
-        notes:               notes ?? '',
-        scheduledFor:        (result.scheduledFor as string | undefined) || undefined,
-        estimatedPrepTime:   result.estimatedPrepTime as number,
-        prepTimeAdjustment:  0,
-        createdAt,
-        paidAt:              createdAt,
-        updatedAt:           createdAt,
+        id: result.orderId as string, orderNumber: result.orderNumber as number, tableId,
+        tableName: result.tableName as string, items, status: (result.status as OrderStatus) ?? 'paid',
+        subtotal: Number(result.subtotal), taxRate: Number(result.taxRate), taxAmount: Number(result.taxAmount), total: Number(result.total),
+        paymentMethod, paymentStatus: (result.paymentStatus as Order['paymentStatus']) ?? 'unpaid',
+        notes: notes ?? '', scheduledFor: scheduledFor || undefined, orderChannel: channel,
+        customerName: payload.customerName || undefined, customerPhone: payload.customerPhone || undefined,
+        deliveryAddress: payload.deliveryAddress || undefined, clientOrderId,
+        estimatedPrepTime: Number(result.estimatedPrepTime), prepTimeAdjustment: 0,
+        createdAt, paidAt: createdAt, updatedAt: createdAt,
       };
-
       const receipt: Receipt = {
-        id:             receiptId,
-        orderId,
-        orderNumber:    result.orderNumber as number,
-        tableId,
-        tableName:      result.tableName as string,
-        restaurantName: get().settings.businessName,
-        items,
-        subtotal:       result.subtotal as number,
-        taxRate:        result.taxRate as number,
-        taxAmount:      result.taxAmount as number,
-        total:          result.total as number,
-        paymentMethod:  paymentMethod as PaymentMethod,
-        createdAt,
+        id: result.receiptId as string, orderId: order.id, orderNumber: order.orderNumber, tableId,
+        tableName: order.tableName, restaurantName: get().settings.businessName, items,
+        subtotal: order.subtotal, taxRate: order.taxRate, taxAmount: order.taxAmount, total: order.total,
+        paymentMethod, paymentStatus: order.paymentStatus, createdAt,
       };
-
       set(s => ({
-        orders:   [order, ...s.orders],
-        receipts: [receipt, ...s.receipts],
-        nextOrderNumber: s.nextOrderNumber + 1,
-        // Update stock counts and table status optimistically from RPC result
+        orders: s.orders.some(o => o.id === order.id) ? s.orders : [order, ...s.orders],
+        receipts: s.receipts.some(r => r.id === receipt.id) ? s.receipts : [receipt, ...s.receipts],
         menuItems: s.menuItems.map(m => {
-          const orderItem = items.find(oi => oi.menuItemId === m.id);
-          if (!orderItem || m.stock === null) return m;
-          return { ...m, stock: Math.max(0, m.stock - orderItem.quantity), salesCount: m.salesCount + orderItem.quantity, updatedAt: createdAt };
+          const qty = items.filter(oi => oi.menuItemId === m.id).reduce((sum, oi) => sum + oi.quantity, 0);
+          if (!qty || m.stock === null) return m;
+          return { ...m, stock: Math.max(0, m.stock - qty), updatedAt: createdAt };
         }),
-        tables: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tableId)
-          ? s.tables.map(t => t.id === tableId ? { ...t, status: 'occupied' as TableStatus } : t)
-          : s.tables,
       }));
-
       return { success: true, order, receipt };
     }
 
-    // ── Local fallback (no Supabase) ──────────────────────────────────────────
-    return _localCheckout(payload, get, set);
+    // ── Local fallback: same rules, evaluated by the shared domain module ────
+    return _localCheckout({ ...payload, clientOrderId }, get, set);
   },
 
   // ── Computed helpers ──────────────────────────────────────────────────────────
@@ -1184,132 +1137,81 @@ export const useStore = create<AppState>()((set, get) => ({
 // ─── Local checkout (no Supabase) ────────────────────────────────────────────
 
 function _localCheckout(
-  payload: CheckoutPayload,
+  payload: CheckoutPayload & { clientOrderId: string },
   get: () => AppState,
   set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
 ): CheckoutResult {
-  const { cart, sessionId, tableId, paymentMethod, notes, scheduledFor } = payload;
-  const { menuItems, tables, settings, nextOrderNumber } = get();
-
-  set(s => ({ reservations: s.reservations.filter(r => r.expiresAt > Date.now()) }));
-
-  const unavailableItems: string[] = [];
-  const orderItems: OrderItem[] = [];
-
-  for (const cartItem of cart) {
-    const menuItem = menuItems.find(m => m.id === cartItem.menuItemId);
-    if (!menuItem || menuItem.status !== 'active') {
-      unavailableItems.push(menuItem?.name ?? cartItem.menuItemId);
-      continue;
-    }
-    if (menuItem.stock !== null) {
-      const { reservations } = get();
-      const otherReserved = reservations
-        .filter(r => r.sessionId !== sessionId && r.expiresAt > Date.now())
-        .flatMap(r => r.items)
-        .filter(ri => ri.menuItemId === menuItem.id)
-        .reduce((sum, ri) => sum + ri.quantity, 0);
-      if (menuItem.stock - otherReserved < cartItem.quantity) {
-        unavailableItems.push(menuItem.name);
-        continue;
-      }
-    }
-
-    const resolvedModifiers: OrderItemModifier[] = [];
-    let modifierTotal = 0;
-    for (const sel of cartItem.selectedModifiers) {
-      const mod = menuItem.modifiers.find(m => m.id === sel.modifierId);
-      const opt = mod?.options.find(o => o.id === sel.optionId);
-      if (mod && opt) {
-        resolvedModifiers.push({
-          modifierId: mod.id, modifierName: mod.name,
-          optionId: opt.id, optionName: opt.name,
-          priceAdjustment: opt.priceAdjustment,
-        });
-        modifierTotal += opt.priceAdjustment;
-      }
-    }
-    const unitPrice = menuItem.price + modifierTotal;
-    orderItems.push({
-      menuItemId: menuItem.id, menuItemName: menuItem.name, menuItemIcon: menuItem.icon,
-      quantity: cartItem.quantity, unitPrice, modifiers: resolvedModifiers,
-      lineTotal: unitPrice * cartItem.quantity,
-    });
+  const state = get();
+  const existing = state.orders.find(o => o.clientOrderId === payload.clientOrderId);
+  if (existing) {
+    const receipt = state.receipts.find(r => r.orderId === existing.id);
+    if (receipt) return { success: true, order: existing, receipt };
   }
 
-  if (unavailableItems.length > 0) return { success: false, error: 'Some items are no longer available.', unavailableItems };
-  if (orderItems.length === 0) return { success: false, error: 'Cart is empty.', unavailableItems: [] };
+  const nowDate = new Date();
+  const evaluation = evaluateCheckout(
+    { ...payload, notes: payload.notes ?? '' },
+    { menuItems: state.menuItems, tables: state.tables, settings: state.settings, reservations: state.reservations, now: nowDate },
+  );
+  if (!evaluation.ok) return { success: false, error: evaluation.error, unavailableItems: evaluation.unavailableItems };
 
-  for (const oi of orderItems) {
-    const item = menuItems.find(m => m.id === oi.menuItemId);
-    if (item?.stock !== null) {
-      set(s => ({
-        menuItems: s.menuItems.map(m =>
-          m.id === oi.menuItemId && m.stock !== null
-            ? { ...m, stock: Math.max(0, m.stock - oi.quantity), salesCount: m.salesCount + oi.quantity, updatedAt: now() }
-            : m),
-      }));
-    }
-  }
-
-  const table = tables.find(t => t.id === tableId);
-  const MODE_NAMES: Record<string, string> = { 'walk-in': 'Walk-in', takeaway: 'Takeaway', delivery: 'Delivery' };
-  const tableName = table?.name ?? MODE_NAMES[tableId] ?? tableId;
-  const subtotal = orderItems.reduce((s, i) => s + i.lineTotal, 0);
-  const taxRate = settings.taxRate;
-  const taxAmount = settings.taxDisplay === 'exclusive' ? subtotal * (taxRate / 100) : 0;
-  const total = subtotal + taxAmount;
-  const maxPrep = Math.max(...orderItems.map(oi => {
-    const m = menuItems.find(m => m.id === oi.menuItemId);
-    return m ? m.prepTime : 10;
-  }));
-  const estimatedPrepTime = maxPrep + Math.max(0, orderItems.length - 1) * 2;
-  const createdAt = now();
-
+  const createdAt = nowDate.toISOString();
+  const { items, channel } = evaluation;
   const order: Order = {
-    id: genId(), orderNumber: nextOrderNumber, tableId, tableName, items: orderItems,
-    status: 'paid', subtotal, taxRate, taxAmount, total,
-    paymentMethod: paymentMethod as PaymentMethod,
-    notes: notes ?? '', scheduledFor, estimatedPrepTime, prepTimeAdjustment: 0,
+    id: genId(), orderNumber: state.nextOrderNumber, tableId: payload.tableId, tableName: evaluation.tableName, items,
+    status: 'paid', subtotal: evaluation.subtotal, taxRate: state.settings.taxRate, taxAmount: evaluation.taxAmount,
+    total: evaluation.total, paymentMethod: payload.paymentMethod, paymentStatus: 'unpaid',
+    notes: payload.notes ?? '', scheduledFor: payload.scheduledFor || undefined, orderChannel: channel,
+    customerName: payload.customerName?.trim() || undefined, customerPhone: payload.customerPhone?.trim() || undefined,
+    deliveryAddress: channel === 'delivery' ? payload.deliveryAddress?.trim() : undefined,
+    clientOrderId: payload.clientOrderId,
+    estimatedPrepTime: evaluation.estimatedPrepTime, prepTimeAdjustment: 0,
     createdAt, paidAt: createdAt, updatedAt: createdAt,
   };
-
   const receipt: Receipt = {
-    id: genId(), orderId: order.id, orderNumber: nextOrderNumber,
-    tableId, tableName, restaurantName: settings.businessName,
-    items: orderItems, subtotal, taxRate, taxAmount, total,
-    paymentMethod: paymentMethod as PaymentMethod, createdAt,
+    id: genId(), orderId: order.id, orderNumber: order.orderNumber, tableId: payload.tableId, tableName: order.tableName,
+    restaurantName: state.settings.businessName, items, subtotal: order.subtotal, taxRate: order.taxRate,
+    taxAmount: order.taxAmount, total: order.total, paymentMethod: payload.paymentMethod, paymentStatus: 'unpaid', createdAt,
   };
+  const sold: Record<string, number> = {};
+  for (const item of items) sold[item.menuItemId] = (sold[item.menuItemId] ?? 0) + item.quantity;
 
+  // One state update: stock, counters, order, receipt, table and reservation together.
   set(s => ({
+    menuItems: s.menuItems.map(m => {
+      const qty = sold[m.id];
+      if (!qty) return m;
+      return { ...m, stock: m.stock === null ? null : m.stock - qty, salesCount: m.salesCount + qty, updatedAt: createdAt };
+    }),
     orders: [order, ...s.orders],
     receipts: [receipt, ...s.receipts],
     nextOrderNumber: s.nextOrderNumber + 1,
+    tables: channel === 'dine-in' ? s.tables.map(t => t.id === payload.tableId ? { ...t, status: 'occupied' as TableStatus } : t) : s.tables,
+    reservations: s.reservations.filter(r => r.sessionId !== payload.sessionId && r.expiresAt > nowDate.getTime()),
   }));
-  if (table) set(s => ({ tables: s.tables.map(t => t.id === tableId ? { ...t, status: 'occupied' as TableStatus } : t) }));
-  get().releaseReservation(sessionId);
   _persistLocal(get);
-
   return { success: true, order, receipt };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function _restoreStock(
-  get: () => AppState,
-  set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
-  order: Order,
-) {
-  for (const oi of order.items) {
-    const item = get().menuItems.find(m => m.id === oi.menuItemId);
-    if (item?.stock !== null) {
-      set(s => ({
-        menuItems: s.menuItems.map(m =>
-          m.id === oi.menuItemId && m.stock !== null
-            ? { ...m, stock: m.stock + oi.quantity, updatedAt: now() } : m),
-      }));
-    }
-  }
+function channelOfTable(tableId: string): Order['orderChannel'] {
+  return tableId === 'takeaway' || tableId === 'delivery' ? tableId : 'dine-in';
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
+/** Keeps the two station views (top-level slice + settings mirror) identical. */
+function withStations(state: AppState, stations: Station[]): Partial<AppState> {
+  return { stations, settings: { ...state.settings, stations } };
+}
+
+/** Server payload for upsert_station; `pin` present only when it should change. */
+function stationPayload(station: Station, pin: string | undefined): Station & { pin?: string } {
+  const { hasPin: _hasPin, pin: _pin, ...rest } = station;
+  return (pin === undefined ? rest : { ...rest, pin }) as Station & { pin?: string };
 }
 
 /** Persist workspace snapshot to localStorage (used only when Supabase is disabled). */

@@ -170,6 +170,8 @@ export interface Order {
   paymentStatus?: PaymentStatus;
   /** Set once when a cancellation restored stock; guards against double restore. */
   stockRestoredAt?: string;
+  /** Checkout idempotency key supplied by the customer device. */
+  clientOrderId?: string;
   createdAt: string;
   paidAt: string;
   updatedAt: string;
@@ -286,7 +288,13 @@ export interface Station {
   id: string;
   name: string;
   role: StationRole;
+  /**
+   * Local/demo mode only: plaintext PIN kept in this browser. In Supabase mode
+   * PINs are write-only (bcrypt hash on the server) and this is always ''.
+   */
   pin: string;
+  /** True when the station is PIN-protected (authoritative in Supabase mode). */
+  hasPin?: boolean;
   color: string;
   permissions: StationPermissions;
   createdAt: string;

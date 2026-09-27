@@ -517,6 +517,8 @@ describe('workspace isolation', () => {
       price: 99.00, prepTime: 5, stock: null, maxStock: null, status: 'active',
       icon: '⭐', imageUrl: '', thumbnailUrl: '', tags: [], modifiers: [],
     });
+    // Local checkout enforces business hours like the server; make the test clock-independent.
+    await useStore.getState().updateSettings({ businessHours: ([0, 1, 2, 3, 4, 5, 6] as const).map(dayOfWeek => ({ dayOfWeek, isOpen: true, openTime: '00:00', closeTime: '00:00' })) });
     const tableA = useStore.getState().tables[0];
     const secretItem = useStore.getState().menuItems.find(m => m.name === 'Secret Dish A')!;
     await useStore.getState().checkout({

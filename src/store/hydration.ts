@@ -7,7 +7,7 @@
 import { fetchMenuItems, insertMenuItem } from '@/lib/supabase/queries/menu';
 import { fetchTables, insertTable } from '@/lib/supabase/queries/tables';
 import { fetchOrders } from '@/lib/supabase/queries/orders';
-import { fetchReceipts } from '@/lib/supabase/queries/receipts';
+import { listStations } from '@/services/workspaceService';
 import { fetchSettings, fetchNextOrderNumber, upsertSettings, upsertCalendarSettings, fetchCalendarSettings, fetchCategories } from '@/lib/supabase/queries/settings';
 import { fetchReservations } from '@/lib/supabase/queries/reservations';
 import { fetchIngredients } from '@/lib/supabase/queries/ingredients';
@@ -18,6 +18,7 @@ import { fetchEventPackages } from '@/lib/supabase/queries/eventPackages';
 import { fetchEmployees, insertEmployee } from '@/lib/supabase/queries/employees';
 import { fetchShifts, insertShift } from '@/lib/supabase/queries/shifts';
 import type {
+  Station,
   User, MenuItem, Table, Order, Receipt, BusinessSettings, StockReservation,
   Ingredient, KitchenEvent, MapDecoration, CalendarEvent, EventPackage, CalendarSettings,
   Employee, Shift,
@@ -32,7 +33,7 @@ export async function loadWorkspaceFromSupabase(
   _user: User,
 ): Promise<WorkspaceSnapshot> {
   const [
-    menuItems, tables, orders, receipts, settings, nextOrderNumber,
+    menuItems, tables, orders, stations, settings, nextOrderNumber,
     reservations, ingredients, kitchenEvents, decorations,
     calendarEvents, eventPackages, calendarSettingsRaw, employees, shifts,
     storedCategories,
@@ -40,7 +41,8 @@ export async function loadWorkspaceFromSupabase(
     fetchMenuItems(userId),
     fetchTables(userId),
     fetchOrders(userId),
-    fetchReceipts(userId),
+    // Stations live in their own table (migration 018); PINs are never returned.
+    listStations().catch(() => [] as Station[]),
     fetchSettings(userId),
     fetchNextOrderNumber(userId),
     fetchReservations(userId),
@@ -80,9 +82,10 @@ export async function loadWorkspaceFromSupabase(
     categories: mergedCategories,
     tables,
     orders,
-    receipts,
-    settings: finalSettings,
-    stations: finalSettings.stations ?? [],
+    // Receipts are only needed on the customer receipt page (fetched by id there).
+    receipts: [],
+    settings: { ...finalSettings, stations },
+    stations,
     nextOrderNumber,
     reservations: reservations.filter(r => r.expiresAt > Date.now()),
     ingredients,
