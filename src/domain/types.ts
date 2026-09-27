@@ -114,6 +114,16 @@ export type OrderStatus =
 
 export type PaymentMethod = 'card' | 'cash' | 'google_pay' | 'apple_pay';
 
+/**
+ * Money-collection state, separate from the kitchen workflow `status`.
+ * No payment provider is integrated: new customer orders are `unpaid` (pay on
+ * pickup / delivery / at the table). Orders created before this field existed
+ * are `legacy_unverified` because they were marked "paid" without verification.
+ */
+export type PaymentStatus = 'unpaid' | 'paid' | 'refunded' | 'legacy_unverified';
+
+export type OrderChannel = 'dine-in' | 'takeaway' | 'delivery';
+
 export interface OrderItemModifier {
   modifierId: string;
   modifierName: string;
@@ -152,6 +162,14 @@ export interface Order {
   scheduledFor?: string;
   estimatedPrepTime: number;
   prepTimeAdjustment: number; // manual admin adjustment in minutes
+  /** Structured customer contact (takeaway / delivery). Never embedded in notes. */
+  customerName?: string;
+  customerPhone?: string;
+  deliveryAddress?: string;
+  orderChannel?: OrderChannel;
+  paymentStatus?: PaymentStatus;
+  /** Set once when a cancellation restored stock; guards against double restore. */
+  stockRestoredAt?: string;
   createdAt: string;
   paidAt: string;
   updatedAt: string;
@@ -172,6 +190,7 @@ export interface Receipt {
   taxAmount: number;
   total: number;
   paymentMethod: PaymentMethod;
+  paymentStatus?: PaymentStatus;
   createdAt: string;
 }
 
@@ -326,6 +345,11 @@ export interface CheckoutPayload {
   notes?: string;
   /** Requested pickup / delivery time — "YYYY-MM-DD HH:MM". Stored on the Order. */
   scheduledFor?: string;
+  /** Idempotency key: retries with the same key return the original order. */
+  clientOrderId?: string;
+  customerName?: string;
+  customerPhone?: string;
+  deliveryAddress?: string;
   /**
    * restaurantToken is required for Supabase-mode checkout. Customer pages pass
    * the token from the URL; admin/authenticated checkout falls back to the

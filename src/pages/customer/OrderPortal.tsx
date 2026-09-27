@@ -18,6 +18,9 @@ import { fetchRestaurantByToken } from '@/lib/supabase/queries/public';
 import { useStore, getPersistedSettings } from '@/store';
 import { isSupabaseEnabled } from '@/store/flags';
 import type { BusinessSettings } from '@/domain/types';
+import { restaurantDate } from '@/domain/time/restaurantTime';
+import { orderingSlots, orderingOpen } from '@/domain/ordering/scheduling';
+import { saveDeliveryAddress } from '@/lib/orderContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,78 +33,6 @@ interface PortalData {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function todayStr() { return new Date().toISOString().slice(0, 10); }
-
-function timeToMins(t: string) {
-  const [h, m] = t.split(':').map(Number);
-  return h * 60 + m;
-}
-
-/**
- * Check if ordering is currently open given businessHours.
- * Returns { open: true } or { open: false, reason } for the closed screen.
- */
-function checkOpenStatus(
-  businessHours: BusinessSettings['businessHours'],
-): { open: true } | { open: false; reason: string } {
-  if (!businessHours?.length) return { open: true };
-  const now  = new Date();
-  const dow  = now.getDay() as 0|1|2|3|4|5|6;
-  const day  = businessHours.find(d => d.dayOfWeek === dow);
-  if (!day || !day.isOpen) {
-    const names = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-    return { open: false, reason: `We're closed on ${names[dow]}s. Check back on our next open day.` };
-  }
-  const nowMins   = now.getHours() * 60 + now.getMinutes();
-  const openMins  = timeToMins(day.openTime);
-  const closeMins = timeToMins(day.closeTime);
-  if (nowMins < openMins) {
-    return { open: false, reason: `We open at ${day.openTime} today. Come back then to place your order.` };
-  }
-  if (nowMins >= closeMins) {
-    return { open: false, reason: `We closed at ${day.closeTime} today. See you next time!` };
-  }
-  return { open: true };
-}
-
-/**
- * Generate 15-min time slots starting at least `bufferMinutes` from now
- * (for today). Future dates respect businessHours open/close windows.
- */
-function getAvailableTimeSlots(
-  date: string,
-  bufferMinutes = 30,
-  businessHours?: BusinessSettings['businessHours'],
-): string[] {
-  const isToday = date === todayStr();
-  const slots: string[] = [];
-  let minMins = 0;
-  if (isToday) {
-    const now = new Date();
-    minMins = Math.ceil((now.getHours() * 60 + now.getMinutes() + bufferMinutes) / 15) * 15;
-  }
-
-  // Determine open window for this day from businessHours
-  let windowOpen  = 6 * 60;
-  let windowClose = 24 * 60;
-  if (businessHours?.length) {
-    const dow = new Date(date + 'T12:00:00').getDay() as 0|1|2|3|4|5|6;
-    const day = businessHours.find(d => d.dayOfWeek === dow);
-    if (!day || !day.isOpen) return [];
-    windowOpen  = timeToMins(day.openTime);
-    windowClose = timeToMins(day.closeTime);
-  }
-
-  for (let mins = windowOpen; mins < windowClose; mins += 15) {
-    if (!isToday || mins >= minMins) {
-      const h = Math.floor(mins / 60);
-      const m = mins % 60;
-      slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
-    }
-  }
-  return slots;
-}
 
 // ─── ClosedScreen ─────────────────────────────────────────────────────────────
 
@@ -126,18 +57,19 @@ function ClosedScreen({ message, name }: { message: string; name: string }) {
 // then is navigated to the full menu where they browse, cart up, and pay
 // exactly like dine-in — no separate "request" step.
 
-function ScheduleStep({ mode, token, businessHours }: {
+function ScheduleStep({ mode, token, businessHours, timezone }: {
   mode: 'takeaway' | 'delivery';
   token: string;
   businessHours?: BusinessSettings['businessHours'];
+  timezone: string;
 }) {
   const navigate = useNavigate();
-  const today = todayStr();
+  const today = restaurantDate(timezone);
   const [date, setDate] = useState(today);
   const [address, setAddress] = useState('');
 
-  const slots = useMemo(() => getAvailableTimeSlots(date, 30, businessHours), [date, businessHours]);
-  const [time, setTime] = useState(() => getAvailableTimeSlots(today, 30, businessHours)[0] ?? '12:00');
+  const slots = useMemo(() => orderingSlots(date, businessHours, timezone), [date, businessHours, timezone]);
+  const [time, setTime] = useState(() => orderingSlots(today, businessHours, timezone)[0] ?? '12:00');
 
   // When date changes, snap time to first valid slot if current is out of range
   useEffect(() => {
@@ -151,7 +83,7 @@ function ScheduleStep({ mode, token, businessHours }: {
   function handleContinue() {
     if (!canContinue) return;
     const params = new URLSearchParams({ mode, r: token, date, time });
-    if (address.trim()) params.set('addr', address.trim());
+    if (address.trim()) saveDeliveryAddress(token, address.trim());
     navigate(`/menu?${params.toString()}`);
   }
 
@@ -206,7 +138,7 @@ function ScheduleStep({ mode, token, businessHours }: {
               {slots.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           )}
-          {isToday && !noSlotsToday && (
+          {isToday && !noSlots && (
             <p className="text-xs text-muted-foreground mt-1.5 flex items-center gap-1.5">
               <Clock className="w-3 h-3" />
               Showing times at least 30 min from now
@@ -325,8 +257,8 @@ export default function OrderPortal() {
     return <ClosedScreen name={data.restaurantName} message={data.settings.orderingPausedMessage} />;
   }
 
-  const openStatus = checkOpenStatus(data.settings?.businessHours);
-  if (!openStatus.open) {
+  const openStatus = orderingOpen(data.settings.businessHours, data.settings.timezone);
+  if (openStatus.open === false) {
     return <ClosedScreen name={data.restaurantName} message={openStatus.reason} />;
   }
 
@@ -417,7 +349,7 @@ export default function OrderPortal() {
 
         {/* ── Takeaway / Delivery: scheduling step ── */}
         {(mode === 'takeaway' || mode === 'delivery') && (
-          <ScheduleStep mode={mode} token={data.restaurantToken} businessHours={data.settings?.businessHours} />
+          <ScheduleStep mode={mode} token={data.restaurantToken} businessHours={data.settings.businessHours} timezone={data.settings.timezone} />
         )}
 
       </div>

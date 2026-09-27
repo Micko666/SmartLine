@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   ShoppingBag, Plus, Minus, X, ChefHat, Clock, Search,
@@ -9,12 +9,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
-import type { CartItem, CartItemModifier, MenuItem, Order, PaymentMethod } from '@/domain/types';
+import type { BusinessSettings, CartItem, CartItemModifier, MenuItem, Order, PaymentMethod } from '@/domain/types';
 import { ORDER_STATUS_CSS, ORDER_STATUS_LABELS } from '@/domain/orderMachine';
 import { getDeviceId, loadSession, saveSession, type SessionCartItem } from '@/lib/customerSession';
 import { isSupabaseEnabled } from '@/store/flags';
 import { useMenuSubscription } from '@/lib/supabase/realtime/useMenuSubscription';
 import { fetchRestaurantByToken } from '@/lib/supabase/queries/public';
+import { orderingSlots, orderingOpen } from '@/domain/ordering/scheduling';
+import { restaurantDate, formatScheduled } from '@/domain/time/restaurantTime';
+import { loadDeliveryAddress, saveDeliveryAddress } from '@/lib/orderContext';
 
 // ─── Unique stock-reservation session ID (per page load, intentionally fresh) ─
 const SESSION_ID = `session-${Math.random().toString(36).slice(2)}`;
@@ -49,36 +52,6 @@ const DIETARY_STYLE: Record<string, string> = {
 };
 // ─── Scheduling helpers ───────────────────────────────────────────────────────
 
-/** Human-readable label for a scheduled pickup/delivery time. */
-function formatScheduledLabel(dateStr: string, timeStr: string): string {
-  const today = new Date().toISOString().slice(0, 10);
-  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-  const dateLabel =
-    dateStr === today    ? 'Today' :
-    dateStr === tomorrow ? 'Tomorrow' :
-    new Date(dateStr + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-  return `${dateLabel} · ${timeStr}`;
-}
-
-/** Generate 15-min slots starting at least bufferMinutes from now (for today). */
-function getSchedulingSlots(dateStr: string, bufferMinutes = 30): string[] {
-  const isToday = dateStr === new Date().toISOString().slice(0, 10);
-  const slots: string[] = [];
-  let minMins = 0;
-  if (isToday) {
-    const now = new Date();
-    minMins = Math.ceil((now.getHours() * 60 + now.getMinutes() + bufferMinutes) / 15) * 15;
-  }
-  for (let h = 6; h < 24; h++) {
-    for (const m of [0, 15, 30, 45]) {
-      if (!isToday || h * 60 + m >= minMins) {
-        slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
-      }
-    }
-  }
-  return slots;
-}
-
 const ALLERGEN_EMOJI: Record<string, string> = {
   gluten:    '🌾',
   dairy:     '🥛',
@@ -92,13 +65,15 @@ const ALLERGEN_EMOJI: Record<string, string> = {
 };
 
 // ─── Payment options ──────────────────────────────────────────────────────────
-const PAYMENT_METHODS: { id: PaymentMethod; label: string; deliveryLabel?: string; hideForDelivery?: boolean; icon: React.ElementType }[] = [
-  { id: 'card',       label: 'Credit / Debit Card',  icon: CreditCard },
-  { id: 'google_pay', label: 'Google Pay',            icon: Smartphone },
-  { id: 'apple_pay',  label: 'Apple Pay',             icon: Smartphone },
-  // "Pay at Counter" makes no sense for delivery — hide it. For takeaway it becomes "Pay on Pickup".
-  { id: 'cash', label: 'Pay on Pickup', deliveryLabel: '', hideForDelivery: true, icon: Banknote },
+// No payment provider is integrated: every order is paid in person.
+// See docs/stabilization-execution.md ("Payment semantics").
+const PAYMENT_METHODS: { id: PaymentMethod; icon: React.ElementType }[] = [
+  { id: 'cash', icon: Banknote },
 ];
+
+function paymentLabel(mode: OrderMode): string {
+  return mode === 'delivery' ? 'Pay on Delivery' : mode === 'takeaway' ? 'Pay on Pickup' : 'Pay at the Table';
+}
 
 // ─── Stock badge ──────────────────────────────────────────────────────────────
 function StockBadge({ stock, threshold }: { stock: number | null; threshold: number }) {
@@ -122,7 +97,7 @@ export default function CustomerMenu() {
   // Scheduling params set by OrderPortal before navigating here
   const scheduledDate   = searchParams.get('date') ?? '';
   const scheduledTime   = searchParams.get('time') ?? '';
-  const scheduledAddr   = searchParams.get('addr') ?? '';
+  const scheduledAddr = loadDeliveryAddress(restaurantToken);
 
   // Derive order mode
   const orderMode: OrderMode =
@@ -155,26 +130,21 @@ export default function CustomerMenu() {
   const threshold = settings.lowStockThreshold;
 
   // ── Supabase bootstrap ─────────────────────────────────────────────────────
-  const [sbUserId, setSbUserId] = useState<string | null>(null);
+  const [menuError, setMenuError] = useState(false);
   const [menuLoading, setMenuLoading] = useState(isSupabaseEnabled() && !!restaurantToken);
 
   useEffect(() => {
     if (!isSupabaseEnabled() || !restaurantToken) return;
     fetchRestaurantByToken(restaurantToken).then(data => {
       if (data) {
-        setSbUserId(data.userId);
-        useStore.setState({
-          menuItems: data.menuItems,
-          settings:  data.settings,
-          tables:    data.tables as import('@/domain/types').Table[],
-        });
+        useStore.getState().hydrateCustomerContext(data);
       }
+      setMenuError(!data);
       setMenuLoading(false);
-    }).catch(() => setMenuLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    }).catch(() => { setMenuError(true); setMenuLoading(false); });
   }, [restaurantToken]);
 
-  useMenuSubscription(sbUserId);
+  useMenuSubscription(restaurantToken);
 
   const deviceId = useMemo(() => getDeviceId(), []);
 
@@ -182,7 +152,7 @@ export default function CustomerMenu() {
   const [cart, setCart] = useState<CartItem[]>(() => {
     if (!restaurantToken) return [];
     const session = loadSession(restaurantToken);
-    if (!session || session.tableId !== effectiveTableId || session.placedOrderIds?.length) return [];
+    if (!session || session.tableId !== effectiveTableId) return [];
     return session.cart.map(si => ({
       menuItemId: si.menuItemId,
       quantity: si.quantity,
@@ -205,10 +175,13 @@ export default function CustomerMenu() {
   const [showSessionOrders, setShowSessionOrders]  = useState(false);
   const [selectedItem,      setSelectedItem]       = useState<MenuItem | null>(null);
   const [selectedModifiers, setSelectedModifiers]  = useState<CartItemModifier[]>([]);
-  const [paymentMethod,     setPaymentMethod]      = useState<PaymentMethod>('card');
+  const [paymentMethod,     setPaymentMethod]      = useState<PaymentMethod>('cash');
   const [notes,             setNotes]              = useState('');
   const [checkoutLoading,   setCheckoutLoading]    = useState(false);
   const [cartIssues,        setCartIssues]         = useState<string[]>([]);
+
+  const submitting = useRef(false);
+  const requestId = useRef(crypto.randomUUID());
 
   // Customer info — collected at payment for takeaway / delivery.
   // deliveryAddress is pre-filled from the URL ?addr= param set by OrderPortal.
@@ -298,7 +271,7 @@ export default function CustomerMenu() {
   // ── Cart actions ───────────────────────────────────────────────────────────
   const addToCart = (item: MenuItem, modifiers: CartItemModifier[] = []) => {
     const avail  = getAvailableStock(item.id);
-    const inCart = cart.find(c => c.menuItemId === item.id)?.quantity ?? 0;
+    const inCart = cart.filter(c => c.menuItemId === item.id).reduce((sum, line) => sum + line.quantity, 0);
     if (item.stock !== null && inCart >= avail) { toast.error(`Only ${avail} available`); return; }
     setCart(prev => {
       const existing = prev.find(c => c.menuItemId === item.id && JSON.stringify(c.selectedModifiers) === JSON.stringify(modifiers));
@@ -354,30 +327,25 @@ export default function CustomerMenu() {
 
   // ── Submit checkout ────────────────────────────────────────────────────────
   const handlePayment = async (method: PaymentMethod) => {
+    if (submitting.current) return;
+    if (orderMode !== 'dine-in' && !orderingSlots(scheduledDate, settings.businessHours, settings.timezone).includes(scheduledTime)) {
+      toast.error('Please choose a new available time.');
+      const next = new URLSearchParams(searchParams); next.delete('time'); setSearchParams(next); return;
+    }
+    submitting.current = true;
     setPaymentMethod(method);
     setCheckoutLoading(true);
-
-    // Build notes: prepend schedule + contact info for takeaway / delivery
-    let fullNotes = notes.trim();
-    if (orderMode !== 'dine-in') {
-      const schedLine = scheduledDate && scheduledTime
-        ? `${orderMode === 'takeaway' ? 'Pickup' : 'Delivery'}: ${formatScheduledLabel(scheduledDate, scheduledTime)}`
-        : '';
-      const infoLines = [
-        schedLine,
-        `Name: ${customerName.trim()}`,
-        `Phone: ${customerPhone.trim()}`,
-        ...(orderMode === 'delivery' ? [`Address: ${deliveryAddress.trim()}`] : []),
-      ].filter(Boolean).join('\n');
-      fullNotes = [infoLines, fullNotes].filter(Boolean).join('\n---\n');
-    }
 
     const result = await checkout({
       sessionId:       SESSION_ID,
       tableId:         effectiveTableId,
       paymentMethod:   method,
       cart,
-      notes:           fullNotes || undefined,
+      notes: notes.trim() || undefined,
+      clientOrderId: requestId.current,
+      customerName: customerName.trim(),
+      customerPhone: customerPhone.trim(),
+      deliveryAddress: orderMode === 'delivery' ? deliveryAddress.trim() : '',
       scheduledFor:    (orderMode !== 'dine-in' && scheduledDate && scheduledTime)
                          ? `${scheduledDate} ${scheduledTime}`
                          : undefined,
@@ -385,8 +353,9 @@ export default function CustomerMenu() {
     });
 
     setCheckoutLoading(false);
+    submitting.current = false;
 
-    if (result.success) {
+    if (result.success === true) {
       const updatedOrderIds = [...placedOrderIds, result.order.id];
       if (restaurantToken) {
         saveSession(restaurantToken, {
@@ -400,6 +369,7 @@ export default function CustomerMenu() {
       setPlacedOrderIds(updatedOrderIds);
       setShowPayment(false);
       setCart([]);
+      requestId.current = crypto.randomUUID();
       setCartIssues([]);
       // Build receipt URL — carry all scheduling params so the receipt page
       // can reconstruct a correct "Order More" link and show the right copy.
@@ -411,7 +381,7 @@ export default function CustomerMenu() {
         params.set('mode', orderMode);
         if (scheduledDate) params.set('date', scheduledDate);
         if (scheduledTime) params.set('time', scheduledTime);
-        if (orderMode === 'delivery' && deliveryAddress.trim()) params.set('addr', deliveryAddress.trim());
+        if (orderMode === 'delivery') saveDeliveryAddress(restaurantToken, deliveryAddress.trim());
       }
       navigate(`/receipt/${result.receipt.id}?${params.toString()}`);
     } else {
@@ -430,6 +400,10 @@ export default function CustomerMenu() {
 
   // ── Mode selector — shown when customer arrives via the generic portal link
   //    (no table QR and no explicit ?mode=). They pick their channel here.
+  if (!menuLoading && (menuError || (restaurantToken && settings.restaurantToken !== restaurantToken))) return <div role="alert" className="p-8 text-center">Menu unavailable. Please check the restaurant link and reload.</div>;
+  const open = orderingOpen(settings.businessHours, settings.timezone);
+  if (!menuLoading && (settings.orderingPaused || open.open === false)) return <div className="p-8 text-center"><h1>{settings.businessName}</h1><p>{settings.orderingPaused ? settings.orderingPausedMessage || 'Orders paused' : open.open === false ? open.reason : ''}</p></div>;
+  if (!menuLoading && orderMode === 'dine-in' && (modeParam || tableParam) && !table) return <div className="p-8 text-center">Please scan the QR code on your table to dine in.</div>;
   const needsModeSelection = !menuLoading && !tableParam && !modeParam;
   if (needsModeSelection) {
     const selectMode = (mode: OrderMode) => {
@@ -470,7 +444,7 @@ export default function CustomerMenu() {
   // OrderPortal always sets these params; this is just a safety fallback.
   const needsScheduling = !menuLoading &&
     (orderMode === 'takeaway' || orderMode === 'delivery') &&
-    (!scheduledDate || !scheduledTime);
+    (!scheduledDate || !scheduledTime || !orderingSlots(scheduledDate, settings.businessHours, settings.timezone).includes(scheduledTime));
 
   if (needsScheduling) {
     return (
@@ -491,13 +465,15 @@ export default function CustomerMenu() {
           </div>
         </header>
         <SchedulingStep
+          settings={settings}
           orderMode={orderMode as 'takeaway' | 'delivery'}
           onConfirm={(date, time, addr) => {
             if (addr) setDeliveryAddress(addr);
             const next = new URLSearchParams(searchParams);
             next.set('date', date);
             next.set('time', time);
-            if (addr) next.set('addr', addr);
+            if (addr) saveDeliveryAddress(restaurantToken, addr);
+            next.delete('addr');
             setSearchParams(next, { replace: true });
           }}
         />
@@ -535,7 +511,7 @@ export default function CustomerMenu() {
             <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/10 text-primary text-[10px] font-semibold shrink-0">
               {orderMode === 'takeaway' ? <Package className="w-3 h-3" /> : <Bike className="w-3 h-3" />}
               {scheduledDate && scheduledTime
-                ? formatScheduledLabel(scheduledDate, scheduledTime)
+                ? formatScheduled(scheduledDate, scheduledTime, settings.timezone)
                 : MODE_META[orderMode].label}
             </span>
           )}
@@ -762,7 +738,7 @@ export default function CustomerMenu() {
                 ? (table?.name ?? 'Walk-in')
                 : MODE_META[orderMode].label
             }
-            scheduledDate={scheduledDate} scheduledTime={scheduledTime}
+            scheduledDate={scheduledDate} scheduledTime={scheduledTime} timezone={settings.timezone}
             notes={notes} loading={checkoutLoading}
             customerName={customerName} customerPhone={customerPhone} deliveryAddress={deliveryAddress}
             customerInfoValid={customerInfoValid}
@@ -799,13 +775,6 @@ function ModeSelectorScreen({
   onSelect: (mode: OrderMode) => void;
 }) {
   const options: { mode: OrderMode; icon: React.ElementType; title: string; desc: string; enabled: boolean }[] = [
-    {
-      mode:    'dine-in',
-      icon:    ChefHat,
-      title:   'Dine In',
-      desc:    'Order from your table — food comes to you',
-      enabled: true,
-    },
     {
       mode:    'takeaway',
       icon:    Package,
@@ -854,7 +823,7 @@ function ModeSelectorScreen({
           <>
             <div className="text-center mb-8">
               <h1 className="font-display text-2xl font-bold">How would you like to order?</h1>
-              <p className="text-sm text-muted-foreground mt-1.5">Choose your preferred option below</p>
+              <p className="text-sm text-muted-foreground mt-1.5">Choose your preferred option below. For dine-in, scan your table QR code.</p>
             </div>
 
             <div className="w-full space-y-3">
@@ -928,22 +897,23 @@ function ModeUnavailableScreen({ mode, businessName, logoUrl }: { mode: OrderMod
 // Fallback shown when mode=takeaway/delivery but date+time not in URL.
 // Normally OrderPortal sets these before navigating; this handles direct links.
 
-function SchedulingStep({ orderMode, onConfirm }: {
+function SchedulingStep({ orderMode, onConfirm, settings }: {
   orderMode: 'takeaway' | 'delivery';
   onConfirm: (date: string, time: string, address: string) => void;
+  settings: BusinessSettings;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = restaurantDate(settings.timezone);
   const [date, setDate] = useState(today);
   const [address, setAddress] = useState('');
-  const slots = useMemo(() => getSchedulingSlots(date), [date]);
-  const [time, setTime] = useState(() => getSchedulingSlots(today)[0] ?? '12:00');
+  const slots = useMemo(() => orderingSlots(date, settings.businessHours, settings.timezone), [date, settings.businessHours, settings.timezone]);
+  const [time, setTime] = useState(() => orderingSlots(today, settings.businessHours, settings.timezone)[0] ?? '12:00');
 
   useEffect(() => {
     setTime(prev => (slots.includes(prev) ? prev : (slots[0] ?? '12:00')));
   }, [slots]);
 
   const isToday = date === today;
-  const noSlots = isToday && slots.length === 0;
+  const noSlots = slots.length === 0;
   const canConfirm = !noSlots && time && (orderMode !== 'delivery' || address.trim().length > 0);
 
   const inputCls = 'w-full h-11 px-3.5 rounded-xl border border-input bg-muted/50 text-sm focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-primary transition-colors';
@@ -1273,14 +1243,14 @@ function CartSheet({ cart, menuItems, sym, cartTotal, taxAmount, cartTotalWithTa
 
 // ─── Payment Sheet ────────────────────────────────────────────────────────────
 function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDisplay, taxRate,
-  orderMode, displayName, scheduledDate, scheduledTime, notes, loading,
+  orderMode, displayName, scheduledDate, scheduledTime, timezone, notes, loading,
   customerName, customerPhone, deliveryAddress, customerInfoValid,
   onNotes, onCustomerName, onCustomerPhone, onDeliveryAddress, onClose, onPay,
 }: {
   cart: CartItem[]; menuItems: MenuItem[]; sym: string;
   cartTotalWithTax: number; taxAmount: number; taxDisplay: string; taxRate: number;
   orderMode: OrderMode; displayName: string;
-  scheduledDate: string; scheduledTime: string;
+  scheduledDate: string; scheduledTime: string; timezone: string;
   notes: string; loading: boolean;
   customerName: string; customerPhone: string; deliveryAddress: string;
   customerInfoValid: boolean;
@@ -1291,9 +1261,9 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
   onClose: () => void;
   onPay: (method: PaymentMethod) => void;
 }) {
-  const [selected, setSelected] = useState<PaymentMethod>('card');
+  const [selected, setSelected] = useState<PaymentMethod>(PAYMENT_METHODS[0].id);
   const inputCls = 'w-full h-10 px-3.5 rounded-xl border border-input bg-muted/50 text-sm focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-primary transition-colors';
-  const availableMethods = PAYMENT_METHODS.filter(p => !(orderMode === 'delivery' && p.hideForDelivery));
+  const availableMethods = PAYMENT_METHODS;
   const selectedMethod = availableMethods.find(p => p.id === selected) ?? availableMethods[0];
 
   return (
@@ -1358,7 +1328,7 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
                   {orderMode === 'takeaway' ? 'Pickup time' : 'Delivery time'}
                 </p>
                 <p className="text-sm font-bold text-primary mt-0.5">
-                  {formatScheduledLabel(scheduledDate, scheduledTime)}
+                  {formatScheduled(scheduledDate, scheduledTime, timezone)}
                 </p>
               </div>
             </div>
@@ -1416,8 +1386,8 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
           {/* Payment method selector */}
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Payment method</p>
           <div className="grid grid-cols-2 gap-2 mb-5">
-            {availableMethods.map(({ id, label, deliveryLabel, icon: Icon }) => {
-              const displayLabel = orderMode === 'delivery' && deliveryLabel !== undefined ? deliveryLabel : label;
+            {availableMethods.map(({ id, icon: Icon }) => {
+              const displayLabel = paymentLabel(orderMode);
               const isSelected = selected === id;
               return (
                 <button
@@ -1456,7 +1426,7 @@ function PaymentSheet({ cart, menuItems, sym, cartTotalWithTax, taxAmount, taxDi
             ) : (
               <>
                 <selectedMethod.icon className="w-4 h-4" />
-                Pay with {orderMode === 'delivery' && selectedMethod.deliveryLabel !== undefined ? selectedMethod.deliveryLabel : selectedMethod.label} · {sym}{cartTotalWithTax.toFixed(2)}
+                Place order · {paymentLabel(orderMode)} · {sym}{cartTotalWithTax.toFixed(2)}
               </>
             )}
           </button>

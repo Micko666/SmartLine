@@ -5,6 +5,8 @@ import { motion } from 'framer-motion';
 import { useStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import { isSupabaseEnabled } from '@/store/flags';
+import { loadDeliveryAddress } from '@/lib/orderContext';
+import { formatScheduled } from '@/domain/time/restaurantTime';
 import type { Receipt } from '@/domain/types';
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -22,7 +24,7 @@ export default function CustomerReceipt() {
   const mode            = searchParams.get('mode') ?? '';          // 'takeaway' | 'delivery' | ''
   const scheduledDate   = searchParams.get('date') ?? '';
   const scheduledTime   = searchParams.get('time') ?? '';
-  const scheduledAddr   = searchParams.get('addr') ?? '';
+  const scheduledAddr = loadDeliveryAddress(restaurantToken);
 
   const { receipts, orders, settings } = useStore(useShallow(s => ({
     receipts: s.receipts,
@@ -78,15 +80,7 @@ export default function CustomerReceipt() {
   const isScheduled       = (mode === 'takeaway' || mode === 'delivery') && !!scheduledDate && !!scheduledTime;
 
   // Human-readable scheduled label
-  function fmtScheduled(dateStr: string, timeStr: string) {
-    const today = new Date().toISOString().slice(0, 10);
-    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-    const dateLabel =
-      dateStr === today    ? 'Today' :
-      dateStr === tomorrow ? 'Tomorrow' :
-      new Date(dateStr + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-    return `${dateLabel} at ${timeStr}`;
-  }
+  const fmtScheduled = (date: string, time: string) => formatScheduled(date, time, settings.timezone);
 
   // "Order More" — correctly reconstruct the full menu URL with all params
   // so the customer lands back on the exact same mode/schedule, not the
@@ -101,7 +95,7 @@ export default function CustomerReceipt() {
       const p = new URLSearchParams({ mode, r: restaurantToken });
       if (scheduledDate) p.set('date', scheduledDate);
       if (scheduledTime) p.set('time', scheduledTime);
-      if (scheduledAddr) p.set('addr', scheduledAddr);
+
       menuUrl = `/menu?${p.toString()}`;
     }
     // No menuUrl for receipt-only views (no table, no mode)
@@ -248,7 +242,7 @@ export default function CustomerReceipt() {
 
             <div className="pt-2 border-t border-border text-xs text-muted-foreground">
               <div className="flex justify-between">
-                <span>Payment</span>
+                <span>Payment due at restaurant / delivery</span>
                 <span>{PAYMENT_LABELS[receipt.paymentMethod] ?? receipt.paymentMethod}</span>
               </div>
             </div>
