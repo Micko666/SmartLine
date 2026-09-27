@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { forwardRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Clock, Flame, CheckCircle2, AlertCircle, MessageSquare, Play, ChevronDown } from 'lucide-react';
 import { type KitchenEventType } from '@/lib/supabase/realtime/useStationOrders';
@@ -11,11 +11,7 @@ import LogEventPanel from './LogEventPanel';
 
 // ─── KitchenOrderCard ─────────────────────────────────────────────────────────
 
-export default function KitchenOrderCard({
-  order, canAdvance, canCancel, canAdjustPrepTime, canReworkOrders,
-  onAdvance, onCancel, onAdjustPrepTime, onLog, onRework,
-  dimmedItemIds, expanded, onToggleExpanded,
-}: {
+interface KitchenOrderCardProps {
   order: Order;
   canAdvance: boolean;
   canCancel: boolean;
@@ -30,7 +26,15 @@ export default function KitchenOrderCard({
   dimmedItemIds?: Set<string> | null;
   expanded: boolean;
   onToggleExpanded: () => void;
-}) {
+}
+
+// forwardRef: the card is a direct child of AnimatePresence mode="popLayout",
+// which measures exiting children through a ref.
+const KitchenOrderCard = forwardRef<HTMLDivElement, KitchenOrderCardProps>(function KitchenOrderCard({
+  order, canAdvance, canCancel, canAdjustPrepTime, canReworkOrders,
+  onAdvance, onCancel, onAdjustPrepTime, onLog, onRework,
+  dimmedItemIds, expanded, onToggleExpanded,
+}, ref) {
   const [logOpen, setLogOpen] = useState(false);
 
   const mins = minutesSince(order.createdAt);
@@ -42,7 +46,7 @@ export default function KitchenOrderCard({
   const itemSummary = order.items.map(i => `${i.quantity}× ${i.menuItemName}`).join(' · ');
 
   return (
-    <motion.div layout
+    <motion.div ref={ref} layout
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
@@ -235,4 +239,6 @@ export default function KitchenOrderCard({
       </AnimatePresence>
     </motion.div>
   );
-}
+});
+
+export default KitchenOrderCard;
