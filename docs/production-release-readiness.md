@@ -6,7 +6,7 @@ Verification date: 2026-09-27. Production (`bcwlizkhceidumyaygda`) was used **re
 
 | Item | Value |
 |---|---|
-| Code candidate | `737e697535e04b84515faf1927b86d2550ea34d6` (branch `stabilization/main-rebase`) |
+| Code candidate | `bf43f1d` (branch `stabilization/main-rebase`, pushed to `origin/main`). It is `737e697` (all evidence below) plus the fixes from the owner walkthrough (see Release blockers). |
 | Commits after the candidate | `a996fef` (tests + preflight only) and the docs commit that adds this file. Neither changes `src/` or `supabase/migrations/`. |
 | Production frontend (Vercel deploys `master`) | `origin/master` = `027221268a0fa70165a6f7041e02f8ca63677a1a` |
 | `origin/main` | `c1bf16db4514b4989d40e911b981cc8134d52037` (stabilization, pushed earlier) |
@@ -415,10 +415,24 @@ After step 10:
 
 ## Release blockers
 
-1. **Owner/admin flows not verified against real Supabase** (runbook G0.1). Everything else is verified with evidence. This check requires the owner's own sign-in on the dev project and takes about 10 minutes. If it passes with 0 console errors and 0 failed requests, there are no known blockers.
+None open.
+
+1. ~~Owner/admin flows not verified against real Supabase (G0.1).~~ **Resolved 2026-09-28.** The owner walked through the admin on the dev project. Findings, all fixed in `bf43f1d` with regression tests:
+   - Settings save always failed: the form sent `restaurant_token`, which `patch_settings` rejects, so the save rolled back. The store now sends only changed, editable fields (DB contract test).
+   - Firefox logged the auth auto-refresh lock contention between two tabs as "Uncaught (in promise)". A custom lock now fails outside the Web Locks callback (unit test).
+   - React warnings: nested `<button>` (Calendar), duplicate key (station PIN keypad), dialogs without descriptions. Admin render tests and a keypad test now fail on these warnings.
+   - UX: overlays close with Escape; back links exist on the takeaway/delivery menu, scheduling step, closed/"scan QR" screens and the tracker.
+
+   Gates at `bf43f1d` (working tree, not a fresh clone):
+   - lint: 0 errors;
+   - typecheck: pass;
+   - unit: 145;
+   - DB: 210;
+   - local E2E: 6;
+   - preview vs dev: 7 passed, 1 skipped (the dev kitchen station now has a PIN set by the owner).
 
 ## Final status
 
-NOT READY — BLOCKERS LISTED BELOW
+READY FOR CONTROLLED PRODUCTION DEPLOY
 
-- Blocker 1: owner/admin walkthrough on the dev Supabase project (G0.1) has not been executed.
+Conditions: follow the runbook (G1 preflight + backup → G2 migrations 015–024 → G3 fast-forward `master` → G4/G5 smoke). `master` must not receive this code before G2 has completed.
