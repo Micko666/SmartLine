@@ -436,3 +436,20 @@ None open.
 READY FOR CONTROLLED PRODUCTION DEPLOY
 
 Conditions: follow the runbook (G1 preflight + backup → G2 migrations 015–024 → G3 fast-forward `master` → G4/G5 smoke). `master` must not receive this code before G2 has completed.
+
+## Production deploy log (2026-09-28, executed on the owner's explicit go-ahead)
+
+| Step | Time (UTC, approx.) | Result |
+|---|---|---|
+| G1 preflight | 05:40 | all gate columns 0; active orders 0; baseline: orders 139, receipts 139, total 1726.90 |
+| G1 backup | 05:41 | schema `backup_20260928_predeploy` (15 tables + function definitions + policies; 139 orders, 1726.90; no API access) |
+| G1 pause | 05:41 | `ordering_paused = true` on both tenants (previous: false, empty message) |
+| G2 015 → 024 | 05:42–05:46 | all 10 applied via `apply_migration`, validation after each; row counts and totals unchanged; function fingerprint `d54d7f1b…` (38 functions) identical to the verified dev project |
+| G3 frontend | 05:46 | `master` fast-forwarded `0272212 → 91fa412`; Vercel production deployment `dpl_Bxb9q2LYrPA8Ty4YWtzoghvieirv` READY, aliased to `smartline.one` |
+| G5 security | 05:48 | anon REST: orders/tables/business_settings/employees/receipts `[]`; stations/sessions/`transition_order_internal` 42501; menu (30 items) has no PIN/cost/recipe/user_id; advisors: 18 anon / 26 authenticated SECURITY DEFINER, as designed |
+| G4 smoke (read-only) | 05:48 | `smartline.one` portal, tracker and login load with 0 console errors |
+| Un-pause | 05:49 | ordering re-opened (values restored exactly); portal shows Takeaway/Delivery |
+
+Owner follow-up: sign in on `smartline.one` and check the admin (orders, Mark paid, settings save, stations). Place one real order to confirm the full path end to end.
+
+Finding: Vercel's deployment list shows a **production** deployment of `main` at `c1bf16d` on 2026-09-27 ~13:13 UTC, next to the expected preview. The production branch is `master` (today's `main` push produced only a preview). This suggests that deployment was promoted to production outside the git flow. If so, from then until this deploy the new frontend served production against the old database. Customer checkout and stations would then have failed in that window. The last production order is from 2026-09-27 11:52 UTC. Now resolved: database and frontend match. Recommendation: keep Vercel "Promote to Production" for `master` builds only.

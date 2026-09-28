@@ -73,7 +73,7 @@ The allow-list is enforced by migration 021 and by tests. A new RPC must be gran
 
 ## Current state (Sep 2026)
 
-- Stabilization done on branch `stabilization/astra`; see `docs/stabilization-execution.md`.
-- Migrations 015–024 are **not applied to production** yet. They must be deployed together with this frontend (see the compatibility matrix in `docs/production-release-readiness.md`).
+- Stabilization merged to `main`/`master`; see `docs/stabilization-execution.md` and `docs/production-release-readiness.md`.
+- Migrations 015–024 **are applied to production** (2026-09-28) and `master` runs the matching frontend (see the deploy log in `docs/production-release-readiness.md`). Next production migrations start at 025 and follow the same runbook.
 - Open product decisions: generic dine-in picker, future of local/demo mode, payment provider, public roster.
 - TODO: delivery address map; payment provider.
