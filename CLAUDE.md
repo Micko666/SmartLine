@@ -19,6 +19,8 @@ Demo login: `demo@smartline.io` / `demo1234`. It always uses local mode.
 
 Git: if git reports "dubious ownership" on this folder, use `git -c safe.directory=<repo path> …` per command; don't change global config.
 
+Branches: **`master` is the only long-lived branch** and always holds the stable version. Vercel deploys production from it and it is the GitHub default. Work happens on short-lived feature branches that are merged back into `master` and deleted. Code that needs new migrations goes to `master` only after those migrations are applied to production (runbook in `docs/production-release-readiness.md`).
+
 ## Stack
 
 React 18 + TypeScript (strict) + Vite · Zustand · Supabase (optional; `src/store/flags.ts` → `isSupabaseEnabled()`) · Tailwind + shadcn/ui · path alias `@/` → `src/`. npm is the only package manager.
@@ -73,7 +75,7 @@ The allow-list is enforced by migration 021 and by tests. A new RPC must be gran
 
 ## Current state (Sep 2026)
 
-- Stabilization merged to `main`/`master`; see `docs/stabilization-execution.md` and `docs/production-release-readiness.md`.
+- Stabilization is on `master` (single branch since 2026-10-02); see `docs/stabilization-execution.md` and `docs/production-release-readiness.md`.
 - Migrations 015–024 **are applied to production** (2026-09-28) and `master` runs the matching frontend (see the deploy log in `docs/production-release-readiness.md`). Next production migrations start at 025 and follow the same runbook.
 - Open product decisions: generic dine-in picker, future of local/demo mode, payment provider, public roster.
 - TODO: delivery address map; payment provider.
